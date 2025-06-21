@@ -1,0 +1,30 @@
+{
+  "name": "my_chat_app_backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "nft.storage": "^7.2.0",
+    "pg": "^8.16.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QAIS71/-my-chat-app-backen.git"
+  },
+  "bugs": {
+    "url": "https://github.com/QAIS71/-my-chat-app-backen/issues"
+  },
+  "homepage": "https://github.com/QAIS71/-my-chat-app-backen#readme"
+}
