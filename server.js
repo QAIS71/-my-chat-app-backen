@@ -1,5 +1,7 @@
 // server.js
 // تحميل متغيرات البيئة من ملف .env في البيئة المحلية. في Render، يتم توفيرها مباشرة.
+// ملاحظة: هذا السطر مهم للتشغيل المحلي، لكن عند وضع المفاتيح مباشرة في الكود،
+// عملية قراءة متغيرات البيئة تصبح أقل أهمية مؤقتاً لتلك المفاتيح.
 require('dotenv').config();
 
 // إعداد بيئة Node.js كـ 'production' (إنتاج). هذا يساعد Render في فهم كيفية إدارة التطبيق.
@@ -25,7 +27,6 @@ console.log('DEBUG: process.env.DATABASE_URL (partial):', process.env.DATABASE_U
 console.log('DEBUG: process.env.NFT_STORAGE_API_KEY (partial):', process.env.NFT_STORAGE_API_KEY ? process.env.NFT_STORAGE_API_KEY.substring(0, 10) + '...' : 'Not set');
 // --- نهاية أسطر تصحيح الأخطاء ---
 
-
 // تحديد المنفذ الذي سيستمع عليه الخادم.
 // يستخدم process.env.PORT الذي يوفره Render، أو المنفذ 3000 للتطوير المحلي.
 const port = process.env.PORT || 3000;
@@ -50,7 +51,10 @@ const pool = new Pool({
 });
 
 // تهيئة عميل NFT.Storage باستخدام مفتاح API.
+// !!! تحذير أمني: هذا المفتاح تم وضعه هنا مباشرة لغرض تصحيح الأخطاء فقط بناءً على طلبك.
+// !!! بعد حل المشكلة، يجب إزالته من هنا وإعادته كمتغير بيئة في Render.
 const nftStorageClient = new NFTStorage({ token: '8eaeca42.4a1d3c18ab244b1488edd76ceb2b9374' });
+// ملاحظة: تأكد من أن '8eaeca42.4a1d3c18ab244b1488edd76ceb2b9374' هو مفتاح NFT.Storage الفعلي الخاص بك.
 
 // إعداد Multer لتخزين الملفات المرفوعة مؤقتاً في مجلد 'uploads/'.
 const upload = multer({ dest: 'uploads/' });
@@ -148,7 +152,8 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     }
     const { userId } = req.body;
     if (!userId) {
-        fs.unlinkSync(req.file.path); // حذف الملف المؤقت إذا لم يتم توفير معرف المستخدم
+        // حذف الملف المؤقت إذا لم يتم توفير معرف المستخدم
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         return res.status(400).json({ error: 'معرف المستخدم مطلوب.' });
     }
 
@@ -157,6 +162,13 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     const mimeType = req.file.mimetype;
 
     try {
+        // التحقق من صلاحية مفتاح NFT.Storage قبل محاولة الرفع
+        // بما أن المفتاح الآن داخل الكود، لا نحتاج لـ process.env.NFT_STORAGE_API_KEY هنا.
+        // لكن هذا يظل تحذيراً جيداً للمستقبل.
+        // if (!process.env.NFT_STORAGE_API_KEY || process.env.NFT_STORAGE_API_KEY.length < 32) {
+        //     throw new Error('NFT.Storage API Key is missing or invalid.');
+        // }
+
         const fileBuffer = fs.readFileSync(filePath);
         const cid = await nftStorageClient.storeBlob(new File([fileBuffer], fileName, { type: mimeType }));
         
@@ -200,7 +212,9 @@ app.get('/api/user/by-custom-id/:customId', async (req, res) => {
     try {
         const userResult = await pool.query('SELECT uid, username, custom_id, profile_background_url FROM users WHERE custom_id = $1', [customId]);
         if (userResult.rows.length === 0) {
-            return res.status(404).json({ error: 'المستخدم غير موجود.' });
+            // Log a specific error for "user not found" to help debugging
+            console.error(`Error: User with custom ID ${customId} not found.`);
+            return res.status(404).json({ error: 'المستخدم غير موجود بالمعرف المخصص.' });
         }
         const user = userResult.rows[0];
         res.status(200).json({
@@ -211,7 +225,7 @@ app.get('/api/user/by-custom-id/:customId', async (req, res) => {
         });
     } catch (err) {
         console.error('خطأ في جلب المستخدم بواسطة المعرف المخصص:', err);
-        res.status(500).json({ error: 'خطأ خادم داخلي.' });
+        res.status(500).json({ error: 'خطأ خادم داخلي أثناء جلب المستخدم بالمعرف المخصص.' });
     }
 });
 
@@ -348,6 +362,13 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
     try {
         if (filePath) {
+            // التحقق من صلاحية مفتاح NFT.Storage قبل محاولة الرفع
+            // بما أن المفتاح الآن داخل الكود، لا نحتاج لـ process.env.NFT_STORAGE_API_KEY هنا.
+            // لكن هذا يظل تحذيراً جيداً للمستقبل.
+            // if (!process.env.NFT_STORAGE_API_KEY || process.env.NFT_STORAGE_API_KEY.length < 32) {
+            //     throw new Error('NFT.Storage API Key is missing or invalid.');
+            // }
+
             const fileName = `${req.file.originalname}_${Date.now()}`;
             const mimeType = req.file.mimetype;
 
@@ -369,6 +390,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         res.status(201).json({ message: 'تم نشر المنشور بنجاح!', postId: newPost.rows[0].post_id });
     } catch (err) {
         console.error('خطأ في نشر المنشور:', err);
+        // Ensure the temporary file is deleted even if NFT.Storage upload fails
         if (filePath && fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
@@ -717,13 +739,19 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
 
 // إرسال رسالة في محادثة
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
-    const { chatId } = req.params;
-    const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
+    const { chatId, senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     let mediaUrl = null;
     const filePath = req.file ? req.file.path : null;
 
     try {
         if (filePath) {
+            // التحقق من صلاحية مفتاح NFT.Storage قبل محاولة الرفع
+            // بما أن المفتاح الآن داخل الكود، لا نحتاج لـ process.env.NFT_STORAGE_API_KEY هنا.
+            // لكن هذا يظل تحذيراً جيداً للمستقبل.
+            // if (!process.env.NFT_STORAGE_API_KEY || process.env.NFT_STORAGE_API_KEY.length < 32) {
+            //     throw new Error('NFT.Storage API Key is missing or invalid.');
+            // }
+
             const fileName = `${req.file.originalname}_${Date.now()}`;
             const mimeType = req.file.mimetype;
 
@@ -747,7 +775,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
         await pool.query(
             `UPDATE ${chatTableName} SET last_message = $1, updated_at = NOW() WHERE ${chatPkColumn} = $2`,
-            [text || (mediaType === 'image' ? 'صورة جديدة' : 'فيديو جديد'), chatId]
+            [text || (mediaType === 'image' ? 'صورة جديدة' : (mediaType === 'video' ? 'فيديو جديد' : 'رسالة جديدة')), chatId]
         );
 
         // تحديث آخر رسالة وتاريخ التحديث في جدول user_chats لكل عضو في المحادثة/المجموعة
@@ -757,7 +785,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             for (const memberUid of members) {
                 await pool.query(
                     'UPDATE user_chats SET last_message = $1, updated_at = NOW() WHERE user_uid = $2 AND chat_id = $3',
-                    [text || (mediaType === 'image' ? 'صورة جديدة' : 'فيديو جديد'), memberUid, chatId]
+                    [text || (mediaType === 'image' ? 'صورة جديدة' : (mediaType === 'video' ? 'فيديو جديد' : 'رسالة جديدة')), memberUid, chatId]
                 );
             }
         } else {
@@ -766,7 +794,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             for (const memberUid of members) {
                 await pool.query(
                     'UPDATE user_chats SET last_message = $1, updated_at = NOW() WHERE user_uid = $2 AND chat_id = $3',
-                    [text || (mediaType === 'image' ? 'صورة جديدة' : 'فيديو جديد'), memberUid, chatId]
+                    [text || (mediaType === 'image' ? 'صورة جديدة' : (mediaType === 'video' ? 'فيديو جديد' : 'رسالة جديدة')), memberUid, chatId]
                 );
             }
         }
