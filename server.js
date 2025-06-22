@@ -50,7 +50,7 @@ const pool = new Pool({
 });
 
 // تهيئة عميل NFT.Storage باستخدام مفتاح API.
-const nftStorageClient = new NFTStorage({ token: process.env.NFT_STORAGE_API_KEY });
+const nftStorageClient = new NFTStorage({ token: '8eaeca42.4a1d3c18ab244b1488edd76ceb2b9374' });
 
 // إعداد Multer لتخزين الملفات المرفوعة مؤقتاً في مجلد 'uploads/'.
 const upload = multer({ dest: 'uploads/' });
