@@ -1,890 +1,967 @@
-// Load environment variables from .env file
+// server.js
 require('dotenv').config();
 
-// Import necessary modules
 const express = require('express');
-const bodyParser = require('body-parser');
+const { Pool } = require('pg');
+const { NFTStorage, File } = require('nft.storage');
+const multer = require('multer');
 const cors = require('cors');
-const { Pool } = require('pg'); // PostgreSQL client for database interaction
-const bcrypt = require('bcryptjs'); // For password hashing
-const { v4: uuidv4 } = require('uuid'); // For generating unique IDs
-const multer = require('multer'); // For handling file uploads
+const crypto = require('crypto'); // For AES encryption/decryption (optional)
+const fs = require('fs'); // To read and delete temporary files
 
 const app = express();
-const PORT = process.env.PORT || 3000; // Use port from environment variable or default to 3000
+const port = process.env.PORT || 3000;
 
-// --- Configure PostgreSQL/Supabase Database Connection ---
-// The DATABASE_URL environment variable should contain your Supabase connection string.
-// Example: postgresql://postgres.abcdefghijklmnop:YOUR_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false // Required for some cloud providers like Render/Supabase
-    }
-});
-
-// Test database connection
-pool.connect((err, client, release) => {
-    if (err) {
-        return console.error('Error acquiring client', err.stack);
-    }
-    console.log('Successfully connected to PostgreSQL database!');
-    release(); // Release the client back to the pool
-});
-
-// --- CORS Configuration ---
-// Allow requests from your frontend domain. Replace '*' with your frontend URL in production.
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*', // e.g., "http://localhost:8080" or your Canvas preview URL
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// --- Middleware ---
-app.use(bodyParser.json()); // For parsing JSON request bodies
-app.use(bodyParser.urlencoded({ extended: true })); // For parsing URL-encoded request bodies
+app.use(express.json());
 
-// --- Multer for File Uploads ---
-// Configure storage for Multer.
-// IMPORTANT: In a real production app, you would upload to cloud storage (e.g., Supabase Storage, AWS S3).
-// This current setup uses disk storage for demonstration/local testing.
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        // Ensure this directory exists or create it.
-        // For production, this should be a cloud storage bucket.
-        cb(null, 'uploads/'); 
-    },
-    filename: (req, file, cb) => {
-        // Generate a unique filename to prevent conflicts
-        cb(null, `${uuidv4()}-${file.originalname}`);
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
     }
 });
-const upload = multer({ storage: storage });
 
-// --- Helper Functions (for clarity and reusability) ---
+const nftStorageClient = new NFTStorage({ token: process.env.NFT_STORAGE_API_KEY });
 
-// Function to generate a unique 8-digit custom ID
-async function generateCustomId() {
-    let customId;
-    let isUnique = false;
-    while (!isUnique) {
-        customId = Math.floor(10000000 + Math.random() * 90000000).toString(); // 8-digit number
-        const result = await pool.query('SELECT 1 FROM users WHERE custom_id = $1', [customId]);
-        if (result.rows.length === 0) {
-            isUnique = true;
-        }
-    }
-    return customId;
+const upload = multer({ dest: 'uploads/' });
+
+// Ensure 'uploads' directory exists
+if (!fs.existsSync('./uploads')) {
+    fs.mkdirSync('./uploads');
 }
 
-// --- API Routes ---
+// Basic Route
+app.get('/', (req, res) => {
+    res.send('Backend is running!');
+});
 
-// 1. User Authentication and Management
-// Register a new user
+// User Registration
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+        return res.status(400).json({ error: 'Username and password are required.' });
     }
 
     try {
-        // Check if username already exists
-        const userExists = await pool.query('SELECT 1 FROM users WHERE username = $1', [username]);
-        if (userExists.rows.length > 0) {
-            return res.status(409).json({ error: 'Username already taken' });
+        const existingUser = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({ error: 'Username already exists.' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const uid = uuidv4(); // Generate a unique user ID
-        const customId = await generateCustomId(); // Generate an 8-digit custom ID
+        let customId;
+        let isUnique = false;
+        let attempts = 0;
+        while (!isUnique && attempts < 10) {
+            customId = Math.floor(10000000 + Math.random() * 90000000).toString();
+            const idCheck = await pool.query('SELECT * FROM users WHERE custom_id = $1', [customId]);
+            if (idCheck.rows.length === 0) {
+                isUnique = true;
+            }
+            attempts++;
+        }
+        if (!isUnique) {
+            return res.status(500).json({ error: 'Failed to generate a unique custom ID.' });
+        }
 
         const newUser = await pool.query(
-            'INSERT INTO users (uid, username, password, custom_id) VALUES ($1, $2, $3, $4) RETURNING uid, username, custom_id',
-            [uid, username, hashedPassword, customId]
+            'INSERT INTO users (username, password, custom_id, created_at) VALUES ($1, $2, $3, NOW()) RETURNING uid, username, custom_id',
+            [username, password, customId]
         );
         res.status(201).json({ message: 'User registered successfully', user: newUser.rows[0] });
-    } catch (error) {
-        console.error('Error registering user:', error);
-        res.status(500).json({ error: 'Internal server error during registration' });
+    } catch (err) {
+        console.error('Registration error:', err);
+        res.status(500).json({ error: 'Internal server error during registration.' });
     }
 });
 
-// Login user
+// User Login
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+        return res.status(400).json({ error: 'Username and password are required.' });
     }
 
     try {
         const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        if (userResult.rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid username or password.' });
+        }
+
         const user = userResult.rows[0];
-
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid username or password' });
+        if (user.password !== password) {
+            return res.status(401).json({ error: 'Invalid username or password.' });
         }
 
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-        if (!isPasswordValid) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        // Return relevant user data (exclude password)
         res.status(200).json({
             message: 'Login successful',
             user: {
                 uid: user.uid,
                 username: user.username,
                 customId: user.custom_id,
-                profileBg: user.profile_bg_url // Include profile background if exists
+                profileBg: user.profile_background_url
             }
         });
-    } catch (error) {
-        console.error('Error logging in user:', error);
-        res.status(500).json({ error: 'Internal server error during login' });
+    } catch (err) {
+        console.error('Login error:', err);
+        res.status(500).json({ error: 'Internal server error during login.' });
     }
 });
 
-// Get user by custom ID (for initiating private chats)
-app.get('/api/user/by-custom-id/:customId', async (req, res) => {
-    const { customId } = req.params;
-    try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE custom_id = $1', [customId]);
-        if (result.rows.length > 0) {
-            res.status(200).json(result.rows[0]);
-        } else {
-            res.status(404).json({ error: 'User not found' });
-        }
-    } catch (error) {
-        console.error('Error fetching user by custom ID:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Upload profile background
-// This example saves to local 'uploads/' folder.
-// For production, integrate with Supabase Storage or another cloud storage.
+// Upload Profile Background
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
-    const { userId } = req.body;
     if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
+        return res.status(400).json({ error: 'No file uploaded.' });
     }
+    const { userId } = req.body;
     if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
+        fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: 'User ID is required.' });
     }
 
-    // In a real application, upload req.file to Supabase Storage here.
-    // For now, let's simulate a URL.
-    const fileUrl = `https://your-supabase-storage-url.com/avatars/${req.file.filename}`; // Placeholder URL
-    // Or, if testing locally: `http://localhost:${PORT}/uploads/${req.file.filename}`
+    const filePath = req.file.path;
+    const fileName = `${userId}_profile_bg_${Date.now()}`;
+    const mimeType = req.file.mimetype;
 
     try {
+        const fileBuffer = fs.readFileSync(filePath);
+        const cid = await nftStorageClient.storeBlob(new File([fileBuffer], fileName, { type: mimeType }));
+        
+        const ipfsGatewayUrl = `https://ipfs.io/ipfs/${cid}`;
+
         await pool.query(
-            'UPDATE users SET profile_bg_url = $1 WHERE uid = $2',
-            [fileUrl, userId]
+            'UPDATE users SET profile_background_url = $1 WHERE uid = $2',
+            [ipfsGatewayUrl, userId]
         );
-        res.status(200).json({ message: 'Profile background updated', url: fileUrl });
+
+        fs.unlinkSync(filePath);
+
+        res.status(200).json({ message: 'Profile background uploaded and updated successfully!', url: ipfsGatewayUrl });
     } catch (error) {
         console.error('Error uploading profile background:', error);
-        res.status(500).json({ error: 'Internal server error during upload' });
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        res.status(500).json({ error: 'Failed to upload profile background: ' + error.message });
     }
 });
 
-// Get user profile background URL (could be retrieved with user data, but separated for clarity)
+// Get User Profile Background URL
 app.get('/api/user/:uid/profile-background', async (req, res) => {
     const { uid } = req.params;
     try {
-        const result = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [uid]);
-        if (result.rows.length > 0) {
-            res.status(200).json({ url: result.rows[0].profile_bg_url });
-        } else {
-            res.status(404).json({ error: 'User not found or no profile background' });
+        const userResult = await pool.query('SELECT profile_background_url FROM users WHERE uid = $1', [uid]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found.' });
         }
-    } catch (error) {
-        console.error('Error fetching profile background:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(200).json({ url: userResult.rows[0].profile_background_url });
+    } catch (err) {
+        console.error('Error fetching profile background URL:', err);
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
-// 2. Following System
-// Toggle follow/unfollow
-app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
-    const { followerId, followedId } = req.params;
-    if (followerId === followedId) {
-        return res.status(400).json({ error: 'Cannot follow yourself' });
-    }
-
+// Get User Info by Custom ID
+app.get('/api/user/by-custom-id/:customId', async (req, res) => {
+    const { customId } = req.params;
     try {
-        const existingFollow = await pool.query(
-            'SELECT 1 FROM follows WHERE follower_id = $1 AND followed_id = $2',
-            [followerId, followedId]
-        );
-
-        if (existingFollow.rows.length > 0) {
-            // Unfollow
-            await pool.query(
-                'DELETE FROM follows WHERE follower_id = $1 AND followed_id = $2',
-                [followerId, followedId]
-            );
-            res.status(200).json({ message: 'Unfollowed successfully', isFollowing: false });
-        } else {
-            // Follow
-            await pool.query(
-                'INSERT INTO follows (follower_id, followed_id) VALUES ($1, $2)',
-                [followerId, followedId]
-            );
-            res.status(200).json({ message: 'Followed successfully', isFollowing: true });
+        const userResult = await pool.query('SELECT uid, username, custom_id, profile_background_url FROM users WHERE custom_id = $1', [customId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found.' });
         }
-    } catch (error) {
-        console.error('Error toggling follow status:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        const user = userResult.rows[0];
+        res.status(200).json({
+            uid: user.uid,
+            username: user.username,
+            customId: user.custom_id,
+            profileBg: user.profile_background_url
+        });
+    } catch (err) {
+        console.error('Error fetching user by custom ID:', err);
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
-// Check if a user is following another
-app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
-    const { followerId, followedId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT 1 FROM follows WHERE follower_id = $1 AND followed_id = $2',
-            [followerId, followedId]
-        );
-        res.status(200).json({ isFollowing: result.rows.length > 0 });
-    } catch (error) {
-        console.error('Error checking follow status:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get follower count for a user
-app.get('/api/user/:uid/followers/count', async (req, res) => {
+// Get User Info by UID
+app.get('/api/user/:uid', async (req, res) => {
     const { uid } = req.params;
     try {
-        const result = await pool.query(
-            'SELECT COUNT(*) FROM follows WHERE followed_id = $1',
-            [uid]
-        );
-        res.status(200).json({ count: parseInt(result.rows[0].count, 10) });
-    } catch (error) {
-        console.error('Error fetching follower count:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        const userResult = await pool.query('SELECT uid, username, custom_id, profile_background_url FROM users WHERE uid = $1', [uid]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+        const user = userResult.rows[0];
+        res.status(200).json({
+            uid: user.uid,
+            username: user.username,
+            customId: user.custom_id,
+            profileBg: user.profile_background_url
+        });
+    } catch (err) {
+        console.error('Error fetching user by UID:', err);
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
+// Get All Posts
+app.get('/api/posts', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM posts ORDER BY created_at DESC');
+        res.json(result.rows.map(post => ({
+            id: post.post_id,
+            authorId: post.author_id,
+            authorName: post.author_name,
+            text: post.post_text,
+            mediaType: post.media_type,
+            mediaUrl: post.media_url,
+            timestamp: new Date(post.created_at).getTime(),
+            likes: post.likes || [],
+            comments: post.comments || [],
+            views: post.views || [],
+            followerCount: post.follower_count || 0,
+            authorProfileBg: post.author_profile_bg || null
+        })));
+    } catch (err) {
+        console.error('Error fetching posts:', err);
+        res.status(500).json({ error: 'Failed to fetch posts' });
+    }
+});
 
-// 3. Post Management (World/Feed)
-// Create a new post
+// Get Followed Posts
+app.get('/api/posts/followed/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const followingResult = await pool.query('SELECT following_uid FROM followers WHERE follower_uid = $1', [userId]);
+        const followedUids = followingResult.rows.map(row => row.following_uid);
+        followedUids.push(userId); // Include current user's posts
+
+        if (followedUids.length === 0) {
+            return res.json([]);
+        }
+
+        const postsResult = await pool.query(
+            'SELECT * FROM posts WHERE author_id = ANY($1::text[]) ORDER BY created_at DESC',
+            [followedUids]
+        );
+        res.json(postsResult.rows.map(post => ({
+            id: post.post_id,
+            authorId: post.author_id,
+            authorName: post.author_name,
+            text: post.post_text,
+            mediaType: post.media_type,
+            mediaUrl: post.media_url,
+            timestamp: new Date(post.created_at).getTime(),
+            likes: post.likes || [],
+            comments: post.comments || [],
+            views: post.views || [],
+            followerCount: post.follower_count || 0,
+            authorProfileBg: post.author_profile_bg || null
+        })));
+    } catch (err) {
+        console.error('Error fetching followed posts:', err);
+        res.status(500).json({ error: 'Failed to fetch followed posts' });
+    }
+});
+
+// Search Posts
+app.get('/api/posts/search', async (req, res) => {
+    const { q, filter, userId } = req.query;
+    let queryText = 'SELECT * FROM posts WHERE (post_text ILIKE $1 OR author_name ILIKE $1)';
+    const queryParams = [`%${q}%`];
+    let postRows;
+
+    try {
+        if (filter === 'followed' && userId) {
+            const followingResult = await pool.query('SELECT following_uid FROM followers WHERE follower_uid = $1', [userId]);
+            const followedUids = followingResult.rows.map(row => row.following_uid);
+            followedUids.push(userId);
+            
+            if (followedUids.length === 0) {
+                return res.json([]);
+            }
+            queryText += ' AND author_id = ANY($2::text[])';
+            queryParams.push(followedUids);
+            postRows = await pool.query(queryText + ' ORDER BY created_at DESC', queryParams);
+
+        } else {
+            postRows = await pool.query(queryText + ' ORDER BY created_at DESC', queryParams);
+        }
+
+        res.json(postRows.rows.map(post => ({
+            id: post.post_id,
+            authorId: post.author_id,
+            authorName: post.author_name,
+            text: post.post_text,
+            mediaType: post.media_type,
+            mediaUrl: post.media_url,
+            timestamp: new Date(post.created_at).getTime(),
+            likes: post.likes || [],
+            comments: post.comments || [],
+            views: post.views || [],
+            followerCount: post.follower_count || 0,
+            authorProfileBg: post.author_profile_bg || null
+        })));
+    } catch (err) {
+        console.error('Error searching posts:', err);
+        res.status(500).json({ error: 'Failed to search posts' });
+    }
+});
+
+// Create New Post
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     let mediaUrl = null;
-
-    if (req.file) {
-        // In production, upload to Supabase Storage or similar and get the public URL.
-        // For demonstration, a placeholder URL.
-        mediaUrl = `https://your-supabase-storage-url.com/posts/${req.file.filename}`; // Placeholder URL
-        // Or: `http://localhost:${PORT}/uploads/${req.file.filename}`
-    }
-
-    if (!authorId || !authorName || (!text && !mediaUrl)) {
-        return res.status(400).json({ error: 'Post must have text or media, and author info' });
-    }
+    const filePath = req.file ? req.file.path : null;
 
     try {
+        if (filePath) {
+            const fileName = `${req.file.originalname}_${Date.now()}`;
+            const mimeType = req.file.mimetype;
+
+            const fileBuffer = fs.readFileSync(filePath);
+            const cid = await nftStorageClient.storeBlob(new File([fileBuffer], fileName, { type: mimeType }));
+            mediaUrl = `https://ipfs.io/ipfs/${cid}`;
+            fs.unlinkSync(filePath);
+        }
+
+        const followerCountResult = await pool.query('SELECT COUNT(*) FROM followers WHERE following_uid = $1', [authorId]);
+        const followerCount = parseInt(followerCountResult.rows[0].count) || 0;
+
         const newPost = await pool.query(
-            `INSERT INTO posts (id, author_id, author_name, text_content, media_type, media_url, timestamp, author_profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [uuidv4(), authorId, authorName, text, mediaType, mediaUrl, Date.now(), authorProfileBg]
+            `INSERT INTO posts (author_id, author_name, post_text, media_type, media_url, likes, comments, views, follower_count, author_profile_bg, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING post_id`,
+            [authorId, authorName, text, mediaType || null, mediaUrl, [], [], [], followerCount, authorProfileBg]
         );
-        res.status(201).json({ message: 'Post published successfully', post: newPost.rows[0] });
-    } catch (error) {
-        console.error('Error publishing post:', error);
-        res.status(500).json({ error: 'Internal server error during post creation' });
+        res.status(201).json({ message: 'Post published successfully!', postId: newPost.rows[0].post_id });
+    } catch (err) {
+        console.error('Error publishing post:', err);
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        res.status(500).json({ error: 'Failed to publish post: ' + err.message });
     }
 });
 
-// Get all posts
-app.get('/api/posts', async (req, res) => {
+// Delete Post
+app.delete('/api/posts/:postId', async (req, res) => {
+    const { postId } = req.params;
     try {
-        // Fetch posts and join with users to get follower count for each author dynamically
-        const result = await pool.query(
-            `SELECT
-                p.id, p.author_id, p.author_name, p.text_content AS text, p.media_type, p.media_url, p.timestamp, p.author_profile_bg_url,
-                COALESCE(array_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '{}') AS likes,
-                COALESCE(array_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '{}') AS views,
-                COALESCE(array_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]') AS comments,
-                (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS follower_count
-            FROM posts p
-            LEFT JOIN post_likes l ON p.id = l.post_id
-            LEFT JOIN post_views v ON p.id = v.post_id
-            LEFT JOIN post_comments c ON p.id = c.post_id
-            GROUP BY p.id
-            ORDER BY p.timestamp DESC;`
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching all posts:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        const deleteResult = await pool.query('DELETE FROM posts WHERE post_id = $1 RETURNING post_id', [postId]);
+        if (deleteResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found.' });
+        }
+        res.status(200).json({ message: 'Post deleted successfully.' });
+    } catch (err) {
+        console.error('Error deleting post:', err);
+        res.status(500).json({ error: 'Failed to delete post.' });
     }
 });
 
-// Search posts
-app.get('/api/posts/search', async (req, res) => {
-    const { q, filter, userId } = req.query; // q is search query, filter can be 'all' or 'followed'
-    const searchTerm = `%${q}%`;
-    let queryText = `
-        SELECT
-            p.id, p.author_id, p.author_name, p.text_content AS text, p.media_type, p.media_url, p.timestamp, p.author_profile_bg_url,
-            COALESCE(array_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '{}') AS likes,
-            COALESCE(array_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '{}') AS views,
-            COALESCE(array_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]') AS comments,
-            (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS follower_count
-        FROM posts p
-        LEFT JOIN post_likes l ON p.id = l.post_id
-        LEFT JOIN post_views v ON p.id = v.post_id
-        LEFT JOIN post_comments c ON p.id = c.post_id
-    `;
-    const queryParams = [searchTerm];
-    let whereClause = `WHERE p.text_content ILIKE $1 OR p.author_name ILIKE $1`;
-
-    if (filter === 'followed' && userId) {
-        queryText += `
-            JOIN follows f ON p.author_id = f.followed_id
-            WHERE f.follower_id = $2 AND (${whereClause})
-        `;
-        queryParams.push(userId);
-    } else {
-        queryText += whereClause;
-    }
-
-    queryText += `
-        GROUP BY p.id
-        ORDER BY p.timestamp DESC;
-    `;
-
-    try {
-        const result = await pool.query(queryText, queryParams);
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error searching posts:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Toggle like on a post
+// Toggle Post Like
 app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
-    }
-
     try {
-        const existingLike = await pool.query(
-            'SELECT 1 FROM post_likes WHERE post_id = $1 AND user_id = $2',
-            [postId, userId]
-        );
+        const postResult = await pool.query('SELECT likes FROM posts WHERE post_id = $1 FOR UPDATE', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found.' });
+        }
+        let likes = postResult.rows[0].likes || [];
 
+        const index = likes.indexOf(userId);
         let isLiked;
-        if (existingLike.rows.length > 0) {
-            // Unlike
-            await pool.query('DELETE FROM post_likes WHERE post_id = $1 AND user_id = $2', [postId, userId]);
+
+        if (index > -1) {
+            likes.splice(index, 1);
             isLiked = false;
         } else {
-            // Like
-            await pool.query('INSERT INTO post_likes (post_id, user_id) VALUES ($1, $2)', [postId, userId]);
+            likes.push(userId);
             isLiked = true;
         }
 
-        const likesCountResult = await pool.query('SELECT COUNT(*) FROM post_likes WHERE post_id = $1', [postId]);
-        const likesCount = parseInt(likesCountResult.rows[0].count, 10);
-
-        res.status(200).json({ message: 'Like toggled', isLiked, likesCount });
-    } catch (error) {
-        console.error('Error toggling like:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        await pool.query('UPDATE posts SET likes = $1 WHERE post_id = $2', [likes, postId]);
+        res.status(200).json({ message: 'Like status updated', isLiked, likesCount: likes.length });
+    } catch (err) {
+        console.error('Error toggling like:', err);
+        res.status(500).json({ error: 'Failed to toggle like.' });
     }
 });
 
-// Increment post view count
+// Record Post View
 app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
-    const { userId } = req.body; // Assuming userId is passed to track unique views
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
-    }
-
+    const { userId } = req.body;
     try {
-        // Only insert if user hasn't viewed this post before
-        const existingView = await pool.query(
-            'SELECT 1 FROM post_views WHERE post_id = $1 AND user_id = $2',
-            [postId, userId]
-        );
-
-        if (existingView.rows.length === 0) {
-            await pool.query(
-                'INSERT INTO post_views (post_id, user_id) VALUES ($1, $2)',
-                [postId, userId]
-            );
+        const postResult = await pool.query('SELECT views FROM posts WHERE post_id = $1 FOR UPDATE', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found.' });
         }
-        res.status(200).json({ message: 'View recorded' });
-    } catch (error) {
-        console.error('Error recording view:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        let views = postResult.rows[0].views || [];
+
+        if (!views.includes(userId)) {
+            views.push(userId);
+            await pool.query('UPDATE posts SET views = $1 WHERE post_id = $2', [views, postId]);
+        }
+        res.status(200).json({ message: 'View recorded.' });
+    } catch (err) {
+        console.error('Error recording view:', err);
+        res.status(500).json({ error: 'Failed to record view.' });
     }
 });
 
-// Add a comment to a post
-app.post('/api/posts/:postId/comments', async (req, res) => {
-    const { postId } = req.params;
-    const { userId, username, text } = req.body;
-    if (!userId || !username || !text) {
-        return res.status(400).json({ error: 'User ID, username, and comment text are required' });
-    }
-
-    try {
-        await pool.query(
-            'INSERT INTO post_comments (id, post_id, user_id, username, comment_text, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
-            [uuidv4(), postId, userId, username, text, Date.now()]
-        );
-        res.status(201).json({ message: 'Comment added successfully' });
-    } catch (error) {
-        console.error('Error adding comment:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get comments for a post
+// Get Post Comments
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     try {
-        const result = await pool.query(
-            'SELECT user_id, username AS user, comment_text AS text, timestamp FROM post_comments WHERE post_id = $1 ORDER BY timestamp ASC',
-            [postId]
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching comments:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Delete a post
-app.delete('/api/posts/:postId', async (req, res) => {
-    const { postId } = req.params;
-    // You might want to add authentication/authorization here to ensure
-    // only the author or an admin can delete the post.
-    try {
-        // Delete related data first (likes, comments, views)
-        await pool.query('DELETE FROM post_likes WHERE post_id = $1', [postId]);
-        await pool.query('DELETE FROM post_comments WHERE post_id = $1', [postId]);
-        await pool.query('DELETE FROM post_views WHERE post_id = $1', [postId]);
-
-        const result = await pool.query('DELETE FROM posts WHERE id = $1 RETURNING id', [postId]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Post not found' });
+        const postResult = await pool.query('SELECT comments FROM posts WHERE post_id = $1', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found.' });
         }
-        res.status(200).json({ message: 'Post deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting post:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(200).json(postResult.rows[0].comments || []);
+    } catch (err) {
+        console.error('Error fetching comments:', err);
+        res.status(500).json({ error: 'Failed to fetch comments.' });
     }
 });
 
-// 4. Chat Management
-// Get user's chat list (private and group chats)
-app.get('/api/user/:uid/chats', async (req, res) => {
+// Add Post Comment
+app.post('/api/posts/:postId/comments', async (req, res) => {
+    const { postId } = req.params;
+    const { userId, username, text } = req.body;
+    try {
+        const postResult = await pool.query('SELECT comments FROM posts WHERE post_id = $1 FOR UPDATE', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found.' });
+        }
+        let comments = postResult.rows[0].comments || [];
+
+        const newComment = {
+            user: username,
+            text: text,
+            timestamp: Date.now()
+        };
+        comments.push(newComment);
+
+        await pool.query('UPDATE posts SET comments = $1 WHERE post_id = $2', [comments, postId]);
+        res.status(201).json({ message: 'Comment added successfully!', comment: newComment });
+    } catch (err) {
+        console.error('Error adding comment:', err);
+        res.status(500).json({ error: 'Failed to add comment.' });
+    }
+});
+
+// Toggle Follow User
+app.post('/api/user/:followerUid/follow/:followingUid', async (req, res) => {
+    const { followerUid, followingUid } = req.params;
+    if (followerUid === followingUid) {
+        return res.status(400).json({ error: 'Cannot follow self.' });
+    }
+    try {
+        const checkFollow = await pool.query(
+            'SELECT * FROM followers WHERE follower_uid = $1 AND following_uid = $2',
+            [followerUid, followingUid]
+        );
+
+        let isFollowing;
+        let message;
+
+        if (checkFollow.rows.length > 0) {
+            await pool.query(
+                'DELETE FROM followers WHERE follower_uid = $1 AND following_uid = $2',
+                [followerUid, followingUid]
+            );
+            isFollowing = false;
+            message = 'Unfollowed successfully.';
+        } else {
+            await pool.query(
+                'INSERT INTO followers (follower_uid, following_uid) VALUES ($1, $2)',
+                [followerUid, followingUid]
+            );
+            isFollowing = true;
+            message = 'Followed successfully.';
+        }
+        res.status(200).json({ message, isFollowing });
+    } catch (err) {
+        console.error('Error toggling follow:', err);
+        res.status(500).json({ error: 'Failed to toggle follow.' });
+    }
+});
+
+// Check Follow Status
+app.get('/api/user/:followerUid/following/:followingUid', async (req, res) => {
+    const { followerUid, followingUid } = req.params;
+    try {
+        const result = await pool.query(
+            'SELECT * FROM followers WHERE follower_uid = $1 AND following_uid = $2',
+            [followerUid, followingUid]
+        );
+        res.status(200).json({ isFollowing: result.rows.length > 0 });
+    } catch (err) {
+        console.error('Error checking follow status:', err);
+        res.status(500).json({ error: 'Failed to check follow status.' });
+    }
+});
+
+// Get Follower Count
+app.get('/api/user/:uid/followers/count', async (req, res) => {
     const { uid } = req.params;
     try {
-        // Fetch private chats where the user is involved
-        const privateChatsResult = await pool.query(
-            `SELECT
-                pc.id,
-                'private' AS type,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.username
-                    ELSE u1.username
-                END AS name,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.custom_id
-                    ELSE u1.custom_id
-                END AS custom_id,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.profile_bg_url
-                    ELSE u1.profile_bg_url
-                END AS profile_bg,
-                (SELECT message_text FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1) AS last_message,
-                (SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1) AS timestamp
-            FROM private_chats pc
-            JOIN users u1 ON pc.user1_id = u1.uid
-            JOIN users u2 ON pc.user2_id = u2.uid
-            WHERE pc.user1_id = $1 OR pc.user2_id = $1;
-            `, [uid]
-        );
-
-        // Fetch group chats where the user is a member
-        const groupChatsResult = await pool.query(
-            `SELECT
-                gc.id,
-                'group' AS type,
-                gc.name,
-                NULL AS custom_id, -- Groups don't have a single custom_id like private chats
-                NULL AS profile_bg, -- Group profile backgrounds are handled differently, or not at all for now
-                (SELECT message_text FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1) AS last_message,
-                (SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1) AS timestamp
-            FROM group_chats gc
-            JOIN group_members gm ON gc.id = gm.group_id
-            WHERE gm.member_id = $1;
-            `, [uid]
-        );
-
-        // Combine and sort all chats by latest message timestamp
-        const allChats = [...privateChatsResult.rows, ...groupChatsResult.rows];
-        allChats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); // Handle null timestamps
-
-        res.status(200).json(allChats);
-    } catch (error) {
-        console.error('Error fetching chat list:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        const result = await pool.query('SELECT COUNT(*) FROM followers WHERE following_uid = $1', [uid]);
+        res.status(200).json({ count: parseInt(result.rows[0].count) });
+    } catch (err) {
+        console.error('Error fetching follower count:', err);
+        res.status(500).json({ error: 'Failed to fetch follower count.' });
     }
 });
 
+// Get User Contacts
+app.get('/api/user/:userId/contacts', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const result = await pool.query('SELECT contact_uid, contact_name, contact_custom_id, contact_username FROM user_contacts WHERE user_uid = $1', [userId]);
+        res.json(result.rows.map(row => ({
+            uid: row.contact_uid,
+            username: row.contact_name, // Use contact_name as display name
+            customId: row.contact_custom_id,
+            actualUsername: row.contact_username // Actual username
+        })));
+    } catch (err) {
+        console.error('Error fetching user contacts:', err);
+        res.status(500).json({ error: 'Failed to fetch user contacts.' });
+    }
+});
 
-// Create or get a private chat
-// THIS IS THE ROUTE THAT WAS LIKELY CAUSING ISSUES
+// Create Private Chat
 app.post('/api/chats/private', async (req, res) => {
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
-
-    if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
-        return res.status(400).json({ error: 'Missing required chat parameters' });
-    }
+    const chatMembers = [user1Id, user2Id].sort();
+    const chatId = chatMembers.join('_');
 
     try {
-        // Ensure user1Id is always the "smaller" (alphabetically) UID for consistent lookup
-        const [id1, id2] = [user1Id, user2Id].sort();
-        const reversed = id1 !== user1Id; // Check if IDs were swapped
+        const existingChat = await pool.query('SELECT * FROM chats WHERE chat_id = $1', [chatId]);
+        if (existingChat.rows.length > 0) {
+            return res.status(200).json({ message: 'Chat already exists.', chatId });
+        }
 
-        // Check if a private chat already exists between these two users
-        const existingChat = await pool.query(
-            'SELECT id FROM private_chats WHERE (user1_id = $1 AND user2_id = $2) OR (user1_id = $2 AND user2_id = $1)',
-            [id1, id2]
+        await pool.query(
+            `INSERT INTO chats (chat_id, member1_uid, member2_uid, last_message, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+            [chatId, chatMembers[0], chatMembers[1], 'No messages yet']
         );
 
-        let chatId;
-        if (existingChat.rows.length > 0) {
-            chatId = existingChat.rows[0].id;
-            // Update contact name if provided and different
-            // This is complex as it requires knowing which user is which (user1 or user2) based on sorted IDs
-            // For simplicity, we might let the frontend manage contact names locally or fetch them on demand.
-            // If the backend MUST manage contact names per user, the table design needs to reflect that.
-            // For now, let's assume the existing chat is returned.
-            res.status(200).json({ message: 'Chat already exists', chatId });
-        } else {
-            // Create a new private chat
-            chatId = uuidv4();
-            await pool.query(
-                `INSERT INTO private_chats (id, user1_id, user2_id, user1_name, user2_name, user1_custom_id, user2_custom_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [chatId, id1, id2, reversed ? user2Name : user1Name, reversed ? user1Name : user2Name, reversed ? user2CustomId : user1CustomId, reversed ? user1CustomId : user2CustomId]
-            );
+        await pool.query(
+            'INSERT INTO user_chats (user_uid, chat_id, chat_type, chat_name, custom_id, last_message, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+            [user1Id, chatId, 'private', contactName, user2CustomId, 'No messages yet']
+        );
+        await pool.query(
+            'INSERT INTO user_chats (user_uid, chat_id, chat_type, chat_name, custom_id, last_message, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+            [user2Id, chatId, 'private', user1Name, user1CustomId, 'No messages yet']
+        );
 
-            // Also, for the frontend to display the 'contactName' that the current user set,
-            // we need to store this in a 'contacts' or 'user_chats_metadata' table.
-            // This is a simplified approach, where we just return the new chat ID.
+        await pool.query(
+            `INSERT INTO user_contacts (user_uid, contact_uid, contact_name, contact_custom_id, contact_username)
+            VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_uid, contact_uid) DO UPDATE SET contact_name = EXCLUDED.contact_name`,
+            [user1Id, user2Id, contactName, user2CustomId, user2Name]
+        );
 
-            res.status(201).json({ message: 'Private chat created successfully', chatId });
-        }
-    } catch (error) {
-        console.error('Error creating/getting private chat:', error);
-        res.status(500).json({ error: 'Internal server error during private chat creation' });
+        res.status(201).json({ message: 'Private chat created successfully!', chatId });
+    } catch (err) {
+        console.error('Error creating private chat:', err);
+        res.status(500).json({ error: 'Failed to create private chat.' });
     }
 });
 
+// Get User Chats (Private and Group)
+app.get('/api/user/:userId/chats', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const chats = [];
 
-// Get messages for a chat
+        const privateChatsResult = await pool.query(
+            `SELECT
+                uc.chat_id,
+                uc.chat_type,
+                uc.chat_name,
+                uc.custom_id,
+                uc.last_message,
+                uc.updated_at,
+                c.member1_uid,
+                c.member2_uid
+            FROM user_chats uc
+            JOIN chats c ON uc.chat_id = c.chat_id
+            WHERE uc.user_uid = $1 AND uc.chat_type = 'private'
+            ORDER BY uc.updated_at DESC`,
+            [userId]
+        );
+
+        for (const row of privateChatsResult.rows) {
+            const otherUid = row.member1_uid === userId ? row.member2_uid : row.member1_uid;
+            const otherUserResult = await pool.query('SELECT profile_background_url FROM users WHERE uid = $1', [otherUid]);
+            const profileBg = otherUserResult.rows.length > 0 ? otherUserResult.rows[0].profile_background_url : null;
+            chats.push({
+                id: row.chat_id,
+                type: row.chat_type,
+                name: row.chat_name,
+                customId: row.custom_id,
+                lastMessage: row.last_message,
+                timestamp: new Date(row.updated_at).getTime(),
+                profileBg: profileBg
+            });
+        }
+
+        const groupChatsResult = await pool.query(
+            `SELECT
+                uc.chat_id,
+                uc.chat_type,
+                uc.chat_name,
+                uc.last_message,
+                uc.updated_at,
+                g.name as group_name
+            FROM user_chats uc
+            JOIN groups g ON uc.chat_id = g.group_id
+            WHERE uc.user_uid = $1 AND uc.chat_type = 'group'
+            ORDER BY uc.updated_at DESC`,
+            [userId]
+        );
+
+        for (const row of groupChatsResult.rows) {
+            chats.push({
+                id: row.chat_id,
+                type: row.chat_type,
+                name: row.group_name,
+                customId: null,
+                lastMessage: row.last_message,
+                timestamp: new Date(row.updated_at).getTime(),
+                profileBg: null
+            });
+        }
+
+        chats.sort((a, b) => b.timestamp - a.timestamp);
+
+        res.json(chats);
+    } catch (err) {
+        console.error('Error fetching user chats:', err);
+        res.status(500).json({ error: 'Failed to fetch user chats.' });
+    }
+});
+
+// Get Messages for a Chat
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
-    const { since } = req.query; // Timestamp to fetch messages newer than
+    const sinceTimestamp = req.query.since ? new Date(parseInt(req.query.since)) : new Date(0);
 
     try {
-        let queryText = 'SELECT id, chat_id, sender_id, sender_name, message_text, media_type, media_url, timestamp, sender_profile_bg_url FROM messages WHERE chat_id = $1';
-        const queryParams = [chatId];
-
-        if (since && !isNaN(since)) {
-            queryText += ' AND timestamp > $2';
-            queryParams.push(parseInt(since, 10));
-        }
-
-        queryText += ' ORDER BY timestamp ASC';
-
-        const result = await pool.query(queryText, queryParams);
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        const result = await pool.query(
+            'SELECT * FROM messages WHERE chat_id = $1 AND created_at > $2 ORDER BY created_at ASC',
+            [chatId, sinceTimestamp]
+        );
+        res.json(result.rows.map(msg => ({
+            id: msg.message_id,
+            senderId: msg.sender_id,
+            senderName: msg.sender_name,
+            text: msg.message_text,
+            mediaType: msg.media_type,
+            mediaUrl: msg.media_url,
+            timestamp: new Date(msg.created_at).getTime(),
+            senderProfileBg: msg.sender_profile_bg
+        })));
+    } catch (err) {
+        console.error('Error fetching messages:', err);
+        res.status(500).json({ error: 'Failed to fetch messages.' });
     }
 });
 
-// Send a message in a chat
+// Send Message in a Chat
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     let mediaUrl = null;
-
-    if (req.file) {
-        // In production, upload to Supabase Storage or similar.
-        mediaUrl = `https://your-supabase-storage-url.com/messages/${req.file.filename}`; // Placeholder URL
-        // Or: `http://localhost:${PORT}/uploads/${req.file.filename}`
-    }
-
-    if (!senderId || !senderName || !chatId || (!text && !mediaUrl)) {
-        return res.status(400).json({ error: 'Missing required message parameters' });
-    }
+    const filePath = req.file ? req.file.path : null;
 
     try {
-        const newMessage = await pool.query(
-            `INSERT INTO messages (id, chat_id, sender_id, sender_name, message_text, media_type, media_url, timestamp, sender_profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-            [uuidv4(), chatId, senderId, senderName, text, mediaType || 'text', mediaUrl, Date.now(), senderProfileBg]
+        if (filePath) {
+            const fileName = `${req.file.originalname}_${Date.now()}`;
+            const mimeType = req.file.mimetype;
+
+            const fileBuffer = fs.readFileSync(filePath);
+            const cid = await nftStorageClient.storeBlob(new File([fileBuffer], fileName, { type: mimeType }));
+            mediaUrl = `https://ipfs.io/ipfs/${cid}`;
+            fs.unlinkSync(filePath);
+        }
+
+        const newMessageResult = await pool.query(
+            `INSERT INTO messages (chat_id, sender_id, sender_name, message_text, media_type, media_url, sender_profile_bg, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING message_id`,
+            [chatId, senderId, senderName, text, mediaType || null, mediaUrl, senderProfileBg || null]
         );
 
-        // Update the last message timestamp for the chat in chat_list or private_chats/group_chats table
-        // This is important for sorting the chat list in the frontend.
-        // You would typically have a 'last_message_timestamp' column in private_chats and group_chats.
-        // For simplicity here, we'll assume the frontend repolls the entire chat list.
-        // A more efficient way would be to update the timestamp in the parent chat table.
+        const isGroupChat = (await pool.query('SELECT * FROM groups WHERE group_id = $1', [chatId])).rows.length > 0;
+        const chatTableName = isGroupChat ? 'groups' : 'chats';
+        const chatPkColumn = isGroupChat ? 'group_id' : 'chat_id';
 
-        res.status(201).json({ message: 'Message sent successfully', messageData: newMessage.rows[0] });
-    } catch (error) {
-        console.error('Error sending message:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        await pool.query(
+            `UPDATE ${chatTableName} SET last_message = $1, updated_at = NOW() WHERE ${chatPkColumn} = $2`,
+            [text || (mediaType === 'image' ? 'New Image' : 'New Video'), chatId]
+        );
+
+        if (isGroupChat) {
+            const groupMembersResult = await pool.query('SELECT member_uid FROM group_members WHERE group_id = $1', [chatId]);
+            const members = groupMembersResult.rows.map(row => row.member_uid);
+            for (const memberUid of members) {
+                await pool.query(
+                    'UPDATE user_chats SET last_message = $1, updated_at = NOW() WHERE user_uid = $2 AND chat_id = $3',
+                    [text || (mediaType === 'image' ? 'New Image' : 'New Video'), memberUid, chatId]
+                );
+            }
+        } else {
+            const chatMembersResult = await pool.query('SELECT member1_uid, member2_uid FROM chats WHERE chat_id = $1', [chatId]);
+            const members = [chatMembersResult.rows[0].member1_uid, chatMembersResult.rows[0].member2_uid];
+            for (const memberUid of members) {
+                await pool.query(
+                    'UPDATE user_chats SET last_message = $1, updated_at = NOW() WHERE user_uid = $2 AND chat_id = $3',
+                    [text || (mediaType === 'image' ? 'New Image' : 'New Video'), memberUid, chatId]
+                );
+            }
+        }
+
+        res.status(201).json({ message: 'Message sent successfully!', messageId: newMessageResult.rows[0].message_id });
+    } catch (err) {
+        console.error('Error sending message:', err);
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        res.status(500).json({ error: 'Failed to send message: ' + err.message });
     }
 });
 
-
-// Delete chat (for user only, or for both, or leave group)
+// Delete Chat (Private or Group)
 app.post('/api/chats/delete', async (req, res) => {
-    const { chatId, chatType, action, userId } = req.body; // action: 'forMe', 'forBoth', 'leaveGroup'
-
-    if (!chatId || !chatType || !action || !userId) {
-        return res.status(400).json({ error: 'Missing required parameters for chat deletion' });
-    }
+    const { chatId, chatType, action, userId } = req.body;
 
     try {
         if (chatType === 'private') {
             if (action === 'forMe') {
-                // For 'forMe', we can simply remove the chat from the user's view logic.
-                // In a real database, this might involve a 'deleted_by' flag or removing
-                // the chat entry from a user-specific chat list table.
-                // For this example, if 'forMe' simply means frontend hides it,
-                // no backend action is strictly needed unless you track per-user deletion status.
-                // If you want to physically delete if both users delete "forMe", you'd check both sides.
-                // For now, let's just delete messages associated with the chat.
-                // This is a simplification. A proper 'delete for me' means only your view changes.
-                // Let's assume 'forMe' means deleting messages on the backend for that chat.
-                // A better approach would be to have a `chat_participants` table with a `deleted_at` column.
-                // For simplicity, this will delete actual messages.
-                await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-                res.status(200).json({ message: 'Chat messages deleted for you.' });
+                await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [userId, chatId]);
+                res.status(200).json({ message: 'Chat deleted for you only.' });
             } else if (action === 'forBoth') {
-                // Delete messages and the private chat entry
+                const chatMembersResult = await pool.query('SELECT member1_uid, member2_uid FROM chats WHERE chat_id = $1', [chatId]);
+                if (chatMembersResult.rows.length === 0) {
+                    return res.status(404).json({ error: 'Private chat not found.' });
+                }
+                const { member1_uid, member2_uid } = chatMembersResult.rows[0];
+
+                await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [member1_uid, chatId]);
+                await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [member2_uid, chatId]);
+
                 await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-                await pool.query('DELETE FROM private_chats WHERE id = $1', [chatId]);
-                res.status(200).json({ message: 'Chat deleted for both parties.' });
-            } else {
-                return res.status(400).json({ error: 'Invalid action for private chat' });
+                await pool.query('DELETE FROM chats WHERE chat_id = $1', [chatId]);
+
+                await pool.query('DELETE FROM user_contacts WHERE user_uid = $1 AND contact_uid = $2', [member1_uid, member2_uid]);
+                await pool.query('DELETE FROM user_contacts WHERE user_uid = $1 AND contact_uid = $2', [member2_uid, member1_uid]);
+
+                res.status(200).json({ message: 'Chat deleted for both participants.' });
             }
         } else if (chatType === 'group') {
-            if (action === 'leaveGroup') {
-                // Remove user from group members
-                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_id = $2', [chatId, userId]);
-                // If the user was the last admin and there are still members,
-                // you might need logic to assign a new admin.
-                // If no members left, you might delete the group.
-                res.status(200).json({ message: 'You have left the group.' });
-            } else if (action === 'forMe') {
-                // This typically means hiding the group from the user's chat list
-                // without actually leaving or deleting the group.
-                // This would require a `deleted_by_user` flag in `group_members`
-                // or a separate table to track hidden chats for users.
-                res.status(200).json({ message: 'Group hidden from your chat list.' });
-            } else {
-                return res.status(400).json({ error: 'Invalid action for group chat' });
+            const groupRef = await pool.query('SELECT admin_uid FROM groups WHERE group_id = $1', [chatId]);
+            if (groupRef.rows.length === 0) {
+                return res.status(404).json({ error: 'Group chat not found.' });
             }
-        } else {
-            return res.status(400).json({ error: 'Invalid chat type' });
-        }
-    } catch (error) {
-        console.error('Error deleting chat:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
+            const groupAdminId = groupRef.rows[0].admin_uid;
 
+            if (action === 'forMe') {
+                await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [userId, chatId]);
+                res.status(200).json({ message: 'Group chat removed from your list.' });
+            } else if (action === 'leaveGroup') {
+                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_uid = $2', [chatId, userId]);
+                await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [userId, chatId]);
 
-// 5. Group Chat Specific Routes
-// Create a new group
-app.post('/api/groups', async (req, res) => {
-    const { name, description, adminId, members } = req.body; // members is an object like { uid: 'role', ... }
-
-    if (!name || !adminId || !members || Object.keys(members).length < 2) {
-        return res.status(400).json({ error: 'Group name, admin, and at least two members are required' });
-    }
-    if (!members[adminId] || members[adminId] !== 'admin') {
-         return res.status(400).json({ error: 'Admin must be one of the members and have admin role.' });
-    }
-
-    try {
-        const groupId = uuidv4();
-        await pool.query(
-            'INSERT INTO group_chats (id, name, description, admin_id, created_at) VALUES ($1, $2, $3, $4, $5)',
-            [groupId, name, description, adminId, Date.now()]
-        );
-
-        // Insert group members
-        const memberInserts = Object.keys(members).map(memberId =>
-            pool.query('INSERT INTO group_members (group_id, member_id, role) VALUES ($1, $2, $3)',
-                       [groupId, memberId, members[memberId]])
-        );
-        await Promise.all(memberInserts);
-
-        res.status(201).json({ message: 'Group created successfully', groupId });
-    } catch (error) {
-        console.error('Error creating group:', error);
-        res.status(500).json({ error: 'Internal server error during group creation' });
-    }
-});
-
-// Get group members
-app.get('/api/group/:groupId/members', async (req, res) => {
-    const { groupId } = req.params;
-    try {
-        const result = await pool.query(
-            `SELECT gm.member_id AS uid, u.username, u.custom_id, gm.role
-             FROM group_members gm
-             JOIN users u ON gm.member_id = u.uid
-             WHERE gm.group_id = $1
-             ORDER BY gm.role DESC, u.username ASC;`, // Admins first, then by username
-            [groupId]
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching group members:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get group member count
-app.get('/api/group/:groupId/members/count', async (req, res) => {
-    const { groupId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT COUNT(*) FROM group_members WHERE group_id = $1',
-            [groupId]
-        );
-        res.status(200).json({ count: parseInt(result.rows[0].count, 10) });
-    } catch (error) {
-        console.error('Error fetching group member count:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Change a member's role (admin/member)
-app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
-    const { groupId, memberUid } = req.params;
-    const { newRole, callerUid } = req.body; // callerUid is the user attempting the change
-
-    if (!newRole || !callerUid) {
-        return res.status(400).json({ error: 'New role and caller UID are required' });
-    }
-
-    try {
-        // Check if caller is an admin of this group
-        const callerRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, callerUid]
-        );
-        if (callerRoleResult.rows.length === 0 || callerRoleResult.rows[0].role !== 'admin') {
-            return res.status(403).json({ error: 'Unauthorized: Only group admins can change roles' });
-        }
-
-        // If trying to demote an admin, ensure there's at least one other admin or it's not the only admin
-        if (newRole === 'member') {
-            const adminCountResult = await pool.query(
-                'SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = $2',
-                [groupId, 'admin']
-            );
-            if (parseInt(adminCountResult.rows[0].count, 10) === 1 && memberUid === callerUid) {
-                 return res.status(400).json({ error: 'Cannot demote the only admin of the group' });
-            }
-        }
-
-        await pool.query(
-            'UPDATE group_members SET role = $1 WHERE group_id = $2 AND member_id = $3',
-            [newRole, groupId, memberUid]
-        );
-        res.status(200).json({ message: `Member role updated to ${newRole}` });
-    } catch (error) {
-        console.error('Error changing member role:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Remove a member from the group
-app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
-    const { callerUid } = req.body; // callerUid is the user attempting the removal
-
-    if (!callerUid) {
-        return res.status(400).json({ error: 'Caller UID is required' });
-    }
-
-    try {
-        // Check if caller is an admin of this group or the member themselves trying to leave
-        const callerRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, callerUid]
-        );
-        const callerRole = callerRoleResult.rows[0]?.role;
-
-        if (callerRole !== 'admin' && callerUid !== memberUid) {
-            return res.status(403).json({ error: 'Unauthorized: Only group admins can remove members' });
-        }
-
-        // Prevent removing the last admin if it's not the last member
-        const currentMemberRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, memberUid]
-        );
-        const currentMemberRole = currentMemberRoleResult.rows[0]?.role;
-
-        if (currentMemberRole === 'admin') {
-            const adminCountResult = await pool.query(
-                'SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = $2',
-                [groupId, 'admin']
-            );
-            if (parseInt(adminCountResult.rows[0].count, 10) === 1) { // If this is the only admin
-                const totalMembersResult = await pool.query(
-                    'SELECT COUNT(*) FROM group_members WHERE group_id = $1',
-                    [groupId]
-                );
-                if (parseInt(totalMembersResult.rows[0].count, 10) > 1) {
-                    return res.status(400).json({ error: 'Cannot remove the only admin if other members exist. Assign a new admin first.' });
+                const remainingMembers = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1', [chatId]);
+                if (parseInt(remainingMembers.rows[0].count) === 0) {
+                    await pool.query('DELETE FROM groups WHERE group_id = $1', [chatId]);
+                    await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
+                    res.status(200).json({ message: 'You left the group. Group deleted as no members remained.' });
+                } else {
+                    const remainingAdmins = await pool.query('SELECT member_uid FROM group_members WHERE group_id = $1 AND role = \'admin\'', [chatId]);
+                    if (remainingAdmins.rows.length === 0 && userId === groupAdminId) {
+                        const firstRemainingMember = await pool.query('SELECT member_uid FROM group_members WHERE group_id = $1 ORDER BY joined_at ASC LIMIT 1', [chatId]);
+                        if (firstRemainingMember.rows.length > 0) {
+                            await pool.query('UPDATE group_members SET role = \'admin\' WHERE group_id = $1 AND member_uid = $2', [chatId, firstRemainingMember.rows[0].member_uid]);
+                            console.log(`Group ${chatId}: New admin assigned to ${firstRemainingMember.rows[0].member_uid}`);
+                        }
+                    }
+                    res.status(200).json({ message: 'You left the group.' });
                 }
             }
         }
+    } catch (err) {
+        console.error('Error deleting chat:', err);
+        res.status(500).json({ error: 'Failed to delete chat: ' + err.message });
+    }
+});
 
-        await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_id = $2', [groupId, memberUid]);
-        res.status(200).json({ message: 'Member removed successfully' });
-    } catch (error) {
-        console.error('Error removing member:', error);
-        res.status(500).json({ error: 'Internal server error' });
+// Create Group
+app.post('/api/groups', async (req, res) => {
+    const { name, description, adminId, members } = req.body;
+    if (!name || !adminId || !members || Object.keys(members).length < 2) {
+        return res.status(400).json({ error: 'Group name, admin, and at least 2 members are required.' });
+    }
+
+    try {
+        const newGroupResult = await pool.query(
+            `INSERT INTO groups (name, description, admin_uid, last_message, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW()) RETURNING group_id`,
+            [name, description, adminId, 'Group created']
+        );
+        const groupId = newGroupResult.rows[0].group_id;
+
+        const memberInsertPromises = [];
+        for (const memberUid in members) {
+            memberInsertPromises.push(
+                pool.query('INSERT INTO group_members (group_id, member_uid, role, joined_at) VALUES ($1, $2, $3, NOW())',
+                [groupId, memberUid, members[memberUid]])
+            );
+            const memberUserResult = await pool.query('SELECT username, custom_id FROM users WHERE uid = $1', [memberUid]);
+            const memberUsername = memberUserResult.rows[0]?.username || 'Unknown user';
+            const memberCustomId = memberUserResult.rows[0]?.custom_id || 'N/A';
+
+            memberInsertPromises.push(
+                pool.query(
+                    'INSERT INTO user_chats (user_uid, chat_id, chat_type, chat_name, custom_id, last_message, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+                    [memberUid, groupId, 'group', name, null, 'Group created']
+                )
+            );
+        }
+        await Promise.all(memberInsertPromises);
+
+        res.status(201).json({ message: 'Group created successfully!', groupId });
+    } catch (err) {
+        console.error('Error creating group:', err);
+        res.status(500).json({ error: 'Failed to create group: ' + err.message });
+    }
+});
+
+// Get Group Members
+app.get('/api/group/:groupId/members', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const membersResult = await pool.query(
+            `SELECT gm.member_uid, gm.role, u.username, u.custom_id, u.profile_background_url
+            FROM group_members gm
+            JOIN users u ON gm.member_uid = u.uid
+            WHERE gm.group_id = $1 ORDER BY gm.joined_at ASC`,
+            [groupId]
+        );
+        res.status(200).json(membersResult.rows.map(row => ({
+            uid: row.member_uid,
+            username: row.username,
+            customId: row.custom_id,
+            role: row.role,
+            profileBg: row.profile_background_url
+        })));
+    } catch (err) {
+        console.error('Error fetching group members:', err);
+        res.status(500).json({ error: 'Failed to fetch group members.' });
+    }
+});
+
+// Get Group Member Count
+app.get('/api/group/:groupId/members/count', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const result = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1', [groupId]);
+        res.status(200).json({ count: parseInt(result.rows[0].count) });
+    } catch (err) {
+        console.error('Error fetching group member count:', err);
+        res.status(500).json({ error: 'Failed to fetch group member count.' });
+    }
+});
+
+// Change Member Role
+app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
+    const { groupId, memberUid } = req.params;
+    const { newRole, callerUid } = req.body;
+    
+    try {
+        const callerRoleResult = await pool.query('SELECT role FROM group_members WHERE group_id = $1 AND member_uid = $2', [groupId, callerUid]);
+        if (callerRoleResult.rows.length === 0 || callerRoleResult.rows[0].role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden: You must be an admin to change member roles.' });
+        }
+
+        if (newRole === 'member') {
+            const groupInfoResult = await pool.query('SELECT admin_uid FROM groups WHERE group_id = $1', [groupId]);
+            const groupAdminId = groupInfoResult.rows[0]?.admin_uid;
+
+            const currentAdminsCountResult = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = \'admin\'', [groupId]);
+            const currentAdminsCount = parseInt(currentAdminsCountResult.rows[0].count);
+
+            if (currentAdminsCount === 1 && memberUid === groupAdminId) {
+                return res.status(400).json({ error: 'Cannot demote the sole admin (group creator).' });
+            }
+        }
+
+        await pool.query(
+            'UPDATE group_members SET role = $1 WHERE group_id = $2 AND member_uid = $3',
+            [newRole, groupId, memberUid]
+        );
+        res.status(200).json({ message: `Member role updated to ${newRole}.` });
+    } catch (err) {
+        console.error('Error changing member role:', err);
+        res.status(500).json({ error: 'Failed to change member role.' });
+    }
+});
+
+// Remove Group Member
+app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
+    const { groupId, memberUid } = req.params;
+    const { callerUid } = req.body;
+
+    try {
+        const callerRoleResult = await pool.query('SELECT role FROM group_members WHERE group_id = $1 AND member_uid = $2', [groupId, callerUid]);
+        if (callerRoleResult.rows.length === 0 || callerRoleResult.rows[0].role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden: You must be an admin to remove members.' });
+        }
+
+        if (memberUid === callerUid) {
+            return res.status(400).json({ error: 'You cannot remove yourself this way. Please use the leave group option.' });
+        }
+
+        const groupInfoResult = await pool.query('SELECT admin_uid FROM groups WHERE group_id = $1', [groupId]);
+        const groupAdminId = groupInfoResult.rows[0]?.admin_uid;
+
+        if (memberUid === groupAdminId) {
+            const currentAdminsCountResult = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = \'admin\'', [groupId]);
+            const currentAdminsCount = parseInt(currentAdminsCountResult.rows[0].count);
+            if (currentAdminsCount === 1) {
+                return res.status(400).json({ error: 'Cannot remove the sole admin (group creator).' });
+            }
+        }
+        
+        await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_uid = $2', [groupId, memberUid]);
+        await pool.query('DELETE FROM user_chats WHERE user_uid = $1 AND chat_id = $2', [memberUid, groupId]);
+
+        const remainingMembers = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1', [groupId]);
+        if (parseInt(remainingMembers.rows[0].count) === 0) {
+            await pool.query('DELETE FROM groups WHERE group_id = $1', [groupId]);
+            await pool.query('DELETE FROM messages WHERE chat_id = $1', [groupId]);
+            res.status(200).json({ message: 'Member removed. Group deleted as no members remained.' });
+        } else {
+            res.status(200).json({ message: 'Member removed successfully.' });
+        }
+
+    } catch (err) {
+        console.error('Error removing member:', err);
+        res.status(500).json({ error: 'Failed to remove member: ' + err.message });
     }
 });
 
 
-// Serve static files from the 'uploads' directory (for local testing of media files)
-app.use('/uploads', express.static('uploads'));
-
-// --- Start the server ---
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Start Server
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+    console.log(`Access it locally via: http://localhost:${port}`);
 });
