@@ -9,8 +9,8 @@ const { Pool } = require('pg'); // PostgreSQL client for database interaction
 const bcrypt = require('bcryptjs'); // For password hashing
 const { v4: uuidv4 } = require('uuid'); // For generating unique IDs
 const multer = require('multer'); // For handling file uploads
-const path = require('path'); // For path manipulation, especially for serving static files
-const fs = require('fs'); // For file system operations (e.g., checking if 'uploads' dir exists)
+const path = require('path'); // For path manipulation
+const fs = require('fs'); // For file system operations
 
 const app = express();
 const PORT = process.env.PORT || 3000; // Use port from environment variable or default to 3000
@@ -26,22 +26,26 @@ const pool = new Pool({
 // Test database connection
 pool.connect((err, client, release) => {
     if (err) {
-        return console.error('Error acquiring client', err.stack);
+        // Log the full error stack for debugging connection issues
+        console.error('Error acquiring client to PostgreSQL database:', err.stack);
+        // Optionally, exit the process if DB connection is critical for startup
+        // process.exit(1); 
+    } else {
+        console.log('Successfully connected to PostgreSQL database!');
+        release(); // Release the client back to the pool
     }
-    console.log('Successfully connected to PostgreSQL database!');
-    release(); // Release the client back to the pool
 });
 
 // --- CORS Configuration ---
 app.use(cors({
-    origin: process.env.FRONTEND_URL || '*', // e.g., "http://localhost:8080" or your Canvas preview URL
+    origin: process.env.FRONTEND_URL || '*', 
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // --- Middleware ---
-app.use(bodyParser.json()); // For parsing JSON request bodies
-app.use(bodyParser.urlencoded({ extended: true })); // For parsing URL-encoded request bodies
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // --- Multer for File Uploads ---
 // Ensure 'uploads' directory exists for local testing
@@ -52,7 +56,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, uploadsDir); // Use the created 'uploads' directory
+        cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
         cb(null, `${uuidv4()}-${file.originalname}`);
@@ -71,7 +75,7 @@ async function generateCustomId() {
     let customId;
     let isUnique = false;
     while (!isUnique) {
-        customId = Math.floor(10000000 + Math.random() * 90000000).toString(); // 8-digit number
+        customId = Math.floor(10000000 + Math.random() * 90000000).toString();
         const result = await pool.query('SELECT 1 FROM users WHERE custom_id = $1', [customId]);
         if (result.rows.length === 0) {
             isUnique = true;
@@ -329,16 +333,30 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     }
 });
 
+// Helper function to construct the common post SELECT clause
+// This ensures consistent column naming (camelCase) and data formatting for frontend
+function getPostSelectClause() {
+    return `
+        p.id,
+        p.author_id AS "authorId",
+        p.author_name AS "authorName",
+        p.text_content AS text,
+        p.media_type AS "mediaType",
+        p.media_url AS "mediaUrl",
+        p.timestamp,
+        p.author_profile_bg_url AS "authorProfileBg",
+        COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
+        COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
+        COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
+        (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
+    `;
+}
+
 // Get all posts
 app.get('/api/posts', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT
-                p.id, p.author_id AS "authorId", p.author_name AS "authorName", p.text_content AS text, p.media_type AS "mediaType", p.media_url AS "mediaUrl", p.timestamp, p.author_profile_bg_url AS "authorProfileBg",
-                COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
-                COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
-                COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
-                (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
+            `SELECT ${getPostSelectClause()}
             FROM posts p
             LEFT JOIN post_likes l ON p.id = l.post_id
             LEFT JOIN post_views v ON p.id = v.post_id
@@ -353,7 +371,7 @@ app.get('/api/posts', async (req, res) => {
     }
 });
 
-// Get followed posts - NEW ROUTE ADDED
+// Get followed posts
 app.get('/api/posts/followed/:userId', async (req, res) => {
     const { userId } = req.params;
     if (!userId) {
@@ -361,14 +379,12 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
     }
     try {
         const result = await pool.query(
-            `SELECT
-                p.id, p.author_id AS "authorId", p.author_name AS "authorName", p.text_content AS text, p.media_type AS "mediaType", p.media_url AS "mediaUrl", p.timestamp, p.author_profile_bg_url AS "authorProfileBg",
-                COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
-                COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
-                COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
-                (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
+            `SELECT ${getPostSelectClause()}
             FROM posts p
             JOIN follows f ON p.author_id = f.followed_id
+            LEFT JOIN post_likes l ON p.id = l.post_id
+            LEFT JOIN post_views v ON p.id = v.post_id
+            LEFT JOIN post_comments c ON p.id = c.post_id
             WHERE f.follower_id = $1
             GROUP BY p.id
             ORDER BY p.timestamp DESC;`,
@@ -387,12 +403,7 @@ app.get('/api/posts/search', async (req, res) => {
     const { q, filter, userId } = req.query;
     const searchTerm = `%${q}%`;
     let queryText = `
-        SELECT
-            p.id, p.author_id AS "authorId", p.author_name AS "authorName", p.text_content AS text, p.media_type AS "mediaType", p.media_url AS "mediaUrl", p.timestamp, p.author_profile_bg_url AS "authorProfileBg",
-            COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
-            COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
-            COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
-            (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
+        SELECT ${getPostSelectClause()}
         FROM posts p
         LEFT JOIN post_likes l ON p.id = l.post_id
         LEFT JOIN post_views v ON p.id = v.post_id
@@ -555,7 +566,6 @@ app.get('/api/user/:uid/chats', async (req, res) => {
         return res.status(400).json({ error: 'User ID is required.' });
     }
     try {
-        // Fetch private chats where the user is involved
         const privateChatsResult = await pool.query(
             `SELECT
                 pc.id,
@@ -573,7 +583,7 @@ app.get('/api/user/:uid/chats', async (req, res) => {
                     ELSE u1.profile_bg_url
                 END AS "profileBg",
                 COALESCE((SELECT message_text FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
-                COALESCE((SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp -- Return 0 if no messages, not NULL
+                COALESCE((SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp
             FROM private_chats pc
             JOIN users u1 ON pc.user1_id = u1.uid
             JOIN users u2 ON pc.user2_id = u2.uid
@@ -581,7 +591,6 @@ app.get('/api/user/:uid/chats', async (req, res) => {
             `, [uid]
         );
 
-        // Fetch group chats where the user is a member
         const groupChatsResult = await pool.query(
             `SELECT
                 gc.id,
@@ -590,7 +599,7 @@ app.get('/api/user/:uid/chats', async (req, res) => {
                 NULL AS custom_id,
                 NULL AS "profileBg",
                 COALESCE((SELECT message_text FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
-                COALESCE((SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp -- Return 0 if no messages, not NULL
+                COALESCE((SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp
             FROM group_chats gc
             JOIN group_members gm ON gc.id = gm.group_id
             WHERE gm.member_id = $1;
@@ -653,7 +662,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
         let queryText = 'SELECT id, chat_id, sender_id AS "senderId", sender_name AS "senderName", message_text AS "messageText", media_type AS "mediaType", media_url AS "mediaUrl", timestamp, sender_profile_bg_url AS "senderProfileBg" FROM messages WHERE chat_id = $1';
         const queryParams = [chatId];
 
-        if (since && !isNaN(since) && parseInt(since, 10) > 0) { // Only filter if 'since' is a valid positive number
+        if (since && !isNaN(since) && parseInt(since, 10) > 0) {
             queryText += ' AND timestamp > $2';
             queryParams.push(parseInt(since, 10));
         }
