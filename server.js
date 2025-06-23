@@ -44,7 +44,7 @@ app.use(bodyParser.json()); // For parsing JSON request bodies
 app.use(bodyParser.urlencoded({ extended: true })); // For parsing URL-encoded request bodies
 
 // --- Multer for File Uploads ---
-// Ensure 'uploads' directory exists
+// Ensure 'uploads' directory exists for local testing
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
@@ -172,14 +172,12 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         return res.status(400).json({ error: 'User ID is required' });
     }
 
-    // IMPORTANT: Use your actual Supabase Storage URL
-    // Ensure you have a public bucket named 'avatars' (or adjust path)
     const supabaseStorageBaseUrl = process.env.SUPABASE_STORAGE_URL;
     if (!supabaseStorageBaseUrl) {
         console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
         return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
     }
-    const fileUrl = `${supabaseStorageBaseUrl}/public/avatars/${req.file.filename}`; // Adjusted for Supabase public bucket structure
+    const fileUrl = `${supabaseStorageBaseUrl}/public/avatars/${req.file.filename}`;
 
     try {
         await pool.query(
@@ -213,7 +211,6 @@ app.get('/api/user/:uid/profile-background', async (req, res) => {
 app.get('/api/user/:uid/contacts', async (req, res) => {
     const { uid } = req.params;
     try {
-        // Fetch all users except the current user
         const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid != $1', [uid]);
         res.status(200).json(result.rows);
     } catch (error) {
@@ -227,7 +224,7 @@ app.get('/api/user/:uid/contacts', async (req, res) => {
 // Toggle follow/unfollow
 app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    if (!followerId || !followedId) { // Basic validation
+    if (!followerId || !followedId) {
         return res.status(400).json({ error: 'Follower ID and Followed ID are required.' });
     }
     if (followerId === followedId) {
@@ -235,7 +232,6 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     }
 
     try {
-        // Check if both users exist before trying to follow
         const usersExistResult = await pool.query('SELECT uid FROM users WHERE uid = $1 OR uid = $2', [followerId, followedId]);
         if (usersExistResult.rows.length < 2) {
             return res.status(404).json({ error: 'One or both users not found.' });
@@ -285,7 +281,7 @@ app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
 // Get follower count for a user
 app.get('/api/user/:uid/followers/count', async (req, res) => {
     const { uid } = req.params;
-    if (!uid) { // Basic validation
+    if (!uid) {
         return res.status(400).json({ error: 'User ID is required.' });
     }
     try {
@@ -317,7 +313,6 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
             return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
         }
-        // Ensure you have a public bucket named 'posts' (or adjust path)
         mediaUrl = `${supabaseStorageBaseUrl}/public/posts/${req.file.filename}`;
     }
 
@@ -334,7 +329,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     }
 });
 
-// Get all posts - CORRECTED SQL for array literal issue and proper column names
+// Get all posts
 app.get('/api/posts', async (req, res) => {
     try {
         const result = await pool.query(
@@ -358,9 +353,38 @@ app.get('/api/posts', async (req, res) => {
     }
 });
 
-// Search posts - CORRECTED SQL for array literal issue and proper column names
+// Get followed posts - NEW ROUTE ADDED
+app.get('/api/posts/followed/:userId', async (req, res) => {
+    const { userId } = req.params;
+    if (!userId) {
+        return res.status(400).json({ error: 'User ID is required to fetch followed posts.' });
+    }
+    try {
+        const result = await pool.query(
+            `SELECT
+                p.id, p.author_id AS "authorId", p.author_name AS "authorName", p.text_content AS text, p.media_type AS "mediaType", p.media_url AS "mediaUrl", p.timestamp, p.author_profile_bg_url AS "authorProfileBg",
+                COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
+                COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
+                COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
+                (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
+            FROM posts p
+            JOIN follows f ON p.author_id = f.followed_id
+            WHERE f.follower_id = $1
+            GROUP BY p.id
+            ORDER BY p.timestamp DESC;`,
+            [userId]
+        );
+        res.status(200).json(result.rows);
+    } catch (error) {
+        console.error('Error fetching followed posts:', error);
+        res.status(500).json({ error: 'Internal server error fetching followed posts' });
+    }
+});
+
+
+// Search posts
 app.get('/api/posts/search', async (req, res) => {
-    const { q, filter, userId } = req.query; // q is search query, filter can be 'all' or 'followed'
+    const { q, filter, userId } = req.query;
     const searchTerm = `%${q}%`;
     let queryText = `
         SELECT
@@ -374,7 +398,7 @@ app.get('/api/posts/search', async (req, res) => {
         LEFT JOIN post_views v ON p.id = v.post_id
         LEFT JOIN post_comments c ON p.id = c.post_id
     `;
-    const queryParams = []; // Using a mutable array for parameters
+    const queryParams = [];
 
     let whereClauseParts = [];
     if (q) {
@@ -527,7 +551,7 @@ app.delete('/api/posts/:postId', async (req, res) => {
 // Get user's chat list (private and group chats)
 app.get('/api/user/:uid/chats', async (req, res) => {
     const { uid } = req.params;
-    if (!uid) { // Basic validation
+    if (!uid) {
         return res.status(400).json({ error: 'User ID is required.' });
     }
     try {
@@ -547,9 +571,9 @@ app.get('/api/user/:uid/chats', async (req, res) => {
                 CASE
                     WHEN pc.user1_id = $1 THEN u2.profile_bg_url
                     ELSE u1.profile_bg_url
-                END AS "profileBg", -- Ensure this matches frontend expected name
-                (SELECT message_text FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1) AS "lastMessage", -- Matches frontend
-                (SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1) AS timestamp
+                END AS "profileBg",
+                COALESCE((SELECT message_text FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
+                COALESCE((SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp -- Return 0 if no messages, not NULL
             FROM private_chats pc
             JOIN users u1 ON pc.user1_id = u1.uid
             JOIN users u2 ON pc.user2_id = u2.uid
@@ -564,9 +588,9 @@ app.get('/api/user/:uid/chats', async (req, res) => {
                 'group' AS type,
                 gc.name,
                 NULL AS custom_id,
-                NULL AS "profileBg", -- Group profile backgrounds not implemented for now
-                (SELECT message_text FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1) AS "lastMessage",
-                (SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1) AS timestamp
+                NULL AS "profileBg",
+                COALESCE((SELECT message_text FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
+                COALESCE((SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp -- Return 0 if no messages, not NULL
             FROM group_chats gc
             JOIN group_members gm ON gc.id = gm.group_id
             WHERE gm.member_id = $1;
@@ -606,19 +630,11 @@ app.post('/api/chats/private', async (req, res) => {
             res.status(200).json({ message: 'Chat already exists', chatId });
         } else {
             chatId = uuidv4();
-            // Fetch profile backgrounds for both users to store with chat, if needed
-            const user1ProfileBgResult = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user1Id]);
-            const user2ProfileBgResult = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $2', [user2Id]);
-            const user1ProfileBg = user1ProfileBgResult.rows[0] ? user1ProfileBgResult.rows[0].profile_bg_url : null;
-            const user2ProfileBg = user2ProfileBgResult.rows[0] ? user2ProfileBgResult.rows[0].profile_bg_url : null;
-
-
             await pool.query(
                 `INSERT INTO private_chats (id, user1_id, user2_id, user1_name, user2_name, user1_custom_id, user2_custom_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                 [chatId, id1, id2, user1Name, user2Name, user1CustomId, user2CustomId]
             );
-            // Optionally, store contactName per user in a separate table if needed for frontend display consistency
             res.status(201).json({ message: 'Private chat created successfully', chatId });
         }
     } catch (error) {
@@ -631,13 +647,13 @@ app.post('/api/chats/private', async (req, res) => {
 // Get messages for a chat
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
-    const { since } = req.query; // Timestamp to fetch messages newer than
+    const { since } = req.query;
 
     try {
         let queryText = 'SELECT id, chat_id, sender_id AS "senderId", sender_name AS "senderName", message_text AS "messageText", media_type AS "mediaType", media_url AS "mediaUrl", timestamp, sender_profile_bg_url AS "senderProfileBg" FROM messages WHERE chat_id = $1';
         const queryParams = [chatId];
 
-        if (since && !isNaN(since)) {
+        if (since && !isNaN(since) && parseInt(since, 10) > 0) { // Only filter if 'since' is a valid positive number
             queryText += ' AND timestamp > $2';
             queryParams.push(parseInt(since, 10));
         }
@@ -668,7 +684,6 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
             return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
         }
-        // Ensure you have a public bucket named 'messages' (or adjust path)
         mediaUrl = `${supabaseStorageBaseUrl}/public/messages/${req.file.filename}`;
     }
 
@@ -697,8 +712,6 @@ app.post('/api/chats/delete', async (req, res) => {
     try {
         if (chatType === 'private') {
             if (action === 'forMe') {
-                // In a real app, this would involve a user-specific flag.
-                // For now, it's just a placeholder as actual data deletion for "forMe" is complex.
                 res.status(200).json({ message: 'Chat messages hidden for you.' });
             } else if (action === 'forBoth') {
                 await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
