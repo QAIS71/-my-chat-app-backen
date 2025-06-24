@@ -1,918 +1,782 @@
-// Load environment variables from .env file
-require('dotenv').config();
+// server.js (Backend)
 
-// Import necessary modules
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
-const { Pool } = require('pg'); // PostgreSQL client for database interaction
-const bcrypt = require('bcryptjs'); // For password hashing
-const { v4: uuidv4 } = require('uuid'); // For generating unique IDs
-const multer = require('multer'); // For handling file uploads
-const path = require('path'); // For path manipulation
-const fs = require('fs'); // For file system operations
-
+const bodyParser = require('body-parser');
+const multer = require('multer'); // For handling file uploads (multipart/form-data)
 const app = express();
-const PORT = process.env.PORT || 3000; // Use port from environment variable or default to 3000
+const PORT = process.env.PORT || 3000;
 
-// --- Configure PostgreSQL/Supabase Database Connection ---
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false // Required for some cloud providers like Render/Supabase
-    }
-});
+// In-memory "database" for demonstration purposes.
+// Data will be lost when the server restarts.
+const users = [];
+let posts = []; // Changed to 'let' as it's reassigned in delete post
+let chats = []; // Changed to 'let' as it's reassigned in delete chat
+let messages = []; // Changed to 'let' as it's reassigned in delete chat
 
-// Test database connection
-pool.connect((err, client, release) => {
-    if (err) {
-        // Log the full error stack for debugging connection issues
-        console.error('Error acquiring client to PostgreSQL database:', err.stack);
-        // Optionally, exit the process if DB connection is critical for startup
-        // process.exit(1); 
-    } else {
-        console.log('Successfully connected to PostgreSQL database!');
-        release(); // Release the client back to the pool
-    }
-});
-
-// --- CORS Configuration ---
-app.use(cors({
-    origin: process.env.FRONTEND_URL || '*', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-// --- Middleware ---
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-// --- Multer for File Uploads ---
-// Ensure 'uploads' directory exists for local testing
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
+// --- Helper for generating unique IDs and custom IDs ---
+function generateUniqueId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${uuidv4()}-${file.originalname}`);
-    }
-});
+function generateCustomId() {
+    // Generate an 8-digit custom ID
+    let id;
+    do {
+        id = Math.floor(10000000 + Math.random() * 90000000).toString();
+    } while (users.some(u => u.customId === id)); // Ensure uniqueness
+    return id;
+}
+
+// --- CORS and Body Parser Middleware ---
+app.use(cors()); // Allow all cross-origin requests
+app.use(bodyParser.json()); // For parsing application/json
+app.use(bodyParser.urlencoded({ extended: true })); // For parsing application/x-www-form-urlencoded
+
+// Multer for file uploads (diskStorage is just a placeholder, actual storage needs cloud)
+const storage = multer.memoryStorage(); // Store files in memory temporarily
 const upload = multer({ storage: storage });
 
-// Serve static files from the 'uploads' directory (for local testing of media files)
-app.use('/uploads', express.static(uploadsDir));
+// --- API Endpoints ---
 
-
-// --- Helper Functions (for clarity and reusability) ---
-
-// Function to generate a unique 8-digit custom ID
-async function generateCustomId() {
-    let customId;
-    let isUnique = false;
-    while (!isUnique) {
-        customId = Math.floor(10000000 + Math.random() * 90000000).toString();
-        const result = await pool.query('SELECT 1 FROM users WHERE custom_id = $1', [customId]);
-        if (result.rows.length === 0) {
-            isUnique = true;
-        }
-    }
-    return customId;
-}
-
-// --- API Routes ---
-
-// 1. User Authentication and Management
-// Register a new user
-app.post('/api/register', async (req, res) => {
+// 1. User Registration
+app.post('/api/register', (req, res) => {
     const { username, password } = req.body;
+
     if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+        console.log('Register attempt: Missing username or password.');
+        return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان.' });
+    }
+    if (users.some(u => u.username === username)) {
+        console.log(`Register attempt: Username '${username}' already exists.`);
+        return res.status(409).json({ error: 'اسم المستخدم هذا موجود بالفعل.' });
     }
 
-    try {
-        const userExists = await pool.query('SELECT 1 FROM users WHERE username = $1', [username]);
-        if (userExists.rows.length > 0) {
-            return res.status(409).json({ error: 'Username already taken' });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const uid = uuidv4();
-        const customId = await generateCustomId();
-
-        const newUser = await pool.query(
-            'INSERT INTO users (uid, username, password, custom_id) VALUES ($1, $2, $3, $4) RETURNING uid, username, custom_id',
-            [uid, username, hashedPassword, customId]
-        );
-        res.status(201).json({ message: 'User registered successfully', user: newUser.rows[0] });
-    } catch (error) {
-        console.error('Error registering user:', error);
-        res.status(500).json({ error: 'Internal server error during registration' });
-    }
+    const newUser = {
+        uid: generateUniqueId(),
+        username,
+        password, // In a real app, hash this password!
+        customId: generateCustomId(),
+        profileBg: null, // Default profile background URL
+        followers: [], // UIDs of users who follow this user
+        following: []  // UIDs of users this user follows
+    };
+    users.push(newUser);
+    console.log('Registered new user:', newUser.username, 'UID:', newUser.uid, 'Custom ID:', newUser.customId);
+    res.status(201).json({ message: 'تم إنشاء المستخدم بنجاح.', user: { uid: newUser.uid, username: newUser.username, customId: newUser.customId } });
 });
 
-// Login user
-app.post('/api/login', async (req, res) => {
+// 2. User Login
+app.post('/api/login', (req, res) => ح
     const { username, password } = req.body;
-    if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are required' });
+
+    const user = users.find(u => u.username === username && u.password === password); // In a real app, compare hashed password!
+
+    if (!user) {
+        console.log('Login attempt failed: Invalid username or password for', username);
+        return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
     }
 
-    try {
-        const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
-        const user = userResult.rows[0];
-
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-        if (!isPasswordValid) {
-            return res.status(401).json({ error: 'Invalid username or password' });
-        }
-
-        res.status(200).json({
-            message: 'Login successful',
-            user: {
-                uid: user.uid,
-                username: user.username,
-                customId: user.custom_id,
-                profileBg: user.profile_bg_url
-            }
-        });
-    } catch (error) {
-        console.error('Error logging in user:', error);
-        res.status(500).json({ error: 'Internal server error during login' });
-    }
+    // In a real app, return a JWT token here
+    console.log('User logged in:', user.username, 'UID:', user.uid);
+    res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.customId, profileBg: user.profileBg } });
 });
 
-// Get user by custom ID (for initiating private chats)
-app.get('/api/user/by-custom-id/:customId', async (req, res) => {
+// 3. Get User by Custom ID (Crucial for private chat initiation)
+app.get('/api/user/by-custom-id/:customId', (req, res) => {
     const { customId } = req.params;
-    try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE custom_id = $1', [customId]);
-        if (result.rows.length > 0) {
-            res.status(200).json(result.rows[0]);
-        } else {
-            res.status(404).json({ error: 'User not found' });
-        }
-    } catch (error) {
-        console.error('Error fetching user by custom ID:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    const user = users.find(u => u.customId === customId);
+
+    if (!user) {
+        console.log(`Get User by Custom ID: User with Custom ID '${customId}' not found.`);
+        return res.status(404).json({ error: 'لم يتم العثور على مستخدم بهذا المعرف.' });
     }
+    // Return relevant public user data, including their actual username and profileBg
+    console.log(`Found user for custom ID '${customId}': ${user.username}, UID: ${user.uid}`);
+    res.status(200).json({ uid: user.uid, username: user.username, customId: user.customId, profileBg: user.profileBg });
 });
 
-// Upload profile background
-app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
+// 4. Upload Profile Background
+app.post('/api/upload-profile-background', upload.single('file'), (req, res) => {
     const { userId } = req.body;
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
-    }
+    const user = users.find(u => u.uid === userId);
 
-    const supabaseStorageBaseUrl = process.env.SUPABASE_STORAGE_URL;
-    if (!supabaseStorageBaseUrl) {
-        console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
-        return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
-    }
-    const fileUrl = `${supabaseStorageBaseUrl}/public/avatars/${req.file.filename}`;
-
-    try {
-        await pool.query(
-            'UPDATE users SET profile_bg_url = $1 WHERE uid = $2',
-            [fileUrl, userId]
-        );
-        res.status(200).json({ message: 'Profile background updated', url: fileUrl });
-    } catch (error) {
-        console.error('Error uploading profile background:', error);
-        res.status(500).json({ error: 'Internal server error during upload' });
-    }
-});
-
-// Get user profile background URL
-app.get('/api/user/:uid/profile-background', async (req, res) => {
-    const { uid } = req.params;
-    try {
-        const result = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [uid]);
-        if (result.rows.length > 0) {
-            res.status(200).json({ url: result.rows[0].profile_bg_url });
-        } else {
-            res.status(404).json({ error: 'User not found or no profile background' });
-        }
-    } catch (error) {
-        console.error('Error fetching profile background:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get contacts (currently all users for selection in new chats/groups)
-app.get('/api/user/:uid/contacts', async (req, res) => {
-    const { uid } = req.params;
-    try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid != $1', [uid]);
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching contacts:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-
-// 2. Following System
-// Toggle follow/unfollow
-app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
-    const { followerId, followedId } = req.params;
-    if (!followerId || !followedId) {
-        return res.status(400).json({ error: 'Follower ID and Followed ID are required.' });
-    }
-    if (followerId === followedId) {
-        return res.status(400).json({ error: 'Cannot follow yourself' });
-    }
-
-    try {
-        const usersExistResult = await pool.query('SELECT uid FROM users WHERE uid = $1 OR uid = $2', [followerId, followedId]);
-        if (usersExistResult.rows.length < 2) {
-            return res.status(404).json({ error: 'One or both users not found.' });
-        }
-
-        const existingFollow = await pool.query(
-            'SELECT 1 FROM follows WHERE follower_id = $1 AND followed_id = $2',
-            [followerId, followedId]
-        );
-
-        if (existingFollow.rows.length > 0) {
-            // Unfollow
-            await pool.query(
-                'DELETE FROM follows WHERE follower_id = $1 AND followed_id = $2',
-                [followerId, followedId]
-            );
-            res.status(200).json({ message: 'Unfollowed successfully', isFollowing: false });
-        } else {
-            // Follow
-            await pool.query(
-                'INSERT INTO follows (follower_id, followed_id) VALUES ($1, $2)',
-                [followerId, followedId]
-            );
-            res.status(200).json({ message: 'Followed successfully', isFollowing: true });
-        }
-    } catch (error) {
-        console.error('Error toggling follow status:', error);
-        res.status(500).json({ error: 'Internal server error during follow operation' });
-    }
-});
-
-// Check if a user is following another
-app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
-    const { followerId, followedId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT 1 FROM follows WHERE follower_id = $1 AND followed_id = $2',
-            [followerId, followedId]
-        );
-        res.status(200).json({ isFollowing: result.rows.length > 0 });
-    } catch (error) {
-        console.error('Error checking follow status:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get follower count for a user
-app.get('/api/user/:uid/followers/count', async (req, res) => {
-    const { uid } = req.params;
-    if (!uid) {
-        return res.status(400).json({ error: 'User ID is required.' });
-    }
-    try {
-        const result = await pool.query(
-            'SELECT COUNT(*) FROM follows WHERE followed_id = $1',
-            [uid]
-        );
-        res.status(200).json({ count: parseInt(result.rows[0].count, 10) });
-    } catch (error) {
-        console.error('Error fetching follower count:', error);
-        res.status(500).json({ error: 'Internal server error during follower count fetch' });
-    }
-});
-
-
-// 3. Post Management (World/Feed)
-// Create a new post
-app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
-    const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
-    let mediaUrl = null;
-
-    if (!authorId || !authorName || (!text && !req.file)) {
-        return res.status(400).json({ error: 'Post must have text or media, and author info' });
-    }
-
-    if (req.file) {
-        const supabaseStorageBaseUrl = process.env.SUPABASE_STORAGE_URL;
-        if (!supabaseStorageBaseUrl) {
-            console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
-            return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
-        }
-        mediaUrl = `${supabaseStorageBaseUrl}/public/posts/${req.file.filename}`;
-    }
-
-    try {
-        const newPost = await pool.query(
-            `INSERT INTO posts (id, author_id, author_name, text_content, media_type, media_url, timestamp, author_profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [uuidv4(), authorId, authorName, text, mediaType || (req.file ? (req.file.mimetype.startsWith('image/') ? 'image' : 'video') : 'text'), mediaUrl, Date.now(), authorProfileBg]
-        );
-        res.status(201).json({ message: 'Post published successfully', post: newPost.rows[0] });
-    } catch (error) {
-        console.error('Error publishing post:', error);
-        res.status(500).json({ error: 'Internal server error during post creation' });
-    }
-});
-
-// Helper function to construct the common post SELECT clause
-// This ensures consistent column naming (camelCase) and data formatting for frontend
-function getPostSelectClause() {
-    return `
-        p.id,
-        p.author_id AS "authorId",
-        p.author_name AS "authorName",
-        p.text_content AS text,
-        p.media_type AS "mediaType",
-        p.media_url AS "mediaUrl",
-        p.timestamp,
-        p.author_profile_bg_url AS "authorProfileBg",
-        COALESCE(json_agg(l.user_id) FILTER (WHERE l.user_id IS NOT NULL), '[]'::json) AS likes,
-        COALESCE(json_agg(DISTINCT v.user_id) FILTER (WHERE v.user_id IS NOT NULL), '[]'::json) AS views,
-        COALESCE(json_agg(jsonb_build_object('user', c.username, 'text', c.comment_text, 'timestamp', c.timestamp)) FILTER (WHERE c.id IS NOT NULL), '[]'::json) AS comments,
-        (SELECT COUNT(*) FROM follows WHERE followed_id = p.author_id) AS "followerCount"
-    `;
-}
-
-// Get all posts
-app.get('/api/posts', async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT ${getPostSelectClause()}
-            FROM posts p
-            LEFT JOIN post_likes l ON p.id = l.post_id
-            LEFT JOIN post_views v ON p.id = v.post_id
-            LEFT JOIN post_comments c ON p.id = c.post_id
-            GROUP BY p.id
-            ORDER BY p.timestamp DESC;`
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching all posts:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get followed posts
-app.get('/api/posts/followed/:userId', async (req, res) => {
-    const { userId } = req.params;
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required to fetch followed posts.' });
-    }
-    try {
-        const result = await pool.query(
-            `SELECT ${getPostSelectClause()}
-            FROM posts p
-            JOIN follows f ON p.author_id = f.followed_id
-            LEFT JOIN post_likes l ON p.id = l.post_id
-            LEFT JOIN post_views v ON p.id = v.post_id
-            LEFT JOIN post_comments c ON p.id = c.post_id
-            WHERE f.follower_id = $1
-            GROUP BY p.id
-            ORDER BY p.timestamp DESC;`,
-            [userId]
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching followed posts:', error);
-        res.status(500).json({ error: 'Internal server error fetching followed posts' });
-    }
-});
-
-
-// Search posts
-app.get('/api/posts/search', async (req, res) => {
-    const { q, filter, userId } = req.query;
-    const searchTerm = `%${q}%`;
-    let queryText = `
-        SELECT ${getPostSelectClause()}
-        FROM posts p
-        LEFT JOIN post_likes l ON p.id = l.post_id
-        LEFT JOIN post_views v ON p.id = v.post_id
-        LEFT JOIN post_comments c ON p.id = c.post_id
-    `;
-    const queryParams = [];
-
-    let whereClauseParts = [];
-    if (q) {
-        whereClauseParts.push(`(p.text_content ILIKE $${queryParams.length + 1} OR p.author_name ILIKE $${queryParams.length + 1})`);
-        queryParams.push(searchTerm);
+    if (!user) {
+        console.log('Upload profile background: User not found for ID', userId);
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
     
-    if (filter === 'followed' && userId) {
-        queryText += ` JOIN follows f ON p.author_id = f.followed_id `;
-        whereClauseParts.push(`f.follower_id = $${queryParams.length + 1}`);
-        queryParams.push(userId);
+    // For demonstration, we just update the URL to a placeholder or a generic image.
+    // In a real application, you would upload req.file.buffer to cloud storage (e.g., AWS S3, Google Cloud Storage)
+    let imageUrl = 'https://placehold.co/100x100/eeeeee/000?text=Profile'; // Default placeholder
+    if (req.file) {
+        console.log(`File received for user ${userId}: ${req.file.originalname}. (Simulating upload)`);
+        // In a real app, this is where you'd upload the file and get a real URL.
+        // For now, we'll just use a more dynamic placeholder or a fixed one.
+        imageUrl = `https://placehold.co/100x100/${Math.floor(Math.random()*16777215).toString(16)}/ffffff?text=${user.username.charAt(0).toUpperCase()}`;
+    } else {
+        console.log(`No file received for user ${userId}, setting default placeholder.`);
     }
 
-    if (whereClauseParts.length > 0) {
-        queryText += ` WHERE ` + whereClauseParts.join(' AND ');
-    }
+    user.profileBg = imageUrl;
+    console.log(`User ${userId} profile background updated to: ${user.profileBg}`);
+    res.status(200).json({ message: 'تم تعيين الخلفية بنجاح (باستخدام صورة بديلة).', url: user.profileBg });
+});
 
-    queryText += `
-        GROUP BY p.id
-        ORDER BY p.timestamp DESC;
-    `;
-
-    try {
-        const result = await pool.query(queryText, queryParams);
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error searching posts:', error);
-        res.status(500).json({ error: 'Internal server error' });
+// 5. Get User's Profile Background (if needed separately)
+app.get('/api/user/:userId/profile-background', (req, res) => {
+    const { userId } = req.params;
+    const user = users.find(u => u.uid === userId);
+    if (!user) {
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
+    res.status(200).json({ url: user.profileBg || null });
 });
 
 
-// Toggle like on a post
-app.post('/api/posts/:postId/like', async (req, res) => {
-    const { postId } = req.params;
-    const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
+// 6. Get User's Follower Count
+app.get('/api/user/:userId/followers/count', (req, res) => {
+    const { userId } = req.params;
+    const user = users.find(u => u.uid === userId);
+    if (!user) {
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
-
-    try {
-        const existingLike = await pool.query(
-            'SELECT 1 FROM post_likes WHERE post_id = $1 AND user_id = $2',
-            [postId, userId]
-        );
-
-        let isLiked;
-        if (existingLike.rows.length > 0) {
-            // Unlike
-            await pool.query('DELETE FROM post_likes WHERE post_id = $1 AND user_id = $2', [postId, userId]);
-            isLiked = false;
-        } else {
-            // Like
-            await pool.query('INSERT INTO post_likes (post_id, user_id) VALUES ($1, $2)', [postId, userId]);
-            isLiked = true;
-        }
-
-        const likesCountResult = await pool.query('SELECT COUNT(*) FROM post_likes WHERE post_id = $1', [postId]);
-        const likesCount = parseInt(likesCountResult.rows[0].count, 10);
-
-        res.status(200).json({ message: 'Like toggled', isLiked, likesCount });
-    } catch (error) {
-        console.error('Error toggling like:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
+    res.status(200).json({ count: user.followers.length });
 });
 
-// Increment post view count
-app.post('/api/posts/:postId/view', async (req, res) => {
-    const { postId } = req.params;
-    const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: 'User ID is required' });
+// 7. Toggle Follow/Unfollow
+app.post('/api/user/:followerId/follow/:targetId', (req, res) => {
+    const { followerId, targetId } = req.params;
+
+    const follower = users.find(u => u.uid === followerId);
+    const targetUser = users.find(u => u.uid === targetId);
+
+    if (!follower || !targetUser) {
+        return res.status(404).json({ error: 'المستخدم (المتابع أو المستهدف) غير موجود.' });
+    }
+    if (followerId === targetId) {
+        return res.status(400).json({ error: 'لا يمكنك متابعة نفسك.' });
     }
 
-    try {
-        const existingView = await pool.query(
-            'SELECT 1 FROM post_views WHERE post_id = $1 AND user_id = $2',
-            [postId, userId]
-        );
+    const isFollowing = follower.following.includes(targetId);
+    let message;
 
-        if (existingView.rows.length === 0) {
-            await pool.query(
-                'INSERT INTO post_views (post_id, user_id, timestamp) VALUES ($1, $2, $3)',
-                [postId, userId, Date.now()]
-            );
-        }
-        res.status(200).json({ message: 'View recorded' });
-    } catch (error) {
-        console.error('Error recording view:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    if (isFollowing) {
+        // Unfollow
+        follower.following = follower.following.filter(id => id !== targetId);
+        targetUser.followers = targetUser.followers.filter(id => id !== followerId);
+        message = 'تم إلغاء المتابعة.';
+        console.log(`User ${follower.username} unfollowed ${targetUser.username}`);
+    } else {
+        // Follow
+        follower.following.push(targetId);
+        targetUser.followers.push(followerId);
+        message = 'تمت المتابعة بنجاح.';
+        console.log(`User ${follower.username} followed ${targetUser.username}`);
     }
+
+    res.status(200).json({ message, isFollowing: !isFollowing });
 });
 
-// Add a comment to a post
-app.post('/api/posts/:postId/comments', async (req, res) => {
-    const { postId } = req.params;
-    const { userId, username, text } = req.body;
-    if (!userId || !username || !text) {
-        return res.status(400).json({ error: 'User ID, username, and comment text are required' });
+// 8. Check Follow Status
+app.get('/api/user/:followerId/following/:targetId', (req, res) => {
+    const { followerId, targetId } = req.params;
+    const follower = users.find(u => u.uid === followerId);
+
+    if (!follower) {
+        return res.status(404).json({ error: 'المستخدم المتابع غير موجود.' });
     }
-
-    try {
-        await pool.query(
-            'INSERT INTO post_comments (id, post_id, user_id, username, comment_text, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
-            [uuidv4(), postId, userId, username, text, Date.now()]
-        );
-        res.status(201).json({ message: 'Comment added successfully' });
-    } catch (error) {
-        console.error('Error adding comment:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get comments for a post
-app.get('/api/posts/:postId/comments', async (req, res) => {
-    const { postId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT user_id, username AS user, comment_text AS text, timestamp FROM post_comments WHERE post_id = $1 ORDER BY timestamp ASC',
-            [postId]
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching comments:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Delete a post
-app.delete('/api/posts/:postId', async (req, res) => {
-    const { postId } = req.params;
-    try {
-        await pool.query('DELETE FROM post_likes WHERE post_id = $1', [postId]);
-        await pool.query('DELETE FROM post_comments WHERE post_id = $1', [postId]);
-        await pool.query('DELETE FROM post_views WHERE post_id = $1', [postId]);
-
-        const result = await pool.query('DELETE FROM posts WHERE id = $1 RETURNING id', [postId]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Post not found' });
-        }
-        res.status(200).json({ message: 'Post deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting post:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// 4. Chat Management
-// Get user's chat list (private and group chats)
-app.get('/api/user/:uid/chats', async (req, res) => {
-    const { uid } = req.params;
-    if (!uid) {
-        return res.status(400).json({ error: 'User ID is required.' });
-    }
-    try {
-        const privateChatsResult = await pool.query(
-            `SELECT
-                pc.id,
-                'private' AS type,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.username
-                    ELSE u1.username
-                END AS name,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.custom_id
-                    ELSE u1.custom_id
-                END AS custom_id,
-                CASE
-                    WHEN pc.user1_id = $1 THEN u2.profile_bg_url
-                    ELSE u1.profile_bg_url
-                END AS "profileBg",
-                COALESCE((SELECT message_text FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
-                COALESCE((SELECT timestamp FROM messages WHERE chat_id = pc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp
-            FROM private_chats pc
-            JOIN users u1 ON pc.user1_id = u1.uid
-            JOIN users u2 ON pc.user2_id = u2.uid
-            WHERE pc.user1_id = $1 OR pc.user2_id = $1;
-            `, [uid]
-        );
-
-        const groupChatsResult = await pool.query(
-            `SELECT
-                gc.id,
-                'group' AS type,
-                gc.name,
-                NULL AS custom_id,
-                NULL AS "profileBg",
-                COALESCE((SELECT message_text FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 'لا توجد رسائل بعد.') AS "lastMessage",
-                COALESCE((SELECT timestamp FROM messages WHERE chat_id = gc.id ORDER BY timestamp DESC LIMIT 1), 0) AS timestamp
-            FROM group_chats gc
-            JOIN group_members gm ON gc.id = gm.group_id
-            WHERE gm.member_id = $1;
-            `, [uid]
-        );
-
-        const allChats = [...privateChatsResult.rows, ...groupChatsResult.rows];
-        allChats.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); 
-
-        res.status(200).json(allChats);
-    } catch (error) {
-        console.error('Error fetching chat list:', error);
-        res.status(500).json({ error: 'Internal server error during chat list fetch' });
-    }
+    const isFollowing = follower.following.includes(targetId);
+    res.status(200).json({ isFollowing });
 });
 
 
-// Create or get a private chat
-app.post('/api/chats/private', async (req, res) => {
+// 9. Get User's Contacts (for group creation and other features)
+app.get('/api/user/:userId/contacts', (req, res) => {
+    const { userId } = req.params;
+    const user = users.find(u => u.uid === userId);
+    if (!user) {
+        console.log('Get contacts: User not found for ID', userId);
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+    }
+
+    // For simplicity, return all other registered users as "contacts"
+    // In a real app, this would be a filtered list based on actual contacts, friends, or followed users.
+    const allOtherUsers = users.filter(u => u.uid !== userId)
+                               .map(u => ({ uid: u.uid, username: u.username, customId: u.customId }));
+
+    console.log(`Returning ${allOtherUsers.length} contacts for user ${user.username}.`);
+    res.status(200).json(allOtherUsers);
+});
+
+
+// 10. Create Private Chat (Updated for better logic)
+app.post('/api/chats/private', (req, res) => {
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
 
     if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
-        return res.status(400).json({ error: 'Missing required chat parameters' });
+        console.log('Create private chat attempt: Missing required fields.', req.body);
+        return res.status(400).json({ error: 'جميع حقول المستخدمين واسم جهة الاتصال مطلوبة لإنشاء محادثة خاصة.' });
     }
 
-    try {
-        const [id1, id2] = [user1Id, user2Id].sort();
-
-        const existingChat = await pool.query(
-            'SELECT id FROM private_chats WHERE (user1_id = $1 AND user2_id = $2) OR (user1_id = $2 AND user2_id = $1)',
-            [id1, id2]
-        );
-
-        let chatId;
-        if (existingChat.rows.length > 0) {
-            chatId = existingChat.rows[0].id;
-            res.status(200).json({ message: 'Chat already exists', chatId });
-        } else {
-            chatId = uuidv4();
-            await pool.query(
-                `INSERT INTO private_chats (id, user1_id, user2_id, user1_name, user2_name, user1_custom_id, user2_custom_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [chatId, id1, id2, user1Name, user2Name, user1CustomId, user2CustomId]
-            );
-            res.status(201).json({ message: 'Private chat created successfully', chatId });
-        }
-    } catch (error) {
-        console.error('Error creating/getting private chat:', error);
-        res.status(500).json({ error: 'Internal server error during private chat creation' });
+    // Ensure users exist
+    const actualUser1 = users.find(u => u.uid === user1Id);
+    const actualUser2 = users.find(u => u.uid === user2Id);
+    if (!actualUser1 || !actualUser2) {
+        console.log('Create private chat attempt: One or both actual users not found. User1:', user1Id, 'User2:', user2Id);
+        return res.status(404).json({ error: 'أحد المستخدمين أو كلاهما غير موجود.' });
     }
+    if (user1Id === user2Id) {
+        console.log('Create private chat attempt: Cannot chat with self for private chat.');
+        return res.status(400).json({ error: 'لا يمكنك بدء محادثة فردية مع نفسك.' });
+    }
+
+    // Check if a private chat already exists between these two users
+    const existingChat = chats.find(chat =>
+        chat.type === 'private' &&
+        ((chat.members.includes(user1Id) && chat.members.includes(user2Id)))
+    );
+
+    if (existingChat) {
+        console.log(`Existing private chat found between ${user1Name} and ${user2Name}. Chat ID: ${existingChat.id}`);
+        return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChat.id });
+    }
+
+    const newChat = {
+        id: generateUniqueId(),
+        type: 'private',
+        members: [user1Id, user2Id], // UIDs of both users
+        memberInfo: { // Store info for quick display in chat list for each user
+            [user1Id]: { username: user1Name, customId: user1CustomId, contactName: contactName, profileBg: actualUser1.profileBg }, // contactName saved by user1
+            [user2Id]: { username: user2Name, customId: user2CustomId, contactName: user1Name, profileBg: actualUser2.profileBg } // user2 saves user1's actual name
+        },
+        createdAt: Date.now(),
+        lastMessage: null,
+        timestamp: Date.now(),
+        // For private chats, the 'profileBg' of the chat itself isn't used, individual member profileBgs are used.
+    };
+    chats.push(newChat);
+    console.log('Created new private chat:', newChat.id, 'between', user1Name, 'and', user2Name);
+    res.status(201).json({ message: 'تم إنشاء المحادثة الخاصة بنجاح.', chatId: newChat.id });
 });
 
-
-// Get messages for a chat
-app.get('/api/chats/:chatId/messages', async (req, res) => {
-    const { chatId } = req.params;
-    const { since } = req.query;
-
-    try {
-        let queryText = 'SELECT id, chat_id, sender_id AS "senderId", sender_name AS "senderName", message_text AS "messageText", media_type AS "mediaType", media_url AS "mediaUrl", timestamp, sender_profile_bg_url AS "senderProfileBg" FROM messages WHERE chat_id = $1';
-        const queryParams = [chatId];
-
-        if (since && !isNaN(since) && parseInt(since, 10) > 0) {
-            queryText += ' AND timestamp > $2';
-            queryParams.push(parseInt(since, 10));
-        }
-
-        queryText += ' ORDER BY timestamp ASC';
-
-        const result = await pool.query(queryText, queryParams);
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching messages:', error);
-        res.status(500).json({ error: 'Internal server error during message fetch' });
-    }
-});
-
-// Send a message in a chat
-app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
-    const { chatId } = req.params;
-    const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
-    let mediaUrl = null;
-
-    if (!senderId || !senderName || !chatId || (!text && !req.file)) {
-        return res.status(400).json({ error: 'Missing required message parameters' });
-    }
-
-    if (req.file) {
-        const supabaseStorageBaseUrl = process.env.SUPABASE_STORAGE_URL;
-        if (!supabaseStorageBaseUrl) {
-            console.error("SUPABASE_STORAGE_URL is not set in environment variables.");
-            return res.status(500).json({ error: 'Server misconfiguration: Storage URL missing.' });
-        }
-        mediaUrl = `${supabaseStorageBaseUrl}/public/messages/${req.file.filename}`;
-    }
-
-    try {
-        const newMessage = await pool.query(
-            `INSERT INTO messages (id, chat_id, sender_id, sender_name, message_text, media_type, media_url, timestamp, sender_profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-            [uuidv4(), chatId, senderId, senderName, text, mediaType || (req.file ? (req.file.mimetype.startsWith('image/') ? 'image' : 'video') : 'text'), mediaUrl, Date.now(), senderProfileBg]
-        );
-        res.status(201).json({ message: 'Message sent successfully', messageData: newMessage.rows[0] });
-    } catch (error) {
-        console.error('Error sending message:', error);
-        res.status(500).json({ error: 'Internal server error during message send' });
-    }
-});
-
-
-// Delete chat (for user only, or for both, or leave group)
-app.post('/api/chats/delete', async (req, res) => {
-    const { chatId, chatType, action, userId } = req.body;
-
-    if (!chatId || !chatType || !action || !userId) {
-        return res.status(400).json({ error: 'Missing required parameters for chat deletion' });
-    }
-
-    try {
-        if (chatType === 'private') {
-            if (action === 'forMe') {
-                res.status(200).json({ message: 'Chat messages hidden for you.' });
-            } else if (action === 'forBoth') {
-                await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-                await pool.query('DELETE FROM private_chats WHERE id = $1', [chatId]);
-                res.status(200).json({ message: 'Chat deleted for both parties.' });
-            } else {
-                return res.status(400).json({ error: 'Invalid action for private chat' });
-            }
-        } else if (chatType === 'group') {
-            if (action === 'leaveGroup') {
-                await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_id = $2', [chatId, userId]);
-                
-                const remainingMembers = await pool.query('SELECT COUNT(*) FROM group_members WHERE group_id = $1', [chatId]);
-                if (parseInt(remainingMembers.rows[0].count, 10) === 0) {
-                    await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-                    await pool.query('DELETE FROM group_chats WHERE id = $1', [chatId]);
-                }
-                res.status(200).json({ message: 'You have left the group.' });
-            } else if (action === 'forMe') {
-                res.status(200).json({ message: 'Group hidden from your chat list.' });
-            } else {
-                return res.status(400).json({ error: 'Invalid action for group chat' });
-            }
-        } else {
-            return res.status(400).json({ error: 'Invalid chat type' });
-        }
-    } catch (error) {
-        console.error('Error deleting chat:', error);
-        res.status(500).json({ error: 'Internal server error during chat deletion' });
-    }
-});
-
-
-// 5. Group Chat Specific Routes
-// Create a new group
-app.post('/api/groups', async (req, res) => {
-    const { name, description, adminId, members } = req.body;
+// 11. Create Group Chat
+app.post('/api/groups', (req, res) => {
+    const { name, description, adminId, members } = req.body; // members is an object: {uid: role}
 
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
-        return res.status(400).json({ error: 'Group name, admin, and at least two members are required' });
+        console.log('Create group attempt: Missing required fields or less than 2 members.', req.body);
+        return res.status(400).json({ error: 'اسم المجموعة، المشرف، وعضوين على الأقل مطلوبون لإنشاء المجموعة.' });
     }
     if (!members[adminId] || members[adminId] !== 'admin') {
-         return res.status(400).json({ error: 'Admin must be one of the members and have admin role.' });
+         console.log('Create group attempt: Admin not specified or not an admin role.', adminId, members);
+         return res.status(400).json({ error: 'يجب أن يكون المشرف المحدد عضواً ومشرفاً في المجموعة.' });
     }
 
-    try {
-        const groupId = uuidv4();
-        await pool.query(
-            'INSERT INTO group_chats (id, name, description, admin_id, created_at) VALUES ($1, $2, $3, $4, $5)',
-            [groupId, name, description, adminId, Date.now()]
-        );
-
-        const memberInserts = Object.keys(members).map(memberId =>
-            pool.query('INSERT INTO group_members (group_id, member_id, role) VALUES ($1, $2, $3)',
-                       [groupId, memberId, members[memberId]])
-        );
-        await Promise.all(memberInserts);
-
-        res.status(201).json({ message: 'Group created successfully', groupId });
-    } catch (error) {
-        console.error('Error creating group:', error);
-        res.status(500).json({ error: 'Internal server error during group creation' });
-    }
+    const newGroup = {
+        id: generateUniqueId(),
+        type: 'group',
+        name,
+        description,
+        adminId, // Creator is the first admin
+        members: Object.keys(members), // Array of UIDs
+        memberRoles: members, // { uid: 'admin' | 'member' }
+        createdAt: Date.now(),
+        lastMessage: null,
+        timestamp: Date.now(),
+        profileBg: null // Group profile background (can be updated later)
+    };
+    chats.push(newGroup);
+    console.log('Created new group:', newGroup.id, 'Name:', newGroup.name);
+    res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح.', groupId: newGroup.id });
 });
 
-// Get group members
-app.get('/api/group/:groupId/members', async (req, res) => {
-    const { groupId } = req.params;
-    try {
-        const result = await pool.query(
-            `SELECT gm.member_id AS uid, u.username, u.custom_id, gm.role
-             FROM group_members gm
-             JOIN users u ON gm.member_id = u.uid
-             WHERE gm.group_id = $1
-             ORDER BY gm.role DESC, u.username ASC;`,
-            [groupId]
-        );
-        res.status(200).json(result.rows);
-    } catch (error) {
-        console.error('Error fetching group members:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
+// 12. Get User's Chat List
+app.get('/api/user/:userId/chats', (req, res) => {
+    const { userId } = req.params;
 
-// Get group member count
-app.get('/api/group/:groupId/members/count', async (req, res) => {
-    const { groupId } = req.params;
-    try {
-        const result = await pool.query(
-            'SELECT COUNT(*) FROM group_members WHERE group_id = $1',
-            [groupId]
-        );
-        res.status(200).json({ count: parseInt(result.rows[0].count, 10) });
-    } catch (error) {
-        console.error('Error fetching group member count:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
+    const userChats = chats.filter(chat => chat.members.includes(userId));
 
-// Change a member's role (admin/member)
-app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
-    const { groupId, memberUid } = req.params;
-    const { newRole, callerUid } = req.body;
+    // Format chats for frontend display
+    const formattedChats = userChats.map(chat => {
+        let chatNameForDisplay;
+        let chatCustomIdForDisplay = null;
+        let chatProfileBgForDisplay = null;
+        let lastMessageText = chat.lastMessage || 'لا توجد رسائل بعد.';
 
-    if (!newRole || !callerUid) {
-        return res.status(400).json({ error: 'New role and caller UID are required' });
-    }
+        if (chat.type === 'private') {
+            // For private chats, display the other user's name/contactName
+            const otherUserId = chat.members.find(memberId => memberId !== userId);
+            const otherUser = users.find(u => u.uid === otherUserId);
+            
+            // Prioritize the contactName saved by the current user for THIS chat item
+            chatNameForDisplay = chat.memberInfo[userId]?.contactName || otherUser?.username || 'مستخدم غير معروف';
+            chatCustomIdForDisplay = otherUser?.customId || null;
+            chatProfileBgForDisplay = otherUser?.profileBg || null;
 
-    try {
-        const callerRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, callerUid]
-        );
-        const callerRole = callerRoleResult.rows[0]?.role;
-
-        if (callerRole !== 'admin') {
-            return res.status(403).json({ error: 'Unauthorized: Only group admins can change roles' });
+        } else { // Group chat
+            chatNameForDisplay = chat.name;
+            chatProfileBgForDisplay = chat.profileBg; // Use group's specific profile bg
         }
 
-        if (newRole === 'member') {
-            const adminCountResult = await pool.query(
-                'SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = $2',
-                [groupId, 'admin']
-            );
-            if (parseInt(adminCountResult.rows[0].count, 10) === 1 && memberUid === callerUid) {
-                 return res.status(400).json({ error: 'Cannot demote the only admin of the group' });
+        return {
+            id: chat.id,
+            type: chat.type,
+            name: chatNameForDisplay,
+            customId: chatCustomIdForDisplay, // Only for private chats, will be null for groups
+            lastMessage: lastMessageText,
+            timestamp: chat.timestamp,
+            profileBg: chatProfileBgForDisplay // Other user's profile bg for private, group's for group
+        };
+    });
+
+    // Sort by timestamp (newest first)
+    formattedChats.sort((a, b) => b.timestamp - a.timestamp);
+
+    console.log(`Returning ${formattedChats.length} chats for user ${userId}.`);
+    res.status(200).json(formattedChats);
+});
+
+// 13. Get Messages for a Chat
+app.get('/api/chats/:chatId/messages', (req, res) => {
+    const { chatId } = req.params;
+    const since = parseInt(req.query.since) || 0; // Filter messages newer than this timestamp
+
+    const chatMessages = messages.filter(msg => msg.chatId === chatId && msg.timestamp > since);
+    
+    // Sort messages by timestamp
+    chatMessages.sort((a, b) => a.timestamp - b.timestamp);
+
+    console.log(`Returning ${chatMessages.length} messages for chat ${chatId} (since ${since}).`);
+    res.status(200).json(chatMessages);
+});
+
+// 14. Send Message to a Chat
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) => {
+    const { chatId } = req.params;
+    const { senderId, senderName, text, mediaType, senderProfileBg } = req.body; // senderProfileBg included by frontend
+    const mediaFile = req.file;
+
+    const chat = chats.find(c => c.id === chatId);
+    if (!chat) {
+        console.log('Send message attempt: Chat not found for ID', chatId);
+        return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+    }
+
+    if (!senderId || (!text && !mediaFile)) {
+        console.log('Send message attempt: Missing senderId, text or mediaFile.');
+        return res.status(400).json({ error: 'معرف المرسل أو نص الرسالة أو ملف الوسائط مطلوب.' });
+    }
+
+    let mediaUrl = null;
+    if (mediaFile) {
+        // Placeholder for actual file upload to cloud storage
+        if (mediaType === 'image') {
+            mediaUrl = `https://placehold.co/300x200/cccccc/000?text=Image+Placeholder`;
+        } else if (mediaType === 'video') {
+            mediaUrl = `https://www.w3schools.com/html/mov_bbb.mp4`; // A generic test video
+        }
+        console.log(`Media file received for chat ${chatId}: ${mediaFile.originalname}. Returning placeholder URL: ${mediaUrl}`);
+    }
+
+    const newMessage = {
+        id: generateUniqueId(),
+        chatId,
+        senderId,
+        senderName,
+        text: text || null,
+        mediaType: mediaType || null,
+        mediaUrl: mediaUrl,
+        senderProfileBg: senderProfileBg || null, // Store sender's profile bg with message
+        timestamp: Date.now(),
+        status: 'sent' // Can be expanded to 'delivered', 'read'
+    };
+    messages.push(newMessage);
+
+    // Update last message in chat metadata
+    chat.lastMessage = text || (mediaType === 'image' ? 'صورة' : 'فيديو');
+    chat.timestamp = newMessage.timestamp; // Update chat timestamp for sorting
+
+    console.log(`Message sent to chat ${chatId} by ${senderName}.`);
+    res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageId: newMessage.id });
+});
+
+// 15. Delete Chat / Leave Group
+app.post('/api/chats/delete', (req, res) => {
+    const { chatId, chatType, action, userId } = req.body; // action: 'forMe', 'forBoth', 'leaveGroup'
+
+    const chatIndex = chats.findIndex(c => c.id === chatId);
+    if (chatIndex === -1) {
+        console.log('Delete chat attempt: Chat not found for ID', chatId);
+        return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+    }
+
+    const chat = chats[chatIndex];
+
+    if (chatType === 'private') {
+        if (action === 'forMe') {
+            // For in-memory, we can't truly hide for one user without more complex structure.
+            // We'll simulate by just telling the frontend it's deleted.
+            console.log(`Simulating deletion of private chat ${chatId} for user ${userId} (forMe).`);
+            res.status(200).json({ message: 'تم حذف المحادثة من عندك فقط (محاكاة).' });
+        } else if (action === 'forBoth') {
+            // Delete chat and all its messages
+            chats.splice(chatIndex, 1);
+            const initialMessageCount = messages.length;
+            messages = messages.filter(msg => msg.chatId !== chatId);
+            console.log(`Deleted private chat ${chatId} and ${initialMessageCount - messages.length} messages.`);
+            res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
+        } else {
+            console.log('Delete chat attempt: Invalid action for private chat.', action);
+            return res.status(400).json({ error: 'إجراء حذف غير صالح للمحادثة الخاصة.' });
+        }
+    } else if (chatType === 'group') {
+        if (action === 'forMe') {
+            // Simulate leaving group from user's perspective, without affecting others
+            console.log(`Simulating deletion of group chat ${chatId} for user ${userId} (forMe - leave group).`);
+            res.status(200).json({ message: 'تم حذف المجموعة من عندك فقط (محاكاة).' });
+        } else if (action === 'leaveGroup') {
+            // Remove user from group members
+            chat.members = chat.members.filter(memberId => memberId !== userId);
+            delete chat.memberRoles[userId];
+            console.log(`User ${userId} left group ${chatId}. Remaining members: ${chat.members.length}`);
+
+            // If group has no members left or no admins, delete it
+            const hasAdmins = Object.values(chat.memberRoles).includes('admin');
+            if (chat.members.length === 0 || !hasAdmins) {
+                chats.splice(chatIndex, 1);
+                messages = messages.filter(msg => msg.chatId !== chatId);
+                console.log(`Group ${chatId} deleted due to no members or no admins.`);
+                res.status(200).json({ message: 'لقد غادرت المجموعة وتم حذفها لعدم وجود أعضاء أو مشرفين.' });
+            } else {
+                res.status(200).json({ message: 'لقد غادرت المجموعة بنجاح.' });
             }
+        } else {
+            console.log('Delete chat attempt: Invalid action for group chat.', action);
+            return res.status(400).json({ error: 'إجراء حذف غير صالح للمحادثة الجماعية.' });
         }
-
-        await pool.query(
-            'UPDATE group_members SET role = $1 WHERE group_id = $2 AND member_id = $3',
-            [newRole, groupId, memberUid]
-        );
-        res.status(200).json({ message: `Member role updated to ${newRole}` });
-    } catch (error) {
-        console.error('Error changing member role:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    } else {
+        console.log('Delete chat attempt: Invalid chat type.', chatType);
+        return res.status(400).json({ error: 'نوع محادثة غير صالح.' });
     }
 });
 
-// Remove a member from the group
-app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
+
+// 16. Get Group Members (and their roles)
+app.get('/api/group/:groupId/members', (req, res) => {
+    const { groupId } = req.params;
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+
+    if (!group) {
+        console.log('Get group members attempt: Group not found for ID', groupId);
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+    }
+
+    const membersInfo = group.members.map(memberUid => {
+        const user = users.find(u => u.uid === memberUid);
+        return {
+            uid: memberUid,
+            username: user ? user.username : 'مستخدم غير معروف',
+            customId: user ? user.customId : null,
+            role: group.memberRoles[memberUid] || 'عضو'
+        };
+    });
+    console.log(`Returning ${membersInfo.length} members for group ${groupId}.`);
+    res.status(200).json(membersInfo);
+});
+
+// 17. Change Group Member Role (Admin only)
+app.put('/api/group/:groupId/members/:memberId/role', (req, res) => {
+    const { groupId, memberId } = req.params;
+    const { newRole, callerUid } = req.body; // newRole: 'admin' or 'member'
+
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+    if (!group) {
+        console.log('Change role attempt: Group not found for ID', groupId);
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+    }
+
+    const callerRole = group.memberRoles[callerUid];
+    if (callerRole !== 'admin') {
+        console.log(`Change role attempt: Caller ${callerUid} is not an admin in group ${groupId}.`);
+        return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير أدوار الأعضاء.' });
+    }
+
+    if (!group.members.includes(memberId)) {
+        console.log(`Change role attempt: Member ${memberId} not found in group ${groupId}.`);
+        return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+    }
+
+    // Prevent demoting the only admin if there's only one left
+    const currentAdmins = Object.keys(group.memberRoles).filter(uid => group.memberRoles[uid] === 'admin');
+    if (newRole === 'member' && currentAdmins.length === 1 && currentAdmins[0] === memberId) {
+        console.log(`Change role attempt: Cannot demote the only admin ${memberId} in group ${groupId}.`);
+        return res.status(400).json({ error: 'لا يمكن إزالة المشرف الوحيد للمجموعة.' });
+    }
+
+    group.memberRoles[memberId] = newRole;
+    console.log(`Member ${memberId} role changed to ${newRole} in group ${groupId}.`);
+    res.status(200).json({ message: `تم تغيير دور العضو إلى ${newRole === 'admin' ? 'مشرف' : 'عضو'}.` });
+});
+
+// 18. Remove Group Member (Admin only)
+app.delete('/api/group/:groupId/members/:memberId', (req, res) => {
+    const { groupId, memberId } = req.params;
     const { callerUid } = req.body;
 
-    if (!callerUid) {
-        return res.status(400).json({ error: 'Caller UID is required' });
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+    if (!group) {
+        console.log('Remove member attempt: Group not found for ID', groupId);
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
     }
 
-    try {
-        const callerRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, callerUid]
-        );
-        const callerRole = callerRoleResult.rows[0]?.role;
-
-        if (callerRole !== 'admin' && callerUid !== memberUid) {
-            return res.status(403).json({ error: 'Unauthorized: Only group admins can remove members' });
-        }
-
-        const currentMemberRoleResult = await pool.query(
-            'SELECT role FROM group_members WHERE group_id = $1 AND member_id = $2',
-            [groupId, memberUid]
-        );
-        const currentMemberRole = currentMemberRoleResult.rows[0]?.role;
-
-        if (currentMemberRole === 'admin') {
-            const adminCountResult = await pool.query(
-                'SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND role = $2',
-                [groupId, 'admin']
-            );
-            if (parseInt(adminCountResult.rows[0].count, 10) === 1) {
-                const totalMembersResult = await pool.query(
-                    'SELECT COUNT(*) FROM group_members WHERE group_id = $1',
-                    [groupId]
-                );
-                if (parseInt(totalMembersResult.rows[0].count, 10) > 1) {
-                    return res.status(400).json({ error: 'Cannot remove the only admin if other members exist. Assign a new admin first.' });
-                }
-            }
-        }
-
-        await pool.query('DELETE FROM group_members WHERE group_id = $1 AND member_id = $2', [groupId, memberUid]);
-        res.status(200).json({ message: 'Member removed successfully' });
-    } catch (error) {
-        console.error('Error removing member:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    const callerRole = group.memberRoles[callerUid];
+    if (callerRole !== 'admin') {
+        console.log(`Remove member attempt: Caller ${callerUid} is not an admin in group ${groupId}.`);
+        return res.status(403).json({ error: 'ليس لديك صلاحية لإزالة الأعضاء.' });
     }
+
+    if (!group.members.includes(memberId)) {
+        console.log(`Remove member attempt: Member ${memberId} not found in group ${groupId}.`);
+        return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+    }
+
+    // Prevent removing the only admin if there's only one left
+    const currentAdmins = Object.keys(group.memberRoles).filter(uid => group.memberRoles[uid] === 'admin');
+    if (currentAdmins.length === 1 && currentAdmins[0] === memberId) {
+        console.log(`Remove member attempt: Cannot remove the only admin ${memberId} from group ${groupId}.`);
+        return res.status(400).json({ error: 'لا يمكن إزالة المشرف الوحيد للمجموعة.' });
+    }
+
+    group.members = group.members.filter(uid => uid !== memberId);
+    delete group.memberRoles[memberId];
+    console.log(`Member ${memberId} removed from group ${groupId}.`);
+
+    // If group becomes empty or has no admins left, delete the group
+    const hasAdmins = Object.values(group.memberRoles).includes('admin');
+    if (group.members.length === 0 || !hasAdmins) {
+        const chatIndex = chats.findIndex(c => c.id === groupId);
+        chats.splice(chatIndex, 1);
+        messages = messages.filter(msg => msg.chatId !== groupId); // Also delete messages
+        console.log(`Group ${groupId} deleted due to no members or no admins.`);
+        return res.status(200).json({ message: 'تمت إزالة العضو وتم حذف المجموعة لعدم وجود أعضاء أو مشرفين.' });
+    }
+
+    res.status(200).json({ message: 'تمت إزالة العضو بنجاح.' });
+});
+
+// 19. Get Group Member Count
+app.get('/api/group/:groupId/members/count', (req, res) => {
+    const { groupId } = req.params;
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+
+    if (!group) {
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+    }
+    res.status(200).json({ count: group.members.length });
+});
+
+// --- Posts API (Simplified for basic functionality) ---
+
+// Get all posts or filtered posts
+app.get('/api/posts', (req, res) => {
+    // In a real app, you'd handle pagination and complex filters.
+    console.log(`Returning ${posts.length} total posts.`);
+    res.status(200).json(posts);
+});
+
+// Get posts from followed users
+app.get('/api/posts/followed/:userId', (req, res) => {
+    const { userId } = req.params;
+    const user = users.find(u => u.uid === userId);
+    if (!user) {
+        console.log('Get followed posts: User not found for ID', userId);
+        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+    }
+    const followedPosts = posts.filter(p => user.following.includes(p.authorId));
+    console.log(`Returning ${followedPosts.length} followed posts for user ${userId}.`);
+    res.status(200).json(followedPosts);
+});
+
+// Search posts (basic text search)
+app.get('/api/posts/search', (req, res) => {
+    const query = req.query.q ? req.query.q.toLowerCase() : '';
+    const filterType = req.query.filter || 'all'; // 'all' or 'followed'
+    const userId = req.query.userId;
+
+    let filteredResults = posts;
+
+    if (filterType === 'followed' && userId) {
+        const user = users.find(u => u.uid === userId);
+        if (user) {
+            filteredResults = posts.filter(p => user.following.includes(p.authorId));
+        } else {
+            filteredResults = []; // No user, no followed posts
+        }
+    }
+
+    if (query) {
+        filteredResults = filteredResults.filter(p =>
+            p.text.toLowerCase().includes(query) ||
+            p.authorName.toLowerCase().includes(query)
+        );
+    }
+    console.log(`Returning ${filteredResults.length} search results for query '${query}' with filter '${filterType}'.`);
+    res.status(200).json(filteredResults);
 });
 
 
-// --- Start the server ---
+// Create a new post
+app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
+    const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
+    const mediaFile = req.file; // The uploaded file
+
+    if (!authorId || !authorName || (!text && !mediaFile)) {
+        console.log('Create post attempt: Missing authorId, authorName, text or mediaFile.', req.body);
+        return res.status(400).json({ error: 'معرف المؤلف، اسمه، ونص المنشور أو ملف الوسائط مطلوب.' });
+    }
+
+    let mediaUrl = null;
+    if (mediaFile) {
+        // Placeholder for actual cloud storage upload
+        if (mediaType === 'image') {
+            mediaUrl = `https://placehold.co/400x300/e0f2f7/000?text=Post+Image`;
+        } else if (mediaType === 'video') {
+            mediaUrl = `https://www.w3schools.com/html/mov_bbb.mp4`; // Example video
+        }
+        console.log(`Media file received for post: ${mediaFile.originalname}. Returning placeholder URL: ${mediaUrl}`);
+    }
+
+    const newPost = {
+        id: generateUniqueId(),
+        authorId,
+        authorName,
+        text,
+        mediaType: mediaType || 'text',
+        mediaUrl: mediaUrl,
+        authorProfileBg: authorProfileBg || null,
+        timestamp: Date.now(),
+        likes: [], // Array of user UIDs who liked the post
+        views: [], // Array of user UIDs who viewed the post
+        comments: [] // Array of comments
+    };
+    posts.push(newPost);
+    console.log('Created new post:', newPost.id, 'by', newPost.authorName);
+    res.status(201).json({ message: 'تم نشر المنشور بنجاح.', postId: newPost.id });
+});
+
+// Increment post view count
+app.post('/api/posts/:postId/view', (req, res) => {
+    const { postId } = req.params;
+    const { userId } = req.body;
+
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        console.log('View post attempt: Post not found for ID', postId);
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    if (!userId) {
+        console.log('View post attempt: Missing userId for post', postId);
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب لتسجيل المشاهدة.' });
+    }
+
+    if (!post.views.includes(userId)) {
+        post.views.push(userId);
+        console.log(`Post ${postId} viewed by ${userId}. Total views: ${post.views.length}`);
+    } else {
+        console.log(`Post ${postId} already viewed by ${userId}.`);
+    }
+    res.status(200).json({ message: 'تم تسجيل المشاهدة.', viewsCount: post.views.length });
+});
+
+
+// Toggle post like
+app.post('/api/posts/:postId/like', (req, res) => {
+    const { postId } = req.params;
+    const { userId } = req.body;
+
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        console.log('Like post attempt: Post not found for ID', postId);
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    if (!userId) {
+        console.log('Like post attempt: Missing userId for post', postId);
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب للإعجاب.' });
+    }
+
+    const isLiked = post.likes.includes(userId);
+    let message;
+    if (isLiked) {
+        post.likes = post.likes.filter(id => id !== userId);
+        message = 'تم إلغاء الإعجاب.';
+        console.log(`User ${userId} unliked post ${postId}. Likes: ${post.likes.length}`);
+    } else {
+        post.likes.push(userId);
+        message = 'تم الإعجاب بنجاح.';
+        console.log(`User ${userId} liked post ${postId}. Likes: ${post.likes.length}`);
+    }
+    res.status(200).json({ message, isLiked: !isLiked, likesCount: post.likes.length });
+});
+
+// Get comments for a post
+app.get('/api/posts/:postId/comments', (req, res) => {
+    const { postId } = req.params;
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        console.log('Get comments attempt: Post not found for ID', postId);
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    // Return comments sorted by timestamp
+    const sortedComments = [...post.comments].sort((a, b) => a.timestamp - b.timestamp);
+    console.log(`Returning ${sortedComments.length} comments for post ${postId}.`);
+    res.status(200).json(sortedComments);
+});
+
+// Add a comment to a post
+app.post('/api/posts/:postId/comments', (req, res) => {
+    const { postId } = req.params;
+    const { userId, username, text } = req.body;
+
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        console.log('Add comment attempt: Post not found for ID', postId);
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    if (!userId || !username || !text) {
+        console.log('Add comment attempt: Missing userId, username, or text for post', postId);
+        return res.status(400).json({ error: 'معرف المستخدم واسمه ونص التعليق مطلوب.' });
+    }
+
+    const newComment = {
+        id: generateUniqueId(),
+        userId,
+        user: username,
+        text,
+        timestamp: Date.now()
+    };
+    post.comments.push(newComment);
+    console.log(`Comment added to post ${postId} by ${username}.`);
+    res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
+});
+
+// Delete a post
+app.delete('/api/posts/:postId', (req, res) => {
+    const { postId } = req.params;
+    const postIndex = posts.findIndex(p => p.id === postId);
+
+    if (postIndex === -1) {
+        console.log('Delete post attempt: Post not found for ID', postId);
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+
+    // In a real app, you'd check if the requesting user is the author or an admin
+    posts.splice(postIndex, 1);
+    console.log(`Post ${postId} deleted.`);
+    res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+});
+
+// Start the server
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Backend server running on port ${PORT}`);
 });
