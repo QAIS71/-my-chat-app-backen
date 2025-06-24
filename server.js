@@ -67,7 +67,7 @@ app.post('/api/register', (req, res) => {
 });
 
 // 2. User Login
-app.post('/api/login', (req, res) => ح
+app.post('/api/login', (req, res) => { // Removed ح from here
     const { username, password } = req.body;
 
     const user = users.find(u => u.username === username && u.password === password); // In a real app, compare hashed password!
@@ -302,6 +302,7 @@ app.get('/api/user/:userId/chats', (req, res) => {
         let chatNameForDisplay;
         let chatCustomIdForDisplay = null;
         let chatProfileBgForDisplay = null;
+        // Use chat.lastMessage, fallback to default text if null/undefined
         let lastMessageText = chat.lastMessage || 'لا توجد رسائل بعد.';
 
         if (chat.type === 'private') {
@@ -364,7 +365,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     }
 
     if (!senderId || (!text && !mediaFile)) {
-        console.log('Send message attempt: Missing senderId, text or mediaFile.');
+        console.log('Send message attempt: Missing senderId, text or mediaFile. Req body:', req.body);
         return res.status(400).json({ error: 'معرف المرسل أو نص الرسالة أو ملف الوسائط مطلوب.' });
     }
 
@@ -384,7 +385,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
         chatId,
         senderId,
         senderName,
-        text: text || null,
+        text: text || '', // FIX: Store empty string instead of null if text is empty
         mediaType: mediaType || null,
         mediaUrl: mediaUrl,
         senderProfileBg: senderProfileBg || null, // Store sender's profile bg with message
@@ -397,7 +398,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     chat.lastMessage = text || (mediaType === 'image' ? 'صورة' : 'فيديو');
     chat.timestamp = newMessage.timestamp; // Update chat timestamp for sorting
 
-    console.log(`Message sent to chat ${chatId} by ${senderName}.`);
+    console.log(`Message sent to chat ${chatId} by ${senderName}. Stored text: "${newMessage.text}"`); // Added console log for stored text
     res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageId: newMessage.id });
 });
 
@@ -744,39 +745,23 @@ app.post('/api/posts/:postId/comments', (req, res) => {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
     if (!userId || !username || !text) {
-        console.log('Add comment attempt: Missing userId, username, or text for post', postId);
+        console.log('Add comment attempt: Missing userId, username, or text.');
         return res.status(400).json({ error: 'معرف المستخدم واسمه ونص التعليق مطلوب.' });
     }
 
     const newComment = {
         id: generateUniqueId(),
         userId,
-        user: username,
+        username,
         text,
         timestamp: Date.now()
     };
     post.comments.push(newComment);
-    console.log(`Comment added to post ${postId} by ${username}.`);
-    res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
-});
-
-// Delete a post
-app.delete('/api/posts/:postId', (req, res) => {
-    const { postId } = req.params;
-    const postIndex = posts.findIndex(p => p.id === postId);
-
-    if (postIndex === -1) {
-        console.log('Delete post attempt: Post not found for ID', postId);
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-
-    // In a real app, you'd check if the requesting user is the author or an admin
-    posts.splice(postIndex, 1);
-    console.log(`Post ${postId} deleted.`);
-    res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+    console.log(`Added comment to post ${postId} by ${username}.`);
+    res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', commentId: newComment.id });
 });
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Backend server running on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
