@@ -9,9 +9,11 @@ const { createClient } = require('@supabase/supabase-js'); // Import Supabase cl
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Supabase Configuration (تأكد من تحديث هذه القيم ببيانات مشروعك الحقيقية من Supabase)
-const SUPABASE_URL = process.env.SUPABASE_URL || 'YOUR_SUPABASE_URL'; // مثال: https://xyzcompany.supabase.co
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY'; // مثال: eyJhbGciOiJIUzI1Ni...
+// Supabase Configuration
+// (ملاحظة: يفضل تعيين هذه القيم كمتغيرات بيئة في Render.com لأمان أفضل)
+// اذهب إلى لوحة تحكم Supabase > Project Settings > API للحصول على هذه القيم
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mkcblhnbcsxclhrlaqnx.supabase.co'; // استبدل بـ URL مشروعك من Supabase
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_PUBLIC_KEY_HERE'; // استبدل بـ Anon Public Key من Supabase API settings
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -612,7 +614,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
 
-        if (!senderId || (!text && !mediaFile)) {
+        if (!senderId || (text === undefined && !mediaFile)) { // Check for undefined text or no media file
             console.log('Send message attempt: Missing senderId, text or mediaFile. Req body:', req.body);
             return res.status(400).json({ error: 'معرف المرسل أو نص الرسالة أو ملف الوسائط مطلوب.' });
         }
@@ -636,7 +638,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             chatId,
             senderId,
             senderName,
-            text: text || '', // Store empty string if text is empty
+            text: text !== undefined ? text : '', // Store text as received, or empty string if undefined (to handle cases where only media is sent)
             mediaType: mediaType || null,
             mediaUrl: mediaUrl,
             senderProfileBg: senderProfileBg || null,
@@ -1167,7 +1169,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
 
-    if (!authorId || !authorName || (!text && !mediaFile)) {
+    if (!authorId || !authorName || (text === undefined && !mediaFile)) { // Check for undefined text or no media
         console.log('Create post attempt: Missing authorId, authorName, text or mediaFile.', req.body);
         return res.status(400).json({ error: 'معرف المؤلف، اسمه، ونص المنشور أو ملف الوسائط مطلوب.' });
     }
@@ -1190,14 +1192,14 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         id: generateUniqueId(),
         authorId,
         authorName,
-        text,
+        text: text !== undefined ? text : '', // Store text as received, or empty string if undefined
         mediaType: mediaType || 'text',
         mediaUrl: mediaUrl,
         authorProfileBg: authorProfileBg || null,
         timestamp: Date.now(),
         likes: [], // Array of user UIDs who liked the post
         views: [], // Array of user UIDs who viewed the post
-        comments: [] // Array of comments (will be stored in separate comments table)
+        // comments are in a separate table now
     };
 
     try {
@@ -1339,11 +1341,11 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
             return res.status(500).json({ error: 'خطأ في قاعدة البيانات أثناء جلب التعليقات.' });
         }
 
-        // Fix for frontend: frontend expects 'user' field, not 'username' for comments display
+        // FIX: Frontend expects 'user' field, not 'username' for comments display
         const formattedComments = comments.map(comment => ({
             id: comment.id,
             userId: comment.userId,
-            user: comment.username, // Change 'username' to 'user' for frontend compatibility
+            user: comment.username, // Changed 'username' to 'user' for frontend compatibility
             text: comment.text,
             timestamp: comment.timestamp
         }));
@@ -1453,4 +1455,4 @@ app.delete('/api/posts/:postId', async (req, res) => {
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-})
+});
