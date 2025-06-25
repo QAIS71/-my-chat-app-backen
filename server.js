@@ -201,17 +201,17 @@ app.get('/api/user/:userId/contacts', (req, res) => {
     }
 
     // FIX: Only return users with whom the current user has private chats
-    const privateChatPartners = new Set();
+    const privateChatPartnersUids = new Set();
     chats.forEach(chat => {
         if (chat.type === 'private' && chat.members.includes(userId)) {
             const otherMember = chat.members.find(memberId => memberId !== userId);
             if (otherMember) {
-                privateChatPartners.add(otherMember);
+                privateChatPartnersUids.add(otherMember);
             }
         }
     });
 
-    const contactsToDisplay = users.filter(u => privateChatPartners.has(u.uid))
+    const contactsToDisplay = users.filter(u => privateChatPartnersUids.has(u.uid))
                                .map(u => ({ uid: u.uid, username: u.username, customId: u.customId }));
 
     console.log(`Returning ${contactsToDisplay.length} actual contacts for user ${user.username}.`);
@@ -269,9 +269,39 @@ app.post('/api/chats/private', (req, res) => {
     res.status(201).json({ message: 'تم إنشاء المحادثة الخاصة بنجاح.', chatId: newChat.id });
 });
 
+// FIX: New API endpoint to update contact name in a private chat
+app.put('/api/chats/private/:chatId/contact-name', (req, res) => {
+    const { chatId } = req.params;
+    const { userId, newContactName } = req.body;
+
+    if (!userId || !newContactName) {
+        return res.status(400).json({ error: 'معرف المستخدم والاسم الجديد مطلوبان.' });
+    }
+
+    const chat = chats.find(c => c.id === chatId && c.type === 'private');
+    if (!chat) {
+        return res.status(404).json({ error: 'المحادثة غير موجودة أو ليست محادثة خاصة.' });
+    }
+
+    // Ensure the user is a member of this chat
+    if (!chat.members.includes(userId)) {
+        return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذه المحادثة.' });
+    }
+
+    // Update the contactName specifically for the requesting user
+    if (chat.memberInfo && chat.memberInfo[userId]) {
+        chat.memberInfo[userId].contactName = newContactName;
+        console.log(`Contact name for chat ${chatId} updated by user ${userId} to: ${newContactName}`);
+        res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
+    } else {
+        return res.status(404).json({ error: 'معلومات العضو غير موجودة في المحادثة.' });
+    }
+});
+
+
 // 11. Create Group Chat
 app.post('/api/groups', (req, res) => {
-    const { name, description, adminId, members } = req.body; // members is an object: {uid: role}
+    const { name, description, adminId, members, profileBg } = req.body; // Added profileBg for group
 
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
         console.log('Create group attempt: Missing required fields or less than 2 members.', req.body);
@@ -287,18 +317,81 @@ app.post('/api/groups', (req, res) => {
         type: 'group',
         name,
         description,
-        adminId, // Creator is the first admin
+        adminId, // Creator is the initial owner/admin
         members: Object.keys(members), // Array of UIDs
         memberRoles: members, // { uid: 'admin' | 'member' }
         createdAt: Date.now(),
         lastMessage: null,
         timestamp: Date.now(),
-        profileBg: null // Group profile background (can be updated later)
+        profileBg: profileBg || null // Group profile background (can be updated later)
     };
     chats.push(newGroup);
     console.log('Created new group:', newGroup.id, 'Name:', newGroup.name);
     res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح.', groupId: newGroup.id });
 });
+
+// FIX: API endpoint to update group name
+app.put('/api/groups/:groupId/name', (req, res) => {
+    const { groupId } = req.params;
+    const { newName, callerUid } = req.body;
+
+    if (!newName) {
+        return res.status(400).json({ error: 'الاسم الجديد للمجموعة مطلوب.' });
+    }
+
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+    if (!group) {
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+    }
+
+    // Only admins can change group name
+    const callerRole = group.memberRoles[callerUid];
+    if (callerRole !== 'admin') {
+        return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير اسم المجموعة.' });
+    }
+
+    group.name = newName;
+    console.log(`Group ${groupId} name updated to: ${newName}`);
+    res.status(200).json({ message: 'تم تحديث اسم المجموعة بنجاح.' });
+});
+
+// FIX: API endpoint to add members to a group
+app.post('/api/groups/:groupId/add-members', (req, res) => {
+    const { groupId } = req.params;
+    const { newMemberUids, callerUid } = req.body; // newMemberUids is an array of UIDs to add
+
+    if (!newMemberUids || !Array.isArray(newMemberUids) || newMemberUids.length === 0) {
+        return res.status(400).json({ error: 'معرفات الأعضاء الجدد مطلوبة.' });
+    }
+
+    const group = chats.find(c => c.id === groupId && c.type === 'group');
+    if (!group) {
+        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+    }
+
+    // Only admins can add members
+    const callerRole = group.memberRoles[callerUid];
+    if (callerRole !== 'admin') {
+        return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة أعضاء إلى المجموعة.' });
+    }
+
+    const addedMembers = [];
+    newMemberUids.forEach(memberUid => {
+        if (!group.members.includes(memberUid)) {
+            group.members.push(memberUid);
+            group.memberRoles[memberUid] = 'member'; // Default role is member
+            addedMembers.push(memberUid);
+        }
+    });
+
+    if (addedMembers.length === 0) {
+        return res.status(400).json({ message: 'جميع الأعضاء المحددين موجودون بالفعل في المجموعة.' });
+    }
+
+    console.log(`Added ${addedMembers.length} members to group ${groupId}.`);
+    res.status(200).json({ message: 'تم إضافة الأعضاء بنجاح.', addedMembersUids: addedMembers });
+});
+
 
 // 12. Get User's Chat List
 app.get('/api/user/:userId/chats', (req, res) => {
@@ -769,20 +862,26 @@ app.get('/api/posts/:postId/comments', (req, res) => {
         console.log('Get comments attempt: Post not found for ID', postId);
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
-    // Return comments sorted by timestamp
-    const sortedComments = [...post.comments].sort((a, b) => a.timestamp - b.timestamp);
     
-    // FIX: Map comments to include 'user' field for frontend compatibility
-    const formattedComments = sortedComments.map(comment => ({
-        id: comment.id,
-        userId: comment.userId,
-        user: comment.username, // Change 'username' to 'user' for frontend compatibility
-        text: comment.text,
-        timestamp: comment.timestamp
-    }));
+    // FIX: Add user profileBg and likes to comments, then sort by likes (descending)
+    const commentsWithUserData = post.comments.map(comment => {
+        const commentAuthor = users.find(u => u.uid === comment.userId);
+        return {
+            id: comment.id,
+            userId: comment.userId,
+            user: commentAuthor ? commentAuthor.username : 'مستخدم غير معروف', // Changed username to user for frontend
+            userProfileBg: commentAuthor ? commentAuthor.profileBg : null, // Add user's profile background
+            text: comment.text,
+            timestamp: comment.timestamp,
+            likes: comment.likes || [] // Ensure likes array exists, even if empty
+        };
+    });
+
+    // Sort comments by likes count (descending)
+    commentsWithUserData.sort((a, b) => b.likes.length - a.likes.length);
     
-    console.log(`Returning ${formattedComments.length} comments for post ${postId}.`);
-    res.status(200).json(formattedComments);
+    console.log(`Returning ${commentsWithUserData.length} comments for post ${postId}.`);
+    res.status(200).json(commentsWithUserData);
 });
 
 // Add a comment to a post
@@ -803,13 +902,49 @@ app.post('/api/posts/:postId/comments', (req, res) => {
     const newComment = {
         id: generateUniqueId(),
         userId,
-        username, // Store as username in DB (in-memory here)
+        username, // Store as username
         text,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        likes: [] // FIX: Initialize likes array for comments
     };
     post.comments.push(newComment);
     console.log(`Added comment to post ${postId} by ${username}.`);
     res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', commentId: newComment.id });
+});
+
+// FIX: New API endpoint to toggle like on a comment
+app.post('/api/posts/:postId/comments/:commentId/like', (req, res) => {
+    const { postId, commentId } = req.params;
+    const { userId } = req.body;
+
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+
+    const comment = post.comments.find(c => c.id === commentId);
+    if (!comment) {
+        return res.status(404).json({ error: 'التعليق غير موجود.' });
+    }
+    if (!userId) {
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب للإعجاب بالتعليق.' });
+    }
+
+    let message;
+    if (!comment.likes) { // Initialize likes array if it doesn't exist
+        comment.likes = [];
+    }
+
+    const isLiked = comment.likes.includes(userId);
+    if (isLiked) {
+        comment.likes = comment.likes.filter(id => id !== userId);
+        message = 'تم إلغاء الإعجاب بالتعليق.';
+    } else {
+        comment.likes.push(userId);
+        message = 'تم الإعجاب بالتعليق بنجاح.';
+    }
+    console.log(`User ${userId} toggled like for comment ${commentId}. Likes: ${comment.likes.length}`);
+    res.status(200).json({ message, isLiked: !isLiked, likesCount: comment.likes.length });
 });
 
 // Delete Post (and its comments)
@@ -817,15 +952,6 @@ app.delete('/api/posts/:postId', (req, res) => {
     const { postId } = req.params;
     const initialPostCount = posts.length;
     posts = posts.filter(p => p.id !== postId); // Remove the post
-    // Also remove comments associated with this post (since comments are nested for in-memory)
-    posts.forEach(p => { // Loop through remaining posts
-        p.comments = p.comments.filter(comment => comment.postId !== postId); // This line is incorrect for this structure.
-                                                                           // If comments are nested in posts, filtering posts removes comments.
-                                                                           // If comments are global, this isn't enough.
-                                                                           // Given your original 'comments: []' in newPost, they are nested.
-                                                                           // So, removing the post deletes its comments automatically.
-    });
-
 
     if (posts.length === initialPostCount) {
         console.log('Delete post attempt: Post not found for ID', postId);
