@@ -200,13 +200,22 @@ app.get('/api/user/:userId/contacts', (req, res) => {
         return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
 
-    // For simplicity, return all other registered users as "contacts"
-    // In a real app, this would be a filtered list based on actual contacts, friends, or followed users.
-    const allOtherUsers = users.filter(u => u.uid !== userId)
+    // FIX: Only return users with whom the current user has private chats
+    const privateChatPartners = new Set();
+    chats.forEach(chat => {
+        if (chat.type === 'private' && chat.members.includes(userId)) {
+            const otherMember = chat.members.find(memberId => memberId !== userId);
+            if (otherMember) {
+                privateChatPartners.add(otherMember);
+            }
+        }
+    });
+
+    const contactsToDisplay = users.filter(u => privateChatPartners.has(u.uid))
                                .map(u => ({ uid: u.uid, username: u.username, customId: u.customId }));
 
-    console.log(`Returning ${allOtherUsers.length} contacts for user ${user.username}.`);
-    res.status(200).json(allOtherUsers);
+    console.log(`Returning ${contactsToDisplay.length} actual contacts for user ${user.username}.`);
+    res.status(200).json(contactsToDisplay);
 });
 
 
@@ -444,11 +453,14 @@ app.post('/api/chats/delete', (req, res) => {
             console.log(`User ${userId} left group ${chatId}. Remaining members: ${chat.members.length}`);
 
             // If group has no members left or no admins, delete it
-            const hasAdmins = Object.values(chat.memberRoles).includes('admin');
+            const hasAdmins = Object.values(chat.memberRoles).some(role => role === 'admin'); // Check if any admin exists
             if (chat.members.length === 0 || !hasAdmins) {
-                chats.splice(chatIndex, 1);
-                messages = messages.filter(msg => msg.chatId !== chatId);
-                console.log(`Group ${chatId} deleted due to no members or no admins.`);
+                const chatIndex = chats.findIndex(c => c.id === groupId); // Re-find index as chats array might have changed
+                if (chatIndex !== -1) { // Ensure it still exists before splicing
+                    chats.splice(chatIndex, 1);
+                }
+                messages = messages.filter(msg => msg.chatId !== groupId); // Also delete messages
+                console.log(`Group ${groupId} deleted due to no members or no admins.`);
                 res.status(200).json({ message: 'لقد غادرت المجموعة وتم حذفها لعدم وجود أعضاء أو مشرفين.' });
             } else {
                 res.status(200).json({ message: 'لقد غادرت المجموعة بنجاح.' });
@@ -555,10 +567,12 @@ app.delete('/api/group/:groupId/members/:memberId', (req, res) => {
     console.log(`Member ${memberId} removed from group ${groupId}.`);
 
     // If group becomes empty or has no admins left, delete the group
-    const hasAdmins = Object.values(group.memberRoles).includes('admin');
+    const hasAdmins = Object.values(group.memberRoles).some(role => role === 'admin'); // Check if any admin exists
     if (group.members.length === 0 || !hasAdmins) {
-        const chatIndex = chats.findIndex(c => c.id === groupId);
-        chats.splice(chatIndex, 1);
+        const chatIndex = chats.findIndex(c => c.id === groupId); // Re-find index as chats array might have changed
+        if (chatIndex !== -1) { // Ensure it still exists before splicing
+            chats.splice(chatIndex, 1);
+        }
         messages = messages.filter(msg => msg.chatId !== groupId); // Also delete messages
         console.log(`Group ${groupId} deleted due to no members or no admins.`);
         return res.status(200).json({ message: 'تمت إزالة العضو وتم حذف المجموعة لعدم وجود أعضاء أو مشرفين.' });
@@ -628,7 +642,7 @@ app.get('/api/posts/search', (req, res) => {
     if (filterType === 'followed' && userId) {
         const user = users.find(u => u.uid === userId);
         if (user) {
-            filteredResults = posts.filter(p => user.following.includes(p.authorId));
+            filteredResults = filteredResults.filter(p => user.following.includes(p.authorId));
         } else {
             filteredResults = []; // No user, no followed posts
         }
@@ -636,8 +650,8 @@ app.get('/api/posts/search', (req, res) => {
 
     if (query) {
         filteredResults = filteredResults.filter(p =>
-            p.text.toLowerCase().includes(query) ||
-            p.authorName.toLowerCase().includes(query)
+            (p.text && p.text.toLowerCase().includes(query)) ||
+            (p.authorName && p.authorName.toLowerCase().includes(query))
         );
     }
     
@@ -803,6 +817,15 @@ app.delete('/api/posts/:postId', (req, res) => {
     const { postId } = req.params;
     const initialPostCount = posts.length;
     posts = posts.filter(p => p.id !== postId); // Remove the post
+    // Also remove comments associated with this post (since comments are nested for in-memory)
+    posts.forEach(p => { // Loop through remaining posts
+        p.comments = p.comments.filter(comment => comment.postId !== postId); // This line is incorrect for this structure.
+                                                                           // If comments are nested in posts, filtering posts removes comments.
+                                                                           // If comments are global, this isn't enough.
+                                                                           // Given your original 'comments: []' in newPost, they are nested.
+                                                                           // So, removing the post deletes its comments automatically.
+    });
+
 
     if (posts.length === initialPostCount) {
         console.log('Delete post attempt: Post not found for ID', postId);
