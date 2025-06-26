@@ -490,30 +490,56 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageId: newMessage.id });
 });
 
-// 15. DELETE Chat / Leave Group Endpoints (Corrected)
-// Delete private chat for a specific user (client-side simulation for in-memory DB)
-app.delete('/api/chats/private/:chatId/for-user/:userId', (req, res) => {
-    const { chatId, userId } = req.params;
-    console.log(`[DeleteChat] Attempting to delete private chat ${chatId} for user ${userId} only.`);
+// 15. DELETE Chat / Leave Group Endpoints (Corrected & Unified)
 
-    const chat = chats.find(c => c.id === chatId && c.type === 'private' && c.members.includes(userId));
-    if (!chat) {
-        console.log(`[DeleteChat] Private chat ${chatId} not found or user ${userId} is not a member.`);
+// --- START: MODIFIED/NEW DELETE ROUTES ---
+
+// NEW: Delete a post
+app.delete('/api/posts/:postId', (req, res) => {
+    const { postId } = req.params;
+    console.log(`[DeletePost] Attempting to delete post: ${postId}`);
+
+    const initialPostCount = posts.length;
+    posts = posts.filter(p => p.id !== postId);
+
+    if (posts.length < initialPostCount) {
+        console.log(`[DeletePost] Post ${postId} deleted successfully.`);
+        res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+    } else {
+        console.log(`[DeletePost] Post ${postId} not found.`);
+        res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+});
+
+
+// Delete private chat for a specific user (now matches frontend's call for `delete-for-user`)
+// Note: In an in-memory DB, this only simulates "delete for me" by removing from the array.
+// For true "delete for me", you'd need a more complex data structure where each user
+// has their own list of chats, or flags on chat members.
+app.delete('/api/chats/:chatId/delete-for-user', (req, res) => {
+    const { chatId } = req.params;
+    const { userId } = req.body; // Frontend sends userId in body for this endpoint
+    console.log(`[DeleteChat] Attempting to delete chat ${chatId} for user ${userId} only.`);
+
+    // Find the chat and ensure the user is a member
+    const chatIndex = chats.findIndex(c => c.id === chatId && c.members.includes(userId));
+    if (chatIndex === -1) {
+        console.log(`[DeleteChat] Chat ${chatId} not found or user ${userId} is not a member.`);
         return res.status(404).json({ error: 'المحادثة غير موجودة أو ليس لديك صلاحية الوصول إليها.' });
     }
 
-    // In a real database, you'd mark this chat as "hidden" or "deleted" for this specific user in their chat list entry.
-    // Since this is an in-memory simulation, we cannot truly delete for one user only without removing it from 'chats'
-    // for all users, which is effectively a "delete for both" for this simple setup.
-    // We will simply acknowledge the request from the backend's perspective.
-    console.log(`[DeleteChat] Acknowledged "delete for me" request for chat ${chatId} by user ${userId}. (Simulated client-side effect)`);
-    res.status(200).json({ message: 'تم حذف المحادثة من عندك فقط (محاكاة). لاحظ أن البيانات ستبقى على الخادم حتى يحذفها الطرف الآخر.' });
+    // Simulate "delete for user only" by just removing it from the array for now.
+    // In a real app, you'd mark this chat as hidden for 'userId'.
+    // For in-memory, if we remove it, it's gone for everyone using this simplified structure.
+    // So for now, it's just an acknowledgment from backend's side for this specific route.
+    console.log(`[DeleteChat] Acknowledged "delete for me" request for chat ${chatId} by user ${userId}. (Simulated client-side effect in in-memory DB)`);
+    res.status(200).json({ message: 'تم حذف المحادثة من عندك فقط (محاكاة). لاحظ أن البيانات ستبقى على الخادم حتى يحذفها الطرف الآخر إذا كانت محادثة خاصة، أو ستكون غير مرئية لك فقط في مجموعات.' });
 });
 
-// Delete private chat for both users
-app.delete('/api/chats/private/:chatId/for-both', (req, res) => {
+// Delete private chat for both users (now matches frontend's call for `delete-for-both`)
+app.delete('/api/chats/private/:chatId/delete-for-both', (req, res) => {
     const { chatId } = req.params;
-    const { callerUid } = req.body;
+    const { callerUid } = req.body; // Frontend sends callerUid in body
     console.log(`[DeleteChat] Attempting to delete private chat ${chatId} for both, caller: ${callerUid}.`);
 
     const chatIndex = chats.findIndex(c => c.id === chatId && c.type === 'private');
@@ -539,7 +565,7 @@ app.delete('/api/chats/private/:chatId/for-both', (req, res) => {
     res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
 });
 
-// Leave group chat
+// Leave group chat (Frontend calls: /api/group/${chatId}/leave, Backend: /api/group/:groupId/leave - This was already matching!)
 app.delete('/api/group/:groupId/leave', (req, res) => {
     const { groupId } = req.params;
     const { memberUid } = req.body;
@@ -606,6 +632,9 @@ app.delete('/api/group/:groupId/delete', (req, res) => {
     console.log(`[DeleteGroup] Group ${groupId} and ${deletedMessageCount} messages deleted by admin ${callerUid}.`);
     res.status(200).json({ message: 'تم حذف المجموعة بالكامل بنجاح.' });
 });
+
+
+// --- END: MODIFIED/NEW DELETE ROUTES ---
 
 
 // 16. Get Group Members (and their roles)
@@ -755,59 +784,29 @@ app.get('/api/posts/followed/:userId', (req, res) => {
             followerCount: author ? author.followers.length : 0
         };
     });
-    console.log(`[GetFollowedPosts] Returning ${followedPostsWithFollowerCount.length} posts for user ${userId}.`);
+    console.log(`[GetFollowedPosts] Returning ${followedPostsWithFollowerCount.length} posts for followed users of ${userId}.`);
     res.status(200).json(followedPostsWithFollowerCount);
 });
 
-// Search posts
-app.get('/api/posts/search', (req, res) => {
-    const { q, filter, userId } = req.query;
-    let filteredPosts = posts;
 
-    if (filter === 'followed' && userId) {
-        const user = users.find(u => u.uid === userId);
-        if (user) {
-            filteredPosts = filteredPosts.filter(p => user.following.includes(p.authorId));
-        }
-    }
-
-    if (q) {
-        filteredPosts = filteredPosts.filter(p => 
-            p.text.toLowerCase().includes(q.toLowerCase()) || 
-            p.authorName.toLowerCase().includes(q.toLowerCase())
-        );
-    }
-
-    const searchResultsWithFollowerCount = filteredPosts.map(p => {
-        const author = users.find(u => u.uid === p.authorId);
-        return {
-            ...p,
-            followerCount: author ? author.followers.length : 0
-        };
-    });
-    console.log(`[SearchPosts] Returning ${searchResultsWithFollowerCount.length} search results for query: '${q}' (filter: ${filter}).`);
-    res.status(200).json(searchResultsWithFollowerCount);
-});
-
-
-// Create a new post
+// Add a new post
 app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    console.log(`[CreatePost] Author: ${authorName}, Text length: ${text?.length || 0}, Media: ${mediaFile ? 'Yes' : 'No'}`);
+    console.log(`[AddPost] Author: ${authorName}, Text length: ${text?.length || 0}, Media: ${mediaFile ? 'Yes' : 'No'}`);
 
     if (!authorId || (!text && !mediaFile)) {
-        return res.status(400).json({ error: 'معرف المؤلف والنص أو ملف الوسائط مطلوبان.' });
+        return res.status(400).json({ error: 'معرف الكاتب ونص المنشور أو ملف الوسائط مطلوب.' });
     }
 
     let mediaUrl = null;
     if (mediaFile) {
         if (mediaType === 'image') {
-            mediaUrl = 'https://placehold.co/400x300/cccccc/000?text=Image+Post';
+            mediaUrl = 'https://placehold.co/600x400/cccccc/000?text=Image'; // Placeholder for images
         } else if (mediaType === 'video') {
-            mediaUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
+            mediaUrl = 'https://www.w3schools.com/html/mov_bbb.mp4'; // Example video URL
         }
-        console.log(`[CreatePost] Media file received, using placeholder URL: ${mediaUrl}`);
+        console.log(`[AddPost] Media received, using placeholder URL: ${mediaUrl}`);
     }
 
     const newPost = {
@@ -820,28 +819,12 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
         authorProfileBg: authorProfileBg || null,
         timestamp: Date.now(),
         likes: [],
-        views: [],
-        comments: []
+        views: [], // Initialize views as an array of UIDs
+        comments: [] // Initialize comments as an empty array
     };
     posts.push(newPost);
-    console.log(`[CreatePost] New post created: ${newPost.id}`);
-    res.status(201).json({ message: 'تم إنشاء المنشور بنجاح.', postId: newPost.id });
-});
-
-// Delete a post
-app.delete('/api/posts/:postId', (req, res) => {
-    const { postId } = req.params;
-    console.log(`[DeletePost] Attempt for post: ${postId}`);
-
-    const postIndex = posts.findIndex(p => p.id === postId);
-    if (postIndex === -1) {
-        console.log(`[DeletePost] Post not found: ${postId}`);
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-
-    posts.splice(postIndex, 1);
-    console.log(`[DeletePost] Post ${postId} deleted.`);
-    res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+    console.log(`[AddPost] New post created: ${newPost.id}`);
+    res.status(201).json({ message: 'تم نشر المنشور بنجاح.', postId: newPost.id });
 });
 
 // Toggle post like
@@ -854,11 +837,14 @@ app.post('/api/posts/:postId/like', (req, res) => {
     if (!post) {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
+    if (!userId) {
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب.' });
+    }
 
-    const likeIndex = post.likes.indexOf(userId);
+    const hasLiked = post.likes.includes(userId);
     let isLiked;
-    if (likeIndex > -1) {
-        post.likes.splice(likeIndex, 1);
+    if (hasLiked) {
+        post.likes = post.likes.filter(id => id !== userId);
         isLiked = false;
         console.log(`[ToggleLike] User ${userId} unliked post ${postId}.`);
     } else {
@@ -866,7 +852,7 @@ app.post('/api/posts/:postId/like', (req, res) => {
         isLiked = true;
         console.log(`[ToggleLike] User ${userId} liked post ${postId}.`);
     }
-    res.status(200).json({ message: 'تم تحديث الإعجاب.', isLiked, likesCount: post.likes.length });
+    res.status(200).json({ message: 'تم تحديث الإعجاب بنجاح.', isLiked, likesCount: post.likes.length });
 });
 
 // Increment post view count
@@ -879,28 +865,20 @@ app.post('/api/posts/:postId/view', (req, res) => {
     if (!post) {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
+    if (!userId) {
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب.' });
+    }
 
-    if (userId && !post.views.includes(userId)) {
+    if (!post.views.includes(userId)) {
         post.views.push(userId);
         console.log(`[IncrementView] User ${userId} viewed post ${postId}. Total views: ${post.views.length}`);
     } else {
-        console.log(`[IncrementView] User ${userId} already viewed post ${postId} or userId is missing.`);
+        console.log(`[IncrementView] User ${userId} already viewed post ${postId}. No change.`);
     }
-    res.status(200).json({ message: 'تم تحديث المشاهدات.', viewsCount: post.views.length });
+    res.status(200).json({ message: 'تم تحديث المشاهدات بنجاح.', viewCount: post.views.length });
 });
 
-// Get comments for a post
-app.get('/api/posts/:postId/comments', (req, res) => {
-    const { postId } = req.params;
-    console.log(`[GetComments] Post: ${postId}`);
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-    res.status(200).json(post.comments);
-});
-
-// Add a comment to a post
+// Add comment to a post
 app.post('/api/posts/:postId/comments', (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
@@ -911,24 +889,36 @@ app.post('/api/posts/:postId/comments', (req, res) => {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
     if (!userId || !username || !text) {
-        return res.status(400).json({ error: 'معرف المستخدم واسم المستخدم والنص مطلوبان للتعليق.' });
+        return res.status(400).json({ error: 'معرف المستخدم، اسم المستخدم، ونص التعليق مطلوب.' });
     }
 
-    const userCommenting = users.find(u => u.uid === userId);
-    const commentProfileBg = userCommenting ? userCommenting.profileBg : null;
+    const user = users.find(u => u.uid === userId);
+    const userProfileBg = user ? user.profileBg : null;
 
     const newComment = {
         id: generateUniqueId(),
         userId,
-        user: username,
+        user: username, // 'user' property as used in frontend (for simplicity)
+        userProfileBg: userProfileBg,
         text,
-        userProfileBg: commentProfileBg,
-        likes: [],
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        likes: [] // Initialize comment likes
     };
     post.comments.push(newComment);
-    console.log(`[AddComment] New comment added to post ${postId} by ${username}.`);
+    console.log(`[AddComment] New comment added to post ${postId}.`);
     res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', commentId: newComment.id });
+});
+
+// Get comments for a post
+app.get('/api/posts/:postId/comments', (req, res) => {
+    const { postId } = req.params;
+    console.log(`[GetComments] Post: ${postId}`);
+    const post = posts.find(p => p.id === postId);
+    if (!post) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    console.log(`[GetComments] Returning ${post.comments.length} comments for post ${postId}.`);
+    res.status(200).json(post.comments);
 });
 
 // Toggle comment like
@@ -941,20 +931,18 @@ app.post('/api/posts/:postId/comments/:commentId/like', (req, res) => {
     if (!post) {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
-
     const comment = post.comments.find(c => c.id === commentId);
     if (!comment) {
         return res.status(404).json({ error: 'التعليق غير موجود.' });
     }
-
     if (!userId) {
         return res.status(400).json({ error: 'معرف المستخدم مطلوب.' });
     }
 
-    const likeIndex = comment.likes.indexOf(userId);
+    const hasLiked = comment.likes.includes(userId);
     let isLiked;
-    if (likeIndex > -1) {
-        comment.likes.splice(likeIndex, 1);
+    if (hasLiked) {
+        comment.likes = comment.likes.filter(id => id !== userId);
         isLiked = false;
         console.log(`[ToggleCommentLike] User ${userId} unliked comment ${commentId}.`);
     } else {
@@ -962,24 +950,51 @@ app.post('/api/posts/:postId/comments/:commentId/like', (req, res) => {
         isLiked = true;
         console.log(`[ToggleCommentLike] User ${userId} liked comment ${commentId}.`);
     }
-    res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق.', isLiked, likesCount: comment.likes.length });
+    res.status(200).json({ message: 'تم تحديث إعجاب التعليق بنجاح.', isLiked, likesCount: comment.likes.length });
 });
 
-// --- Generic error handling for undefined routes ---
-app.use((req, res, next) => {
-    console.log(`[404 Not Found] Attempted to access: ${req.method} ${req.originalUrl}`);
-    res.status(404).json({ error: 'المسار غير موجود.' });
-});
 
-// --- Global error handler ---
-app.use((err, req, res, next) => {
-    console.error(`[Global Error] ${err.stack}`);
-    res.status(500).json({ error: 'حدث خطأ داخلي في الخادم.' });
+// Search posts
+app.get('/api/posts/search', (req, res) => {
+    const { q, filter, userId } = req.query; // q is query, filter is 'all' or 'followed'
+    const searchTerm = q ? q.toLowerCase() : '';
+    console.log(`[SearchPosts] Query: "${searchTerm}", Filter: "${filter}", User: ${userId}`);
+
+    let filteredPosts = posts;
+
+    if (filter === 'followed' && userId) {
+        const user = users.find(u => u.uid === userId);
+        if (user) {
+            filteredPosts = filteredPosts.filter(p => user.following.includes(p.authorId));
+        } else {
+            console.log(`[SearchPosts] User ${userId} not found for 'followed' filter.`);
+            filteredPosts = []; // No user, no followed posts
+        }
+    }
+
+    if (searchTerm) {
+        filteredPosts = filteredPosts.filter(p => 
+            (p.text && p.text.toLowerCase().includes(searchTerm)) ||
+            (p.authorName && p.authorName.toLowerCase().includes(searchTerm))
+        );
+    }
+    
+    // Add follower count to search results
+    const postsWithFollowerCount = filteredPosts.map(p => {
+        const author = users.find(u => u.uid === p.authorId);
+        return {
+            ...p,
+            followerCount: author ? author.followers.length : 0
+        };
+    });
+
+    console.log(`[SearchPosts] Returning ${postsWithFollowerCount.length} search results.`);
+    res.status(200).json(postsWithFollowerCount);
 });
 
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log(`Access backend at: http://localhost:${PORT}`);
+    console.log(`Backend server running on port ${PORT}`);
+    console.log(`Access the server at: http://localhost:${PORT}`);
 });
