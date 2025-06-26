@@ -131,6 +131,7 @@ app.get('/api/user/:userId/profile-background', (req, res) => {
     res.status(200).json({ url: user.profileBg || null });
 });
 
+
 // 6. Get User's Follower Count
 app.get('/api/user/:userId/followers/count', (req, res) => {
     const { userId } = req.params;
@@ -461,9 +462,9 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     let mediaUrl = null;
     if (mediaFile) {
         if (mediaType === 'image') {
-            mediaUrl = `https://placehold.co/300x200/cccccc/000?text=Image+Placeholder`;
+            mediaUrl = 'https://placehold.co/300x200/cccccc/000?text=Image+Post';
         } else if (mediaType === 'video') {
-            mediaUrl = `https://www.w3schools.com/html/mov_bbb.mp4`;
+            mediaUrl = 'https://www.w3schools.com/html/mov_bbb.mp4';
         }
         console.log(`[SendMessage] Media received, using placeholder URL: ${mediaUrl}`);
     }
@@ -489,31 +490,31 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageId: newMessage.id });
 });
 
-// 15. DELETE Chat / Leave Group Endpoints (Updated)
-// Delete private chat for a specific user
+// 15. DELETE Chat / Leave Group Endpoints (Corrected)
+// Delete private chat for a specific user (client-side simulation for in-memory DB)
 app.delete('/api/chats/private/:chatId/for-user/:userId', (req, res) => {
     const { chatId, userId } = req.params;
-    console.log(`[DeleteChat] Private chat ${chatId} for user ${userId} only.`);
+    console.log(`[DeleteChat] Attempting to delete private chat ${chatId} for user ${userId} only.`);
 
-    const chatIndex = chats.findIndex(c => c.id === chatId && c.type === 'private' && c.members.includes(userId));
-    if (chatIndex === -1) {
-        console.log(`[DeleteChat] Private chat ${chatId} not found for user ${userId}.`);
+    const chat = chats.find(c => c.id === chatId && c.type === 'private' && c.members.includes(userId));
+    if (!chat) {
+        console.log(`[DeleteChat] Private chat ${chatId} not found or user ${userId} is not a member.`);
         return res.status(404).json({ error: 'المحادثة غير موجودة أو ليس لديك صلاحية الوصول إليها.' });
     }
 
-    // In a real database, you'd mark this chat as "hidden" or "deleted" for this specific user.
-    // In this in-memory simulation, we will remove it from the 'chats' array IF this is the only member left.
-    // If both members delete "forMe" independently, then the chat will be removed only when the last one does it.
-    // For simplicity, we'll just acknowledge the request and rely on frontend re-fetch.
-    console.log(`[DeleteChat] Simulating deletion of private chat ${chatId} for user ${userId} (forMe).`);
+    // In a real database, you'd mark this chat as "hidden" or "deleted" for this specific user in their chat list entry.
+    // Since this is an in-memory simulation, we cannot truly delete for one user only without removing it from 'chats'
+    // for all users, which is effectively a "delete for both" for this simple setup.
+    // We will simply acknowledge the request from the backend's perspective.
+    console.log(`[DeleteChat] Acknowledged "delete for me" request for chat ${chatId} by user ${userId}. (Simulated client-side effect)`);
     res.status(200).json({ message: 'تم حذف المحادثة من عندك فقط (محاكاة). لاحظ أن البيانات ستبقى على الخادم حتى يحذفها الطرف الآخر.' });
 });
 
 // Delete private chat for both users
 app.delete('/api/chats/private/:chatId/for-both', (req, res) => {
     const { chatId } = req.params;
-    const { callerUid } = req.body; // Assuming callerUid is needed for permission checks
-    console.log(`[DeleteChat] Private chat ${chatId} for both, caller: ${callerUid}.`);
+    const { callerUid } = req.body;
+    console.log(`[DeleteChat] Attempting to delete private chat ${chatId} for both, caller: ${callerUid}.`);
 
     const chatIndex = chats.findIndex(c => c.id === chatId && c.type === 'private');
     if (chatIndex === -1) {
@@ -541,8 +542,8 @@ app.delete('/api/chats/private/:chatId/for-both', (req, res) => {
 // Leave group chat
 app.delete('/api/group/:groupId/leave', (req, res) => {
     const { groupId } = req.params;
-    const { memberUid } = req.body; // The user who is leaving
-    console.log(`[LeaveGroup] User ${memberUid} leaving group ${groupId}.`);
+    const { memberUid } = req.body;
+    console.log(`[LeaveGroup] User ${memberUid} attempting to leave group ${groupId}.`);
 
     const groupIndex = chats.findIndex(c => c.id === groupId && c.type === 'group');
     if (groupIndex === -1) {
@@ -576,7 +577,7 @@ app.delete('/api/group/:groupId/leave', (req, res) => {
 // Delete group chat (admin action)
 app.delete('/api/group/:groupId/delete', (req, res) => {
     const { groupId } = req.params;
-    const { callerUid } = req.body; // Admin who is deleting the group
+    const { callerUid } = req.body;
     console.log(`[DeleteGroup] Admin ${callerUid} attempting to delete group ${groupId}.`);
 
     const groupIndex = chats.findIndex(c => c.id === groupId && c.type === 'group');
@@ -801,7 +802,6 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
 
     let mediaUrl = null;
     if (mediaFile) {
-        // In a real app, you'd upload the file to cloud storage and get a real URL.
         if (mediaType === 'image') {
             mediaUrl = 'https://placehold.co/400x300/cccccc/000?text=Image+Post';
         } else if (mediaType === 'video') {
@@ -814,7 +814,7 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
         id: generateUniqueId(),
         authorId,
         authorName,
-        text: text || '', // Ensure text is an empty string if undefined
+        text: text || '',
         mediaType: mediaType || null,
         mediaUrl: mediaUrl,
         authorProfileBg: authorProfileBg || null,
@@ -880,7 +880,6 @@ app.post('/api/posts/:postId/view', (req, res) => {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
     }
 
-    // Only add view if user hasn't viewed this post before
     if (userId && !post.views.includes(userId)) {
         post.views.push(userId);
         console.log(`[IncrementView] User ${userId} viewed post ${postId}. Total views: ${post.views.length}`);
@@ -921,7 +920,7 @@ app.post('/api/posts/:postId/comments', (req, res) => {
     const newComment = {
         id: generateUniqueId(),
         userId,
-        user: username, // Use 'user' for consistency with frontend.
+        user: username,
         text,
         userProfileBg: commentProfileBg,
         likes: [],
@@ -964,6 +963,18 @@ app.post('/api/posts/:postId/comments/:commentId/like', (req, res) => {
         console.log(`[ToggleCommentLike] User ${userId} liked comment ${commentId}.`);
     }
     res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق.', isLiked, likesCount: comment.likes.length });
+});
+
+// --- Generic error handling for undefined routes ---
+app.use((req, res, next) => {
+    console.log(`[404 Not Found] Attempted to access: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: 'المسار غير موجود.' });
+});
+
+// --- Global error handler ---
+app.use((err, req, res, next) => {
+    console.error(`[Global Error] ${err.stack}`);
+    res.status(500).json({ error: 'حدث خطأ داخلي في الخادم.' });
 });
 
 
