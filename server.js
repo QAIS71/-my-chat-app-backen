@@ -1,42 +1,41 @@
 // استيراد المكتبات الضرورية
-const express = require('express'); // إطار عمل الويب لـ Node.js
-const cors = require('cors'); // لتمكين طلبات Cross-Origin Resource Sharing
-const bodyParser = require('body-parser'); // لتحليل نصوص طلبات HTTP
-const multer = require('multer'); // للتعامل مع رفع الملفات
-const path = require('path'); // للتعامل مع مسارات الملفات
-const fs = require('fs'); // للتعامل مع نظام الملفات (لقد قمت بإلغاء تعليقه هنا)
-const bcrypt = require('bcryptjs'); // لتشفير كلمات المرور
-const { v4: uuidv4 } = require('uuid'); // لتوليد معرفات فريدة عالمياً (UUIDs)
-const { customAlphabet } = require('nanoid'); // لتوليد معرفات مخصصة قصيرة
+const express = require('express');
+const cors = require = require('cors');
+const bodyParser = require('body-parser');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs'); // للتعامل مع نظام الملفات
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const { customAlphabet } = require('nanoid');
 
 // تهيئة تطبيق Express
 const app = express();
-const PORT = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة أو 3000 افتراضياً
+const PORT = process.env.PORT || 3000;
 
-// تهيئة CORS لتمكين الطلبات من أي أصل (للتطوير)
+// تهيئة CORS
 app.use(cors());
 
 // تحليل طلبات JSON
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// إنشاء مجلد 'uploads' إذا لم يكن موجوداً
+// --- إعداد تخزين Multer للتخزين المحلي المؤقت ---
+// هذا المجلد سيتم مسحه عند إعادة تشغيل الخادم على Render.
+// لتخزين دائم، ستحتاج إلى خدمة تخزين سحابي مثل Cloudinary أو AWS S3.
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
 }
 
-// توفير الملفات الثابتة من مجلد 'uploads' (الصور والفيديوهات المرفوعة)
+// توفير الملفات الثابتة من مجلد 'uploads'
 app.use('/uploads', express.static(uploadsDir));
 
-// --- إعداد تخزين Multer ---
-// هذا يستخدم التخزين على القرص المحلي. لـ Render، يجب استبداله بتخزين سحابي.
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, 'uploads/'); // مجلد الوجهة لرفع الملفات
+        cb(null, uploadsDir); // مجلد الوجهة لرفع الملفات
     },
     filename: (req, file, cb) => {
-        // إنشاء اسم ملف فريد للحفاظ على الملفات الأصلية
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
@@ -49,8 +48,6 @@ const upload = multer({ storage: storage });
 let users = []; // { uid, username, passwordHash, customId, profileBgUrl, followers:[], following:[] }
 let posts = []; // { id, authorId, authorName, text, mediaType, mediaUrl, timestamp, likes:[], comments:[], views:[], authorProfileBg, followerCount }
 let chats = []; // { id, type: 'private' | 'group', participants: [{ uid, name, customId, role (for groups), profileBgUrl }], messages: [], name (for group), description (for group) }
-// For private chats, participants will be [{ uid, name, customId }, { uid, name, customId }]
-// For groups, participants will be [{ uid, name, customId, role }, ...]
 let messages = []; // { id, chatId, senderId, senderName, text, mediaType, mediaUrl, timestamp, senderProfileBg }
 
 // دالة مساعدة لتوليد معرفات مستخدم مخصصة (8 أرقام)
@@ -71,16 +68,16 @@ app.post('/api/register', async (req, res) => {
     }
 
     try {
-        const passwordHash = await bcrypt.hash(password, 10); // تشفير كلمة المرور
-        const customId = generateCustomId(); // توليد معرف مخصص
+        const passwordHash = await bcrypt.hash(password, 10);
+        const customId = generateCustomId();
         const newUser = {
-            uid: uuidv4(), // توليد UID فريد
+            uid: uuidv4(),
             username,
             passwordHash,
             customId,
-            profileBgUrl: null, // لا توجد خلفية ملف شخصي افتراضياً
-            followers: [], // قائمة بمعرفات المتابعين
-            following: []  // قائمة بمعرفات الذين يتابعهم المستخدم
+            profileBgUrl: null,
+            followers: [],
+            following: []
         };
         users.push(newUser);
         console.log(`User registered: ${username}, Custom ID: ${customId}`);
@@ -109,14 +106,13 @@ app.post('/api/login', async (req, res) => {
         if (!isMatch) {
             return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
         }
-        // إرجاع بيانات المستخدم (باستثناء الهاش)
         res.status(200).json({
             message: 'تم تسجيل الدخول بنجاح!',
             user: {
                 uid: user.uid,
                 username: user.username,
                 customId: user.customId,
-                profileBg: user.profileBgUrl // يجب أن يعود باسم profileBg للحفاظ على الاتساق مع الواجهة الأمامية
+                profileBg: user.profileBgUrl
             }
         });
     } catch (error) {
@@ -127,14 +123,13 @@ app.post('/api/login', async (req, res) => {
 
 // --- وظائف API للملفات الشخصية وخلفيات المستخدمين ---
 
-// رفع خلفية الملف الشخصي
+// رفع خلفية الملف الشخصي (باستخدام التخزين المحلي)
 app.post('/api/upload-profile-background', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'لم يتم توفير ملف.' });
     }
     const { userId } = req.body;
     if (!userId) {
-        // قم بحذف الملف المرفوع إذا لم يتم توفير userId
         fs.unlinkSync(req.file.path);
         return res.status(400).json({ error: 'معرف المستخدم (userId) مطلوب.' });
     }
@@ -145,24 +140,13 @@ app.post('/api/upload-profile-background', upload.single('file'), (req, res) => 
         return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
 
-    // إعداد مسار URL للملف المرفوع
     const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-    user.profileBgUrl = fileUrl; // تحديث رابط خلفية الملف الشخصي للمستخدم
+    user.profileBgUrl = fileUrl;
     
-    // ملاحظة هامة: في بيئة الإنتاج (مثل Render)، ستحتاج إلى رفع هذا الملف إلى خدمة تخزين سحابية
-    // (مثل Cloudinary أو AWS S3) بدلاً من المجلد المحلي، وحفظ الرابط السحابي هنا.
-    // مثال (إذا كنت تستخدم Cloudinary):
-    // const cloudinary = require('cloudinary').v2;
-    // cloudinary.config({ cloud_name: '...', api_key: '...', api_secret: '...' });
-    // const result = await cloudinary.uploader.upload(req.file.path);
-    // user.profileBgUrl = result.secure_url;
-    // fs.unlinkSync(req.file.path); // حذف الملف المحلي بعد رفعه إلى السحابة
-
     res.status(200).json({ message: 'تم تحديث خلفية الملف الشخصي بنجاح!', url: fileUrl });
 });
 
-
-// جلب خلفية الملف الشخصي للمستخدم (خاصةً إذا لم يتم تحميلها بعد)
+// جلب خلفية الملف الشخصي للمستخدم
 app.get('/api/user/:userId/profile-background', (req, res) => {
     const { userId } = req.params;
     const user = users.find(u => u.uid === userId);
@@ -193,22 +177,22 @@ app.get('/api/user/by-custom-id/:customId', (req, res) => {
         uid: user.uid,
         username: user.username,
         customId: user.customId,
-        profileBg: user.profileBgUrl // يجب أن يعود باسم profileBg للحفاظ على الاتساق مع الواجهة الأمامية
+        profileBg: user.profileBgUrl
     });
 });
 
-// جلب جهات الاتصال لمستخدم معين (المستخدمون الذين أجرى معهم محادثات فردية)
+// جلب جهات الاتصال لمستخدم معين
 app.get('/api/user/:userId/contacts', (req, res) => {
     const { userId } = req.params;
     const userChats = chats.filter(chat => chat.type === 'private' && chat.participants.some(p => p.uid === userId));
 
-    const contacts = new Map(); // استخدام Map لتجنب التكرارات
+    const contacts = new Map();
 
     userChats.forEach(chat => {
         const otherParticipant = chat.participants.find(p => p.uid !== userId);
         if (otherParticipant) {
             const user = users.find(u => u.uid === otherParticipant.uid);
-            if (user) { // تأكد من وجود المستخدم في قائمة المستخدمين الرئيسية
+            if (user) {
                 contacts.set(user.uid, {
                     uid: user.uid,
                     username: user.username,
@@ -242,12 +226,10 @@ app.post('/api/user/:followerId/follow/:followingId', (req, res) => {
     const isFollowing = follower.following.includes(followingId);
 
     if (isFollowing) {
-        // إلغاء المتابعة
         follower.following = follower.following.filter(id => id !== followingId);
         following.followers = following.followers.filter(id => id !== followerId);
         res.status(200).json({ message: 'تم إلغاء المتابعة بنجاح.', isFollowing: false });
     } else {
-        // متابعة
         follower.following.push(followingId);
         following.followers.push(followerId);
         res.status(200).json({ message: 'تمت المتابعة بنجاح.', isFollowing: true });
@@ -268,20 +250,18 @@ app.get('/api/user/:followerId/following/:followingId', (req, res) => {
 
 // --- وظائف API للمنشورات ---
 
-// نشر منشور جديد (مع دعم الوسائط)
+// نشر منشور جديد (باستخدام التخزين المحلي)
 app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
 
     if (!authorId || !authorName) {
-        // إذا كان هناك ملف، احذفه لأنه لم يتم التحقق من المؤلف
         if (req.file) fs.unlinkSync(req.file.path);
         return res.status(400).json({ error: 'بيانات المؤلف (authorId, authorName) مطلوبة.' });
     }
-    if (!text && !req.file) { // لا نص ولا ملف
+    if (!text && !req.file) {
         return res.status(400).json({ error: 'المنشور لا يمكن أن يكون فارغاً (يجب أن يحتوي على نص أو وسائط).' });
     }
     
-    // التحقق من وجود المستخدم
     const author = users.find(u => u.uid === authorId);
     if (!author) {
         if (req.file) fs.unlinkSync(req.file.path);
@@ -289,24 +269,30 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     }
 
     let mediaUrl = null;
+    let finalMediaType = mediaType || 'text';
+
     if (req.file) {
         mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-        // ملاحظة: في بيئة الإنتاج، قم برفع الملف إلى خدمة تخزين سحابية واحفظ رابطها هنا.
+        finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
+        if (finalMediaType === 'unknown') {
+            fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
+        }
     }
 
     const newPost = {
         id: uuidv4(),
         authorId,
         authorName,
-        text: text || '', // تأكد من أنه سلسلة نصية حتى لو كانت فارغة
-        mediaType: mediaType || 'text', // 'text', 'image', 'video'
+        text: text || '',
+        mediaType: finalMediaType,
         mediaUrl: mediaUrl,
         timestamp: Date.now(),
         likes: [],
-        comments: [], // كل تعليق { id, userId, username, text, timestamp, likes:[] }
-        views: [], // معرفات المستخدمين الذين شاهدوا المنشور
-        authorProfileBg: authorProfileBg || null, // رابط خلفية ملف المؤلف
-        followerCount: author.followers.length // عدد متابعي المؤلف عند النشر
+        comments: [],
+        views: [],
+        authorProfileBg: authorProfileBg || null,
+        followerCount: author.followers.length
     };
 
     posts.push(newPost);
@@ -315,7 +301,6 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
 
 // جلب جميع المنشورات
 app.get('/api/posts', (req, res) => {
-    // إرجاع جميع المنشورات
     res.status(200).json(posts);
 });
 
@@ -333,7 +318,7 @@ app.get('/api/posts/followed/:userId', (req, res) => {
 
 // البحث في المنشورات
 app.get('/api/posts/search', (req, res) => {
-    const { q, filter, userId } = req.query; // q: query, filter: 'all' or 'followed'
+    const { q, filter, userId } = req.query;
     const searchTerm = q ? q.toLowerCase() : '';
 
     let filteredPosts = [];
@@ -344,7 +329,7 @@ app.get('/api/posts/search', (req, res) => {
             filteredPosts = posts.filter(post => user.following.includes(post.authorId));
         }
     } else {
-        filteredPosts = [...posts]; // جميع المنشورات افتراضياً
+        filteredPosts = [...posts];
     }
 
     if (searchTerm) {
@@ -355,7 +340,6 @@ app.get('/api/posts/search', (req, res) => {
     }
     res.status(200).json(filteredPosts);
 });
-
 
 // الإعجاب بمنشور / إلغاء الإعجاب
 app.post('/api/posts/:postId/like', (req, res) => {
@@ -405,7 +389,7 @@ app.post('/api/posts/:postId/comments', (req, res) => {
         text,
         timestamp: Date.now(),
         likes: [],
-        userProfileBg: user.profileBgUrl // إضافة خلفية ملف المستخدم إلى التعليق
+        userProfileBg: user.profileBgUrl
     };
     post.comments.push(newComment);
     res.status(201).json({ message: 'تم إضافة التعليق بنجاح!', comment: newComment });
@@ -462,7 +446,6 @@ app.post('/api/posts/:postId/view', (req, res) => {
         return res.status(400).json({ error: 'معرف المستخدم (userId) مطلوب.' });
     }
 
-    // إذا لم يكن المستخدم قد شاهد هذا المنشور بعد، قم بإضافته وزيادة المشاهدات
     if (!post.views.includes(userId)) {
         post.views.push(userId);
         res.status(200).json({ message: 'تم تسجيل المشاهدة.', viewsCount: post.views.length });
@@ -471,20 +454,18 @@ app.post('/api/posts/:postId/view', (req, res) => {
     }
 });
 
-// حذف منشور
+// حذف منشور (مع حذف الملف المحلي إذا كان موجوداً)
 app.delete('/api/posts/:postId', (req, res) => {
     const { postId } = req.params;
     const initialLength = posts.length;
     
-    // البحث عن المنشور المراد حذفه لحذف ملفاته المرفوعة أيضاً
     const postToDelete = posts.find(p => p.id === postId);
     if (postToDelete && postToDelete.mediaUrl) {
-        // استخراج اسم الملف من URL وحذفه من مجلد 'uploads'
         const filename = path.basename(postToDelete.mediaUrl);
         const filePath = path.join(uploadsDir, filename);
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
-            console.log(`Deleted media file: ${filePath}`);
+            console.log(`Deleted local media file: ${filePath}`);
         }
     }
 
@@ -508,40 +489,37 @@ app.get('/api/user/:userId/chats', (req, res) => {
             let chatName = '';
             let profileBgUrl = null;
             let customId = null;
-            let adminId = null; // For groups
+            let adminId = null;
 
             if (chat.type === 'private') {
                 const otherParticipant = chat.participants.find(p => p.uid !== userId);
                 const contactUser = users.find(u => u.uid === otherParticipant.uid);
-                // The name the current user saved for this contact
                 const currentUserChatEntry = chat.participants.find(p => p.uid === userId);
                 chatName = currentUserChatEntry.contactName || (contactUser ? contactUser.username : 'Unknown User');
                 profileBgUrl = contactUser ? contactUser.profileBgUrl : null;
                 customId = contactUser ? contactUser.customId : null;
             } else if (chat.type === 'group') {
                 chatName = chat.name;
-                profileBgUrl = chat.profileBgUrl || null; // Group might have its own background
-                adminId = chat.adminId; // The creator of the group
+                profileBgUrl = chat.profileBgUrl || null;
+                adminId = chat.adminId;
             }
 
-            // Get last message info
             const lastMessage = messages
                 .filter(msg => msg.chatId === chat.id)
-                .sort((a, b) => b.timestamp - a.timestamp)[0]; // Newest message first
+                .sort((a, b) => b.timestamp - a.timestamp)[0];
 
             return {
                 id: chat.id,
                 type: chat.type,
                 name: chatName,
                 lastMessage: lastMessage ? lastMessage.text : null,
-                timestamp: lastMessage ? lastMessage.timestamp : (chat.createdAt || 0), // Use chat creation time if no messages
+                timestamp: lastMessage ? lastMessage.timestamp : (chat.createdAt || 0),
                 profileBg: profileBgUrl,
                 customId: customId,
-                adminId: adminId // Include adminId for groups
+                adminId: adminId
             };
         });
     
-    // Sort chats by last message timestamp (newest first)
     userChats.sort((a, b) => b.timestamp - a.timestamp);
 
     res.status(200).json(userChats);
@@ -555,7 +533,6 @@ app.post('/api/chats/private', (req, res) => {
         return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
     }
 
-    // التحقق مما إذا كانت المحادثة موجودة بالفعل
     const existingChat = chats.find(chat =>
         chat.type === 'private' &&
         ((chat.participants[0].uid === user1Id && chat.participants[1].uid === user2Id) ||
@@ -563,7 +540,6 @@ app.post('/api/chats/private', (req, res) => {
     );
 
     if (existingChat) {
-        // تحديث اسم جهة الاتصال للمستخدم الحالي في المحادثة الموجودة
         const currentUserParticipant = existingChat.participants.find(p => p.uid === user1Id);
         if (currentUserParticipant) {
             currentUserParticipant.contactName = contactName;
@@ -582,8 +558,8 @@ app.post('/api/chats/private', (req, res) => {
         id: uuidv4(),
         type: 'private',
         participants: [
-            { uid: user1Id, name: user1Name, customId: user1CustomId, profileBgUrl: user1.profileBgUrl, contactName: contactName },
-            { uid: user2Id, name: user2Name, customId: user2CustomId, profileBgUrl: user2.profileBgUrl, contactName: user1Name } // اسم جهة الاتصال لـ user2 هو user1Name
+            { uid: user1.uid, name: user1.username, customId: user1.customId, profileBgUrl: user1.profileBgUrl, contactName: contactName },
+            { uid: user2.uid, name: user2.username, customId: user2.customId, profileBgUrl: user2.profileBgUrl, contactName: user1.username }
         ],
         createdAt: Date.now()
     };
@@ -613,9 +589,8 @@ app.put('/api/chats/private/:chatId/contact-name', (req, res) => {
 // حذف محادثة فردية من طرف واحد (من عند المستخدم فقط)
 app.delete('/api/chats/:chatId/delete-for-user', (req, res) => {
     const { chatId } = req.params;
-    const { userId } = req.body; // معرف المستخدم الذي يريد حذف المحادثة
+    const { userId } = req.body;
 
-    // البحث عن المحادثة
     const chatIndex = chats.findIndex(chat => chat.id === chatId);
     if (chatIndex === -1) {
         return res.status(404).json({ error: 'المحادثة غير موجودة.' });
@@ -628,24 +603,21 @@ app.delete('/api/chats/:chatId/delete-for-user', (req, res) => {
         return res.status(403).json({ error: 'المستخدم غير مصرح له بحذف هذه المحادثة.' });
     }
 
-    // إزالة المحادثة من قائمة المستخدم (عن طريق إزالة المستخدم من قائمة المشاركين)
     chat.participants.splice(participantIndex, 1);
 
-    // إذا لم يتبق أي مشارك في المحادثة، فاحذف المحادثة نفسها وجميع رسائلها
     if (chat.participants.length === 0) {
         chats.splice(chatIndex, 1);
-        messages = messages.filter(msg => msg.chatId !== chatId); // حذف الرسائل المتعلقة بهذه المحادثة
+        messages = messages.filter(msg => msg.chatId !== chatId);
         res.status(200).json({ message: 'تم حذف المحادثة نهائياً.' });
     } else {
         res.status(200).json({ message: 'تم حذف المحادثة من طرفك فقط.' });
     }
 });
 
-
-// حذف محادثة فردية من الطرفين (أو مغادرة مجموعة)
+// حذف محادثة فردية من الطرفين
 app.delete('/api/chats/private/:chatId/delete-for-both', (req, res) => {
     const { chatId } = req.params;
-    const { callerUid } = req.body; // معرف المستخدم الذي يقوم بطلب الحذف
+    const { callerUid } = req.body;
 
     const chatIndex = chats.findIndex(c => c.id === chatId && c.type === 'private');
     if (chatIndex === -1) {
@@ -653,12 +625,10 @@ app.delete('/api/chats/private/:chatId/delete-for-both', (req, res) => {
     }
 
     const chat = chats[chatIndex];
-    // تأكد أن المستخدم الذي يطلب الحذف هو أحد المشاركين
     if (!chat.participants.some(p => p.uid === callerUid)) {
         return res.status(403).json({ error: 'أنت غير مخول بحذف هذه المحادثة.' });
     }
 
-    // حذف المحادثة بالكامل وجميع رسائلها
     chats.splice(chatIndex, 1);
     messages = messages.filter(msg => msg.chatId !== chatId);
     res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
@@ -667,7 +637,7 @@ app.delete('/api/chats/private/:chatId/delete-for-both', (req, res) => {
 
 // --- وظائف API للرسائل ---
 
-// إرسال رسالة (نص أو وسائط)
+// إرسال رسالة (نص أو وسائط) (باستخدام التخزين المحلي)
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
@@ -682,16 +652,21 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
         if (req.file) fs.unlinkSync(req.file.path);
         return res.status(404).json({ error: 'المحادثة غير موجودة.' });
     }
-    // تأكد أن المرسل هو مشارك في هذه المحادثة
     if (!chat.participants.some(p => p.uid === senderId)) {
         if (req.file) fs.unlinkSync(req.file.path);
         return res.status(403).json({ error: 'المرسل ليس مشاركاً في هذه المحادثة.' });
     }
 
     let mediaUrl = null;
+    let finalMediaType = mediaType || 'text';
+
     if (req.file) {
         mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-        // ملاحظة: في بيئة الإنتاج، قم برفع الملف إلى خدمة تخزين سحابية واحفظ رابطها هنا.
+        finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
+        if (finalMediaType === 'unknown') {
+            fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
+        }
     }
 
     const newMessage = {
@@ -699,21 +674,21 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
         chatId,
         senderId,
         senderName,
-        text: text || '', // النص يمكن أن يكون فارغاً إذا كان هناك ملف وسائط
-        mediaType: mediaType || 'text',
+        text: text || '',
+        mediaType: finalMediaType,
         mediaUrl: mediaUrl,
         timestamp: Date.now(),
-        senderProfileBg: senderProfileBg || null // رابط خلفية ملف المرسل
+        senderProfileBg: senderProfileBg || null
     };
 
     messages.push(newMessage);
     res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', message: newMessage });
 });
 
-// جلب رسائل محادثة معينة (يمكن تصفيتها حسب الطابع الزمني)
+// جلب رسائل محادثة معينة
 app.get('/api/chats/:chatId/messages', (req, res) => {
     const { chatId } = req.params;
-    const since = parseInt(req.query.since) || 0; // جلب الرسائل الأحدث من هذا الطابع الزمني
+    const since = parseInt(req.query.since) || 0;
 
     const chatMessages = messages.filter(msg => msg.chatId === chatId && msg.timestamp > since);
     res.status(200).json(chatMessages);
@@ -741,9 +716,9 @@ app.post('/api/groups', (req, res) => {
         if (user) {
             participants.push({
                 uid: user.uid,
-                name: user.username, // اسم المستخدم الأصلي
+                name: user.username,
                 customId: user.customId,
-                role: members[uid], // 'admin' or 'member'
+                role: members[uid],
                 profileBgUrl: user.profileBgUrl
             });
         }
@@ -758,10 +733,10 @@ app.post('/api/groups', (req, res) => {
         type: 'group',
         name,
         description,
-        adminId, // المالك الأصلي للمجموعة
-        participants, // المشاركون مع أدوارهم
+        adminId,
+        participants,
         createdAt: Date.now(),
-        profileBgUrl: null // يمكن إضافة خلفية للمجموعة لاحقاً
+        profileBgUrl: null
     };
     chats.push(newGroup);
     res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح!', groupId: newGroup.id });
@@ -774,10 +749,9 @@ app.get('/api/group/:groupId/members', (req, res) => {
     if (!group) {
         return res.status(404).json({ error: 'المجموعة غير موجودة.' });
     }
-    // إرجاع الأعضاء مع أدوارهم
     res.status(200).json(group.participants.map(p => ({
         uid: p.uid,
-        username: p.name, // استخدم 'name' المخزن في المشاركين
+        username: p.name,
         customId: p.customId,
         role: p.role,
         profileBgUrl: p.profileBgUrl
@@ -811,7 +785,6 @@ app.post('/api/groups/:groupId/add-members', (req, res) => {
 
     const addedMembers = [];
     newMemberUids.forEach(uid => {
-        // إذا لم يكن العضو موجوداً بالفعل في المجموعة
         if (!group.participants.some(p => p.uid === uid)) {
             const user = users.find(u => u.uid === uid);
             if (user) {
@@ -819,7 +792,7 @@ app.post('/api/groups/:groupId/add-members', (req, res) => {
                     uid: user.uid,
                     name: user.username,
                     customId: user.customId,
-                    role: 'member', // الأعضاء الجدد ينضمون كأعضاء عاديين افتراضياً
+                    role: 'member',
                     profileBgUrl: user.profileBgUrl
                 });
                 addedMembers.push(user.username);
@@ -834,11 +807,10 @@ app.post('/api/groups/:groupId/add-members', (req, res) => {
     }
 });
 
-
 // تغيير دور عضو في المجموعة (مشرف/عضو)
 app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
     const { groupId, memberUid } = req.params;
-    const { newRole, callerUid } = req.body; // callerUid هو من يقوم بالتغيير
+    const { newRole, callerUid } = req.body;
 
     const group = chats.find(c => c.id === groupId && c.type === 'group');
     if (!group) {
@@ -852,17 +824,14 @@ app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
         return res.status(404).json({ error: 'المستخدم الذي يقوم بالعملية أو العضو المستهدف غير موجود في هذه المجموعة.' });
     }
 
-    // يجب أن يكون من يقوم بالتغيير مشرفاً
     if (caller.role !== 'admin') {
         return res.status(403).json({ error: 'غير مصرح لك بتغيير أدوار الأعضاء.' });
     }
 
-    // المالك (adminId) لا يمكن إزالة إشرافه إلا بواسطة نفسه (إذا كان المالك يقوم بعملية Demote)
     if (targetMember.uid === group.adminId && newRole === 'member' && caller.uid !== group.adminId) {
         return res.status(403).json({ error: 'لا يمكنك إزالة إشراف مالك المجموعة.' });
     }
 
-    // لا يمكن للمشرف العادي (ليس المالك) إزالة إشراف مشرف آخر
     if (targetMember.role === 'admin' && newRole === 'member' && caller.uid !== group.adminId && targetMember.uid !== group.adminId) {
         return res.status(403).json({ error: 'لا يمكنك إزالة إشراف مشرف آخر.' });
     }
@@ -871,10 +840,9 @@ app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
     res.status(200).json({ message: `تم تغيير دور ${targetMember.name} إلى ${newRole}.` });
 });
 
-
 // إزالة عضو من المجموعة
 app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
-    const { groupId, memberUid } = req.params;
+    const { groupId } = req.params;
     const { callerUid } = req.body;
 
     const group = chats.find(c => c.id === groupId && c.type === 'group');
@@ -889,19 +857,16 @@ app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
         return res.status(404).json({ error: 'المستخدم الذي يقوم بالعملية أو العضو المستهدف غير موجود في هذه المجموعة.' });
     }
 
-    // يجب أن يكون من يقوم بالإزالة مشرفاً
     if (caller.role !== 'admin') {
         return res.status(403).json({ error: 'غير مصرح لك بإزالة الأعضاء.' });
     }
 
     const targetMember = group.participants[targetMemberIndex];
 
-    // لا يمكن إزالة مالك المجموعة (adminId)
     if (targetMember.uid === group.adminId) {
         return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
     }
 
-    // المشرف العادي (ليس المالك) لا يمكنه إزالة مشرف آخر
     if (targetMember.role === 'admin' && caller.uid !== group.adminId) {
         return res.status(403).json({ error: 'المشرف العادي لا يمكنه إزالة مشرف آخر.' });
     }
@@ -913,7 +878,7 @@ app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
 // مغادرة المجموعة
 app.delete('/api/group/:groupId/leave', (req, res) => {
     const { groupId } = req.params;
-    const { memberUid } = req.body; // معرف المستخدم الذي يغادر
+    const { memberUid } = req.body;
 
     const group = chats.find(c => c.id === groupId && c.type === 'group');
     if (!group) {
@@ -927,39 +892,31 @@ app.delete('/api/group/:groupId/leave', (req, res) => {
 
     const leavingMember = group.participants[memberIndex];
 
-    // إذا كان العضو الذي يغادر هو مالك المجموعة (adminId)
     if (leavingMember.uid === group.adminId) {
-        // إذا كان هناك أعضاء آخرون، يجب تعيين مالك جديد
         if (group.participants.length > 1) {
-            // ابحث عن أول مشرف آخر لجعله المالك الجديد
             const newAdmin = group.participants.find(p => p.uid !== memberUid && p.role === 'admin');
             if (newAdmin) {
-                group.adminId = newAdmin.uid; // تعيين مشرف جديد كمالك
+                group.adminId = newAdmin.uid;
             } else {
-                // إذا لم يكن هناك مشرفون آخرون، اختر أول عضو متاح كمالك
                 const firstAvailableMember = group.participants.find(p => p.uid !== memberUid);
                 if (firstAvailableMember) {
                     group.adminId = firstAvailableMember.uid;
-                    firstAvailableMember.role = 'admin'; // ترقية العضو الجديد إلى مشرف
+                    firstAvailableMember.role = 'admin';
                 } else {
-                    // لا يوجد أعضاء آخرون، المجموعة فارغة
-                    chats = chats.filter(chat => chat.id !== groupId); // حذف المجموعة
-                    messages = messages.filter(msg => msg.chatId !== groupId); // حذف الرسائل
+                    chats = chats.filter(chat => chat.id !== groupId);
+                    messages = messages.filter(msg => msg.chatId !== groupId);
                     return res.status(200).json({ message: 'غادرت المجموعة وتم حذفها لعدم وجود أعضاء آخرين.' });
                 }
             }
         } else {
-            // هو العضو الوحيد، يتم حذف المجموعة
-            chats = chats.filter(chat => chat.id !== groupId); // حذف المجموعة
-            messages = messages.filter(msg => msg.chatId !== groupId); // حذف الرسائل
+            chats = chats.filter(chat => chat.id !== groupId);
+            messages = messages.filter(msg => msg.chatId !== groupId);
             return res.status(200).json({ message: 'غادرت المجموعة وتم حذفها لعدم وجود أعضاء آخرين.' });
         }
     }
 
-    // إزالة العضو المغادر
     group.participants.splice(memberIndex, 1);
 
-    // إذا لم يتبق أي مشارك في المجموعة، احذف المجموعة نفسها وجميع رسائلها
     if (group.participants.length === 0) {
         chats = chats.filter(chat => chat.id !== groupId);
         messages = messages.filter(msg => msg.chatId !== groupId);
@@ -1054,13 +1011,33 @@ const setupInitialData = async () => {
             followerCount: user2.followers.length
         };
 
+        // إضافة صور وفيديوهات مؤقتة (للتجربة)
+        const dummyImageUrl = `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/uploads/dummy-image.jpg`;
+        const dummyVideoUrl = `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/uploads/dummy-video.mp4`;
+
+        // إنشاء ملفات وهمية (dummy) في مجلد uploads (لأغراض التجربة)
+        const dummyImagePath = path.join(uploadsDir, 'dummy-image.jpg');
+        const dummyVideoPath = path.join(uploadsDir, 'dummy-video.mp4');
+
+        if (!fs.existsSync(dummyImagePath)) {
+            // قم بإنشاء ملف صورة فارغ أو انسخ صورة موجودة
+            fs.writeFileSync(dummyImagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", 'base64')); // بكسل واحد شفاف
+            console.log('Created dummy-image.jpg in uploads.');
+        }
+        if (!fs.existsSync(dummyVideoPath)) {
+            // قم بإنشاء ملف فيديو فارغ أو صغير جداً
+            fs.writeFileSync(dummyVideoPath, Buffer.from("")); // ملف فارغ
+            console.log('Created dummy-video.mp4 in uploads.');
+        }
+
+
         const post3 = {
             id: uuidv4(),
             authorId: user1.uid,
             authorName: user1.username,
-            text: 'صورة من رحلتي الأخيرة! 🏞️',
+            text: 'صورة من رحلتي الأخيرة! 🏞️ (مؤقتة)',
             mediaType: 'image',
-            mediaUrl: `${req.protocol}://${req.get('host')}/uploads/placeholder-image.jpg`, // استخدم صورة مؤقتة هنا
+            mediaUrl: dummyImageUrl,
             timestamp: Date.now() - 30000,
             likes: [user2.uid, user3.uid],
             comments: [],
@@ -1068,17 +1045,23 @@ const setupInitialData = async () => {
             authorProfileBg: user1.profileBgUrl,
             followerCount: user1.followers.length
         };
-        // إضافة صورة مؤقتة في مجلد uploads لتجربة المنشورات
-        // يمكنك استبدالها بصور حقيقية
-        const placeholderImagePath = path.join(uploadsDir, 'placeholder-image.jpg');
-        if (!fs.existsSync(placeholderImagePath)) {
-            // قم بإنشاء ملف صورة فارغ أو انسخ صورة موجودة
-            fs.writeFileSync(placeholderImagePath, ''); // ملف فارغ، يمكنك استبداله ببيانات صورة حقيقية
-            console.log('Created placeholder-image.jpg in uploads.');
-        }
+        const post4 = {
+            id: uuidv4(),
+            authorId: user3.uid,
+            authorName: user3.username,
+            text: 'فيديو رائع للطبيعة 🎥 (مؤقت)',
+            mediaType: 'video',
+            mediaUrl: dummyVideoUrl,
+            timestamp: Date.now() - 20000,
+            likes: [user1.uid],
+            comments: [],
+            views: [],
+            authorProfileBg: user3.profileBgUrl,
+            followerCount: user3.followers.length
+        };
 
 
-        posts.push(post1, post2, post3);
+        posts.push(post1, post2, post3, post4);
         console.log('Added initial posts.');
 
         // إضافة محادثات افتراضية
@@ -1123,7 +1106,7 @@ const setupInitialData = async () => {
             type: 'group',
             name: 'مجموعة الأصدقاء',
             description: 'مجموعة للتحدث مع الأصدقاء المقربين.',
-            adminId: user1.uid, // محمد هو المالك
+            adminId: user1.uid,
             participants: [
                 { uid: user1.uid, name: user1.username, customId: user1.customId, role: 'admin', profileBgUrl: user1.profileBgUrl },
                 { uid: user2.uid, name: user2.username, customId: user2.customId, role: 'member', profileBgUrl: user2.profileBgUrl },
