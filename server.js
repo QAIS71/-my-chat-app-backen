@@ -1,6 +1,6 @@
 // استيراد المكتبات الضرورية
 const express = require('express');
-const cors = require = require('cors');
+const cors = require('cors'); // تم تصحيح هذا السطر: require('cors') بدلاً من require = require('cors')
 const bodyParser = require('body-parser');
 const multer = require('multer');
 const path = require('path');
@@ -26,10 +26,14 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
+    console.log(`INFO: Created uploads directory at ${uploadsDir}`); // سجل جديد
+} else {
+    console.log(`INFO: Uploads directory already exists at ${uploadsDir}`); // سجل جديد
 }
 
 // توفير الملفات الثابتة من مجلد 'uploads'
 app.use('/uploads', express.static(uploadsDir));
+console.log(`INFO: Serving static files from /uploads to ${uploadsDir}`); // سجل جديد
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -37,7 +41,9 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+        const newFileName = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
+        console.log(`DEBUG: Multer generated filename: ${newFileName}`); // سجل جديد
+        cb(null, newFileName);
     }
 });
 
@@ -80,10 +86,10 @@ app.post('/api/register', async (req, res) => {
             following: []
         };
         users.push(newUser);
-        console.log(`User registered: ${username}, Custom ID: ${customId}`);
+        console.log(`INFO: User registered: ${username}, Custom ID: ${customId}`); // سجل جديد
         res.status(201).json({ message: 'تم إنشاء المستخدم بنجاح!', user: { uid: newUser.uid, username: newUser.username, customId: newUser.customId } });
     } catch (error) {
-        console.error('Registration error:', error);
+        console.error('ERROR: Registration error:', error); // سجل جديد
         res.status(500).json({ error: 'فشل في عملية التسجيل.' });
     }
 });
@@ -115,8 +121,9 @@ app.post('/api/login', async (req, res) => {
                 profileBg: user.profileBgUrl
             }
         });
+        console.log(`INFO: User logged in: ${username}`); // سجل جديد
     } catch (error) {
-        console.error('Login error:', error);
+        console.error('ERROR: Login error:', error); // سجل جديد
         res.status(500).json({ error: 'فشل في عملية تسجيل الدخول.' });
     }
 });
@@ -125,17 +132,23 @@ app.post('/api/login', async (req, res) => {
 
 // رفع خلفية الملف الشخصي (باستخدام التخزين المحلي)
 app.post('/api/upload-profile-background', upload.single('file'), (req, res) => {
+    console.log("DEBUG: Received request to upload profile background."); // سجل جديد
+    console.log("DEBUG: req.file for profile background:", req.file); // سجل جديد
+
     if (!req.file) {
+        console.warn("WARN: No file provided for profile background upload."); // سجل جديد
         return res.status(400).json({ error: 'لم يتم توفير ملف.' });
     }
     const { userId } = req.body;
     if (!userId) {
+        console.warn("WARN: userId missing for profile background upload."); // سجل جديد
         fs.unlinkSync(req.file.path);
         return res.status(400).json({ error: 'معرف المستخدم (userId) مطلوب.' });
     }
 
     const user = users.find(u => u.uid === userId);
     if (!user) {
+        console.warn(`WARN: User ${userId} not found for profile background upload.`); // سجل جديد
         fs.unlinkSync(req.file.path);
         return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
@@ -143,6 +156,7 @@ app.post('/api/upload-profile-background', upload.single('file'), (req, res) => 
     const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
     user.profileBgUrl = fileUrl;
     
+    console.log(`INFO: Profile background uploaded for ${userId}. URL: ${fileUrl}`); // سجل جديد
     res.status(200).json({ message: 'تم تحديث خلفية الملف الشخصي بنجاح!', url: fileUrl });
 });
 
@@ -254,8 +268,11 @@ app.get('/api/user/:followerId/following/:followingId', (req, res) => {
 app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
 
+    // DEBUG: Log req.file to see if Multer processed the file
+    console.log("DEBUG: req.file for post upload:", req.file);
+
     if (!authorId || !authorName) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Ensure cleanup
         return res.status(400).json({ error: 'بيانات المؤلف (authorId, authorName) مطلوبة.' });
     }
     if (!text && !req.file) {
@@ -264,7 +281,7 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     
     const author = users.find(u => u.uid === authorId);
     if (!author) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Ensure cleanup
         return res.status(404).json({ error: 'المؤلف غير موجود.' });
     }
 
@@ -275,9 +292,12 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
         mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
         finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
         if (finalMediaType === 'unknown') {
-            fs.unlinkSync(req.file.path);
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Ensure cleanup
             return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
         }
+        console.log(`DEBUG: Generated mediaUrl for post: ${mediaUrl}, mediaType: ${finalMediaType}`); // سجل جديد
+    } else {
+        console.log("DEBUG: No media file uploaded for post."); // سجل جديد
     }
 
     const newPost = {
@@ -286,7 +306,7 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
         authorName,
         text: text || '',
         mediaType: finalMediaType,
-        mediaUrl: mediaUrl,
+        mediaUrl: mediaUrl, // <--- هذا هو الرابط الذي سيتم حفظه
         timestamp: Date.now(),
         likes: [],
         comments: [],
@@ -296,6 +316,7 @@ app.post('/api/posts', upload.single('mediaFile'), (req, res) => {
     };
 
     posts.push(newPost);
+    console.log(`INFO: New post created. Post ID: ${newPost.id}, Media URL saved: ${newPost.mediaUrl || 'None'}`); // سجل جديد
     res.status(201).json({ message: 'تم نشر المنشور بنجاح!', post: newPost });
 });
 
@@ -465,7 +486,7 @@ app.delete('/api/posts/:postId', (req, res) => {
         const filePath = path.join(uploadsDir, filename);
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
-            console.log(`Deleted local media file: ${filePath}`);
+            console.log(`INFO: Deleted local media file: ${filePath}`); // سجل جديد
         }
     }
 
@@ -642,18 +663,20 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
 
+    console.log("DEBUG: req.file for message upload:", req.file); // سجل جديد
+
     if (!senderId || !senderName) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         return res.status(400).json({ error: 'بيانات المرسل (senderId, senderName) مطلوبة.' });
     }
 
     const chat = chats.find(c => c.id === chatId);
     if (!chat) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         return res.status(404).json({ error: 'المحادثة غير موجودة.' });
     }
     if (!chat.participants.some(p => p.uid === senderId)) {
-        if (req.file) fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         return res.status(403).json({ error: 'المرسل ليس مشاركاً في هذه المحادثة.' });
     }
 
@@ -664,9 +687,12 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
         mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
         finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
         if (finalMediaType === 'unknown') {
-            fs.unlinkSync(req.file.path);
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
             return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
         }
+        console.log(`DEBUG: Generated mediaUrl for message: ${mediaUrl}, mediaType: ${finalMediaType}`); // سجل جديد
+    } else {
+        console.log("DEBUG: No media file uploaded for message."); // سجل جديد
     }
 
     const newMessage = {
@@ -682,6 +708,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), (req, res) =
     };
 
     messages.push(newMessage);
+    console.log(`INFO: New message created. Message ID: ${newMessage.id}, Media URL saved: ${newMessage.mediaUrl || 'None'}`); // سجل جديد
     res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', message: newMessage });
 });
 
@@ -842,7 +869,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
 
 // إزالة عضو من المجموعة
 app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
-    const { groupId } = req.params;
+    const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
 
     const group = chats.find(c => c.id === groupId && c.type === 'group');
@@ -966,10 +993,10 @@ const setupInitialData = async () => {
 
         const user1 = { uid: uuidv4(), username: 'محمد', passwordHash: passwordHash1, customId: '12345678', profileBgUrl: null, followers: [], following: [] };
         const user2 = { uid: uuidv4(), username: 'أحمد', passwordHash: passwordHash2, customId: '87654321', profileBgUrl: null, followers: [], following: [] };
-        const user3 = { uid: uuidv4(), username: 'فاطمة', passwordHash: passwordHash3, customId: '11223344', profileBgUrl: null, followers: [], following: [] };
+        const user3 = { uid: uuidv4(), username: 'فاطمة', passwordHash: password3, customId: '11223344', profileBgUrl: null, followers: [], following: [] };
         
         users.push(user1, user2, user3);
-        console.log('Added initial users.');
+        console.log('INFO: Added initial users.'); // سجل جديد
 
         // جعل محمد يتابع أحمد وفاطمة
         user1.following.push(user2.uid, user3.uid);
@@ -980,40 +1007,14 @@ const setupInitialData = async () => {
         user2.following.push(user1.uid);
         user1.followers.push(user2.uid);
 
-        // إضافة منشورات افتراضية
-        const post1 = {
-            id: uuidv4(),
-            authorId: user1.uid,
-            authorName: user1.username,
-            text: 'أول منشور لي على وتسليجرم! 👋',
-            mediaType: 'text',
-            mediaUrl: null,
-            timestamp: Date.now() - 50000,
-            likes: [user2.uid],
-            comments: [],
-            views: [],
-            authorProfileBg: user1.profileBgUrl,
-            followerCount: user1.followers.length
-        };
-
-        const post2 = {
-            id: uuidv4(),
-            authorId: user2.uid,
-            authorName: user2.username,
-            text: 'يوم جميل في المدينة 🏙️',
-            mediaType: 'text',
-            mediaUrl: null,
-            timestamp: Date.now() - 40000,
-            likes: [],
-            comments: [],
-            views: [],
-            authorProfileBg: user2.profileBgUrl,
-            followerCount: user2.followers.length
-        };
-
         // إضافة صور وفيديوهات مؤقتة (للتجربة)
-        const dummyImageUrl = `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/uploads/dummy-image.jpg`;
-        const dummyVideoUrl = `${process.env.BACKEND_URL || `http://localhost:${PORT}`}/uploads/dummy-video.mp4`;
+        // هذا الجزء سيعتمد على `req.protocol` و `req.get('host')` بشكل صحيح من البيئة التي يعمل فيها الخادم
+        // يجب أن تقوم Render بتعيين `process.env.RENDER_EXTERNAL_URL` لكي يعمل هذا بشكل صحيح
+        // أو بدلاً من ذلك، يمكنك تعيين متغير بيئة اسمه `BACKEND_URL` يدوياً في Render
+        const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL || `http://localhost:${PORT}`;
+
+        const dummyImageUrl = `${baseUrl}/uploads/dummy-image.jpg`;
+        const dummyVideoUrl = `${baseUrl}/uploads/dummy-video.mp4`;
 
         // إنشاء ملفات وهمية (dummy) في مجلد uploads (لأغراض التجربة)
         const dummyImagePath = path.join(uploadsDir, 'dummy-image.jpg');
@@ -1022,12 +1023,12 @@ const setupInitialData = async () => {
         if (!fs.existsSync(dummyImagePath)) {
             // قم بإنشاء ملف صورة فارغ أو انسخ صورة موجودة
             fs.writeFileSync(dummyImagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", 'base64')); // بكسل واحد شفاف
-            console.log('Created dummy-image.jpg in uploads.');
+            console.log('INFO: Created dummy-image.jpg in uploads.'); // سجل جديد
         }
         if (!fs.existsSync(dummyVideoPath)) {
             // قم بإنشاء ملف فيديو فارغ أو صغير جداً
             fs.writeFileSync(dummyVideoPath, Buffer.from("")); // ملف فارغ
-            console.log('Created dummy-video.mp4 in uploads.');
+            console.log('INFO: Created dummy-video.mp4 in uploads.'); // سجل جديد
         }
 
 
@@ -1062,7 +1063,7 @@ const setupInitialData = async () => {
 
 
         posts.push(post1, post2, post3, post4);
-        console.log('Added initial posts.');
+        console.log('INFO: Added initial posts.'); // سجل جديد
 
         // إضافة محادثات افتراضية
         const chat1to2 = {
@@ -1140,7 +1141,7 @@ const setupInitialData = async () => {
             timestamp: Date.now() - 68000,
             senderProfileBg: user3.profileBgUrl
         });
-        console.log('Added initial chats and messages.');
+        console.log('INFO: Added initial chats and messages.'); // سجل جديد
     }
 };
 
