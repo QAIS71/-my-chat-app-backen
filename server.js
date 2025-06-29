@@ -824,7 +824,7 @@ app.post('/api/chats/private', async (req, res) => {
         // التحقق مما إذا كانت المحادثة موجودة بالفعل بين هذين المستخدمين
         // نبحث عن محادثة من نوع 'private' تحتوي على كلا المستخدمين
         const existingChatQuery = `
-            SELECT id FROM chats
+            SELECT id, participants FROM chats
             WHERE type = 'private'
             AND (
                 (participants @> '[{"uid": "${user1Id}"}]' AND participants @> '[{"uid": "${user2Id}"}]')
@@ -835,16 +835,7 @@ app.post('/api/chats/private', async (req, res) => {
         if (existingChatResult.rows.length > 0) {
             console.log(`INFO: Private chat already exists between ${user1Id} and ${user2Id}. Chat ID: ${existingChatResult.rows[0].id}`);
             // تحديث اسم جهة الاتصال للمستخدم الأول فقط إذا كان مختلفاً
-            const updateContactNameQuery = `
-                UPDATE chats SET
-                participants = jsonb_set(participants, '{0, contact_name}', to_jsonb($3::text), true)
-                WHERE id = $1 AND (participants->0->>'uid' = $2 OR participants->1->>'uid' = $2);
-            `;
-            // في حالة وجود محادثة، نحتاج إلى التأكد من تحديث contact_name فقط للمستخدم الذي بدأ المحادثة
-            // هذا يتطلب تحديد أي من المشاركين هو user1Id في قاعدة البيانات.
-            // لتبسيط الأمر، يمكننا جلب المحادثة وتحديثها بناءً على فهرس المشارك الصحيح.
-            const chatToUpdateResult = await pool.query(`SELECT id, participants FROM chats WHERE id = $1`, [existingChatResult.rows[0].id]);
-            const chatToUpdate = chatToUpdateResult.rows[0];
+            const chatToUpdate = existingChatResult.rows[0];
             if (chatToUpdate) {
                 let updatedParticipants = chatToUpdate.participants.map(p => {
                     if (p.uid === user1Id) {
@@ -876,8 +867,8 @@ app.post('/api/chats/private', async (req, res) => {
         ];
 
         const insertChatQuery = `
-            INSERT INTO chats (id, type, participants, created_at, name, profile_bg_url, admin_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`;
+            INSERT INTO chats (id, type, participants, created_at, name, profile_bg_url, admin_id, last_message_text, last_message_timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`;
         const newChatResult = await pool.query(insertChatQuery, [
             newChatId,
             'private',
@@ -885,7 +876,9 @@ app.post('/api/chats/private', async (req, res) => {
             timestamp,
             user2Name, // اسم الطرف الآخر هو الاسم الافتراضي للمحادثة في قائمة الدردشات
             user2ProfileBg, // خلفية ملف الطرف الآخر للمحادثة
-            null // لا يوجد مشرف للمحادثات الخاصة
+            null, // لا يوجد مشرف للمحادثات الخاصة
+            null, // قيمة أولية لـ last_message_text
+            null  // قيمة أولية لـ last_message_timestamp
         ]);
 
         console.log(`INFO: New private chat created: ${newChatId}`);
@@ -902,6 +895,7 @@ app.post('/api/chats/private', async (req, res) => {
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
     try {
+        // تم تحديث الاستعلام لجلب الأعمدة الجديدة (last_message_text و last_message_timestamp)
         const result = await pool.query(
             `SELECT id, type, participants, created_at, name, profile_bg_url, admin_id, last_message_text, last_message_timestamp FROM chats WHERE $1 = ANY(ARRAY(SELECT (p->>'uid') FROM jsonb_array_elements(participants) p))`,
             [userId]
@@ -1230,8 +1224,8 @@ app.post('/api/groups', async (req, res) => {
         }
 
         const insertGroupQuery = `
-            INSERT INTO chats (id, type, participants, created_at, name, description, profile_bg_url, admin_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`;
+            INSERT INTO chats (id, type, participants, created_at, name, description, profile_bg_url, admin_id, last_message_text, last_message_timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`;
         
         const newGroupResult = await pool.query(insertGroupQuery, [
             newGroupId,
@@ -1241,7 +1235,9 @@ app.post('/api/groups', async (req, res) => {
             name,
             description || '',
             null, // خلفية المجموعة (يمكن إضافتها لاحقاً إذا لزم الأمر)
-            adminId
+            adminId,
+            null, // قيمة أولية لـ last_message_text
+            null  // قيمة أولية لـ last_message_timestamp
         ]);
 
         console.log(`INFO: New group created: ${name}, ID: ${newGroupId}`);
