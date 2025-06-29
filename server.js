@@ -203,6 +203,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         // قراءة حجم الملف أولاً بشكل غير متزامن
         const fileStats = await stat(req.file.path);
         const fileSize = fileStats.size;
+        console.log(`DEBUG: File size for profile background upload: ${fileSize}`); // DEBUG: Log file size
 
         // قراءة الملف المؤقت كـ Stream
         const fileStream = fs.createReadStream(req.file.path);
@@ -330,7 +331,7 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 
 // متابعة/إلغاء متابعة مستخدم
 app.post('/api/user/:followerId/follow/:followingId', async (req, res) => {
-    const { followerId, followingId } = req.params;
+    const { followerId, followingId } = req.params; // الإصلاح: استخرج followingId هنا
 
     try {
         const followerResult = await pool.query('SELECT followers, following FROM users WHERE uid = $1', [followerId]);
@@ -371,14 +372,15 @@ app.post('/api/user/:followerId/follow/:followingId', async (req, res) => {
 
 // التحقق مما إذا كان المستخدم يتابع آخر
 app.get('/api/user/:followerId/following/:followingId', async (req, res) => {
-    const { followerId } = req.params;
+    const { followerId, followingId } = req.params; // الإصلاح: استخرج followingId هنا أيضًا
     try {
         const result = await pool.query('SELECT following FROM users WHERE uid = $1', [followerId]);
         const follower = result.rows[0];
         if (!follower) {
             return res.status(404).json({ error: 'المتابع غير موجود.' });
         }
-        const isFollowing = (follower.following || []).includes(followingId);
+        // التحقق من أن 'following' هو مصفوفة قبل استخدام includes
+        const isFollowing = (Array.isArray(follower.following) ? follower.following : []).includes(followingId);
         res.status(200).json({ isFollowing });
     } catch (error) {
         console.error('ERROR: Check following error:', error.stack);
@@ -423,6 +425,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             // قراءة حجم الملف أولاً بشكل غير متزامن
             const fileStats = await stat(req.file.path);
             const fileSize = fileStats.size;
+            console.log(`DEBUG: File size for post media upload: ${fileSize}`); // DEBUG: Log file size
 
             const fileStream = fs.createReadStream(req.file.path);
             const objectKey = `posts/${authorId}/${req.file.filename}`; // المسار في Storj DCS
@@ -432,7 +435,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 Key: objectKey,
                 Body: fileStream,
                 ContentType: req.file.mimetype,
-                ContentLength: fileSize // هذا هو الإصلاح المطلوب
+                ContentLength: fileSize // هذا هو الإصلاح المطلوب (موجود بالفعل)
             };
             await s3Client.send(new PutObjectCommand(uploadParams));
 
@@ -507,7 +510,8 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
-        const followedUids = user.following || [];
+        // التحقق من أن 'following' هو مصفوفة قبل استخدامه
+        const followedUids = Array.isArray(user.following) ? user.following : [];
         if (followedUids.length === 0) {
             return res.status(200).json([]);
         }
@@ -554,7 +558,7 @@ app.get('/api/posts/search', async (req, res) => {
         if (filter === 'followed' && userId) {
             const userResult = await pool.query('SELECT following FROM users WHERE uid = $1', [userId]);
             const user = userResult.rows[0];
-            if (user && (user.following || []).length > 0) {
+            if (user && (Array.isArray(user.following) ? user.following : []).length > 0) {
                 const followedUids = user.following;
                 whereClauses.push(`author_id = ANY($${queryParams.length + 1}::uuid[])`);
                 queryParams.push(followedUids);
@@ -766,31 +770,36 @@ app.delete('/api/posts/:postId', async (req, res) => {
         const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
         const postToDelete = postResult.rows[0];
 
-        if (postToDelete && postToDelete.media_url) {
+        if (!postToDelete) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        // حذف الملف من Storj DCS إذا كان موجوداً
+        if (postToDelete.media_url) {
             try {
-                // استخراج الـ objectKey من الـ URL
+                // استخراج الـ objectKey من الـ URL (لأن Storj DCS لا يستخدم مسارات URL تقليدية)
                 // مثال: https://gateway.storjshare.io/your-bucket/posts/authorId/filename.jpg
                 const urlParts = postToDelete.media_url.split('/');
-                // ابحث عن اسم الـ bucket في الرابط ثم خذ كل ما بعده
-                const bucketNameIndex = urlParts.indexOf(STORJ_BUCKET_NAME);
-                if (bucketNameIndex !== -1 && urlParts.length > bucketNameIndex + 1) {
-                    const objectKey = urlParts.slice(bucketNameIndex + 1).join('/');
+                const bucketIndex = urlParts.indexOf(STORJ_BUCKET_NAME);
+                if (bucketIndex !== -1 && urlParts.length > bucketIndex + 1) {
+                    const objectKey = urlParts.slice(bucketIndex + 1).join('/');
+                    console.log(`DEBUG: Deleting object from Storj DCS: ${objectKey}`);
                     await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
-                    console.log(`INFO: Deleted media from Storj DCS: ${objectKey}`);
+                    console.log(`INFO: Media file ${objectKey} deleted from Storj DCS.`);
                 } else {
-                    console.warn(`WARN: Could not extract objectKey from URL: ${postToDelete.media_url} for deletion.`);
+                    console.warn(`WARN: Could not parse object key from media URL: ${postToDelete.media_url}`);
                 }
             } catch (storjError) {
-                console.error('ERROR: Error deleting media from Storj DCS:', storjError.stack);
+                console.error('ERROR: Failed to delete media from Storj DCS:', storjError.stack);
+                // لا نوقف العملية هنا، فقط نسجل الخطأ ونستمر في حذف المنشور من قاعدة البيانات
             }
         }
 
-        const deleteResult = await pool.query('DELETE FROM posts WHERE id = $1 RETURNING id', [postId]);
-        if (deleteResult.rows.length > 0) {
-            res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
-        } else {
-            res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
+        // حذف المنشور من قاعدة البيانات
+        await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
+        console.log(`INFO: Post ${postId} deleted from database.`);
+        res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+
     } catch (error) {
         console.error('ERROR: Delete post error:', error.stack);
         res.status(500).json({ error: 'فشل في حذف المنشور.' });
@@ -798,309 +807,164 @@ app.delete('/api/posts/:postId', async (req, res) => {
 });
 
 
-// --- وظائف API للمحادثات ---
+// --- وظائف API للمحادثات الخاصة والمجموعات ---
 
-// جلب جميع المحادثات لمستخدم معين
+// إنشاء محادثة خاصة جديدة (أو جلبها إذا كانت موجودة)
+app.post('/api/chats/private', async (req, res) => {
+    const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
+
+    if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
+        return res.status(400).json({ error: 'جميع بيانات المستخدمين وأسماء جهات الاتصال مطلوبة لإنشاء محادثة خاصة.' });
+    }
+    if (user1Id === user2Id) {
+        return res.status(400).json({ error: 'لا يمكنك إنشاء محادثة خاصة مع نفسك.' });
+    }
+
+    try {
+        // التحقق مما إذا كانت المحادثة موجودة بالفعل بين هذين المستخدمين
+        // نبحث عن محادثة من نوع 'private' تحتوي على كلا المستخدمين
+        const existingChatQuery = `
+            SELECT id FROM chats
+            WHERE type = 'private'
+            AND (
+                (participants @> '[{"uid": "${user1Id}"}]' AND participants @> '[{"uid": "${user2Id}"}]')
+            )
+        `;
+        const existingChatResult = await pool.query(existingChatQuery);
+
+        if (existingChatResult.rows.length > 0) {
+            console.log(`INFO: Private chat already exists between ${user1Id} and ${user2Id}. Chat ID: ${existingChatResult.rows[0].id}`);
+            // تحديث اسم جهة الاتصال للمستخدم الأول فقط إذا كان مختلفاً
+            const updateContactNameQuery = `
+                UPDATE chats SET
+                participants = jsonb_set(participants, '{0, contact_name}', to_jsonb($3::text), true)
+                WHERE id = $1 AND (participants->0->>'uid' = $2 OR participants->1->>'uid' = $2);
+            `;
+            // في حالة وجود محادثة، نحتاج إلى التأكد من تحديث contact_name فقط للمستخدم الذي بدأ المحادثة
+            // هذا يتطلب تحديد أي من المشاركين هو user1Id في قاعدة البيانات.
+            // لتبسيط الأمر، يمكننا جلب المحادثة وتحديثها بناءً على فهرس المشارك الصحيح.
+            const chatToUpdateResult = await pool.query(`SELECT id, participants FROM chats WHERE id = $1`, [existingChatResult.rows[0].id]);
+            const chatToUpdate = chatToUpdateResult.rows[0];
+            if (chatToUpdate) {
+                let updatedParticipants = chatToUpdate.participants.map(p => {
+                    if (p.uid === user1Id) {
+                        return { ...p, contact_name: contactName };
+                    }
+                    return p;
+                });
+                await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatToUpdate.id]);
+            }
+            
+            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChatResult.rows[0].id });
+        }
+
+        const newChatId = uuidv4();
+        const timestamp = Date.now();
+
+        // يجب تخزين بيانات المشاركين كـ JSONB يحتوي على uid و username و customId و contact_name
+        // profile_bg_url يجب أن يتم جلبه من جدول المستخدمين
+        const user1ProfileBgResult = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user1Id]);
+        const user1ProfileBg = user1ProfileBgResult.rows[0]?.profile_bg_url || null;
+
+        const user2ProfileBgResult = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user2Id]);
+        const user2ProfileBg = user2ProfileBgResult.rows[0]?.profile_bg_url || null;
+
+
+        const participants = [
+            { uid: user1Id, username: user1Name, custom_id: user1CustomId, profile_bg_url: user1ProfileBg, contact_name: contactName },
+            { uid: user2Id, username: user2Name, custom_id: user2CustomId, profile_bg_url: user2ProfileBg, contact_name: user1Name } // اسم المستخدم الحالي كاسم جهة اتصال للمستخدم الآخر
+        ];
+
+        const insertChatQuery = `
+            INSERT INTO chats (id, type, participants, created_at, name, profile_bg_url, admin_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`;
+        const newChatResult = await pool.query(insertChatQuery, [
+            newChatId,
+            'private',
+            JSON.stringify(participants),
+            timestamp,
+            user2Name, // اسم الطرف الآخر هو الاسم الافتراضي للمحادثة في قائمة الدردشات
+            user2ProfileBg, // خلفية ملف الطرف الآخر للمحادثة
+            null // لا يوجد مشرف للمحادثات الخاصة
+        ]);
+
+        console.log(`INFO: New private chat created: ${newChatId}`);
+        res.status(201).json({ message: 'تم إنشاء المحادثة بنجاح!', chatId: newChatResult.rows[0].id });
+
+    } catch (error) {
+        console.error('ERROR: Create private chat error:', error.stack);
+        res.status(500).json({ error: 'فشل في إنشاء المحادثة الخاصة.' });
+    }
+});
+
+
+// جلب محادثات المستخدم (خاصة ومجموعات)
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
     try {
-        const chatsResult = await pool.query(
-            `SELECT id, type, participants, created_at, name, profile_bg_url, admin_id FROM chats 
-             WHERE $1 = ANY(ARRAY(SELECT (p->>'uid') FROM jsonb_array_elements(participants) p)) 
-             ORDER BY created_at DESC`,
+        const result = await pool.query(
+            `SELECT id, type, participants, created_at, name, profile_bg_url, admin_id, last_message_text, last_message_timestamp FROM chats WHERE $1 = ANY(ARRAY(SELECT (p->>'uid') FROM jsonb_array_elements(participants) p))`,
             [userId]
         );
-
-        const userChatsPromises = chatsResult.rows.map(async chat => {
-            let chatName = '';
-            let profileBgUrl = null;
-            let customId = null;
-            let adminId = null;
+        
+        const chats = result.rows.map(chat => {
+            let chatName = chat.name;
+            let chatProfileBg = chat.profile_bg_url;
+            let chatCustomId = null; // للمحادثات الفردية، سيكون معرف الطرف الآخر
+            let adminId = chat.admin_id; // للمجموعات
 
             if (chat.type === 'private') {
+                // للمحادثات الخاصة، تحديد اسم جهة الاتصال وخلفية الملف الشخصي من جانب المستخدم الحالي
+                const currentUserParticipant = chat.participants.find(p => p.uid === userId);
                 const otherParticipant = chat.participants.find(p => p.uid !== userId);
-                let contactUser = null;
-                if (otherParticipant) {
-                    const userResult = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipant.uid]);
-                    contactUser = userResult.rows[0];
-                }
-                
-                const currentUserChatEntry = chat.participants.find(p => p.uid === userId);
-                chatName = currentUserChatEntry.contactName || (contactUser ? contactUser.username : 'Unknown User');
-                profileBgUrl = contactUser ? contactUser.profile_bg_url : null;
-                customId = contactUser ? contactUser.custom_id : null;
-            } else if (chat.type === 'group') {
-                chatName = chat.name;
-                profileBgUrl = chat.profile_bg_url || null;
-                adminId = chat.admin_id;
-            }
 
-            const lastMessageResult = await pool.query(
-                `SELECT text, timestamp FROM messages WHERE chat_id = $1 ORDER BY timestamp DESC LIMIT 1`,
-                [chat.id]
-            );
-            const lastMessage = lastMessageResult.rows[0];
+                if (currentUserParticipant && currentUserParticipant.contact_name) {
+                    chatName = currentUserParticipant.contact_name;
+                } else if (otherParticipant) {
+                    chatName = otherParticipant.username; // Fallback to other user's username
+                }
+
+                if (otherParticipant) {
+                    chatProfileBg = otherParticipant.profile_bg_url;
+                    chatCustomId = otherParticipant.custom_id;
+                }
+            } else if (chat.type === 'group') {
+                // للمجموعات، اسم المجموعة وخلفيتها هما ما تم تخزينه في حقول الدردشة
+                chatName = chat.name;
+                chatProfileBg = chat.profile_bg_url; // خلفية المجموعة
+            }
 
             return {
                 id: chat.id,
                 type: chat.type,
                 name: chatName,
-                lastMessage: lastMessage ? lastMessage.text : null,
-                timestamp: lastMessage ? lastMessage.timestamp : (chat.created_at || 0),
-                profileBg: profileBgUrl,
-                customId: customId,
-                adminId: adminId
+                profileBg: chatProfileBg, // استخدم 'profileBg' ليتناسب مع الواجهة الأمامية
+                customId: chatCustomId,
+                timestamp: chat.last_message_timestamp || chat.created_at, // استخدام last_message_timestamp
+                lastMessage: chat.last_message_text, // استخدام last_message_text
+                adminId: adminId // إعادة adminId للمجموعات
             };
         });
-        
-        const userChats = await Promise.all(userChatsPromises);
-        userChats.sort((a, b) => b.timestamp - a.timestamp);
-
-        res.status(200).json(userChats);
+        res.status(200).json(chats);
     } catch (error) {
         console.error('ERROR: Get user chats error:', error.stack);
-        res.status(500).json({ error: 'فشل في جلب المحادثات.' });
+        res.status(500).json({ error: 'فشل في جلب محادثات المستخدم.' });
     }
 });
 
-// إنشاء محادثة فردية جديدة (أو جلب محادثة موجودة)
-app.post('/api/chats/private', async (req, res) => {
-    const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
-
-    if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
-        return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
-    }
-
-    try {
-        const existingChatResult = await pool.query(
-            `SELECT id, participants FROM chats WHERE type = 'private' 
-             AND (
-                 (participants @> '[{"uid": $1}]' AND participants @> '[{"uid": $2}]')
-             )`,
-            [user1Id, user2Id]
-        );
-        const existingChat = existingChatResult.rows[0];
-
-        if (existingChat) {
-            let participants = existingChat.participants;
-            const currentUserParticipantIndex = participants.findIndex(p => p.uid === user1Id);
-            if (currentUserParticipantIndex !== -1) {
-                participants[currentUserParticipantIndex].contactName = contactName;
-            }
-            await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), existingChat.id]);
-
-            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChat.id });
-        }
-
-        const user1Result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [user1Id]);
-        const user1 = user1Result.rows[0];
-        const user2Result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [user2Id]);
-        const user2 = user2Result.rows[0];
-
-        if (!user1 || !user2) {
-            return res.status(404).json({ error: 'أحد المستخدمين غير موجود.' });
-        }
-
-        const newChatId = uuidv4();
-        const newParticipants = [
-            { uid: user1.uid, name: user1.username, customId: user1.custom_id, profileBgUrl: user1.profile_bg_url, contactName: contactName },
-            { uid: user2.uid, name: user2.username, customId: user2.custom_id, profileBgUrl: user2.profile_bg_url, contactName: user1.username }
-        ];
-
-        const insertQuery = `
-            INSERT INTO chats (id, type, participants, created_at)
-            VALUES ($1, $2, $3, $4) RETURNING id`;
-        const newChatResult = await pool.query(insertQuery, [newChatId, 'private', JSON.stringify(newParticipants), Date.now()]);
-        
-        res.status(201).json({ message: 'تم إنشاء المحادثة بنجاح!', chatId: newChatResult.rows[0].id });
-    } catch (error) {
-        console.error('ERROR: Create private chat error:', error.stack);
-        res.status(500).json({ error: 'فشل في إنشاء محادثة فردية.' });
-    }
-});
-
-// تعديل اسم جهة الاتصال في محادثة فردية
-app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
-    const { chatId } = req.params;
-    const { userId, newContactName } = req.body;
-
-    try {
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'private\'', [chatId]);
-        const chat = chatResult.rows[0];
-        if (!chat) {
-            return res.status(404).json({ error: 'المحادثة غير موجودة أو ليست محادثة فردية.' });
-        }
-
-        let participants = chat.participants;
-        const participantIndex = participants.findIndex(p => p.uid === userId);
-        if (participantIndex === -1) {
-            return res.status(403).json({ error: 'المستخدم ليس مشاركاً في هذه المحادثة.' });
-        }
-
-        participants[participantIndex].contactName = newContactName;
-        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), chatId]);
-        res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
-    } catch (error) {
-        console.error('ERROR: Update contact name error:', error.stack);
-        res.status(500).json({ error: 'فشل في تحديث اسم جهة الاتصال.' });
-    }
-});
-
-// حذف محادثة فردية من طرف واحد (من عند المستخدم فقط)
-app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
-    const { chatId } = req.params;
-    const { userId } = req.body;
-
-    try {
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
-        const chat = chatResult.rows[0]; // تم تصحيح هذا السطر: كان chat.rows[0] بدلاً من chat
-        if (!chat) {
-            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
-        }
-
-        let participants = chat.participants;
-        const participantIndex = participants.findIndex(p => p.uid === userId);
-
-        if (participantIndex === -1) {
-            return res.status(403).json({ error: 'المستخدم غير مصرح له بحذف هذه المحادثة.' });
-        }
-
-        participants.splice(participantIndex, 1);
-
-        if (participants.length === 0) {
-            await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
-            await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-            res.status(200).json({ message: 'تم حذف المحادثة نهائياً.' });
-        } else {
-            await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), chatId]);
-            res.status(200).json({ message: 'تم حذف المحادثة من طرفك فقط.' });
-        }
-    } catch (error) {
-        console.error('ERROR: Delete chat for user error:', error.stack);
-        res.status(500).json({ error: 'فشل في حذف المحادثة.' });
-    }
-});
-
-// حذف محادثة فردية من الطرفين (أو مغادرة مجموعة)
-app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
-    const { chatId } = req.params;
-    const { callerUid } = req.body;
-
-    try {
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'private\'', [chatId]);
-        const chat = chatResult.rows[0];
-        if (!chat) {
-            return res.status(404).json({ error: 'المحادثة غير موجودة أو ليست محادثة فردية.' });
-        }
-
-        if (!chat.participants.some(p => p.uid === callerUid)) {
-            return res.status(403).json({ error: 'أنت غير مخول بحذف هذه المحادثة.' });
-        }
-
-        await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
-        await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-        res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
-    } catch (error) {
-        console.error('ERROR: Delete chat for both error:', error.stack);
-        res.status(500).json({ error: 'فشل في حذف المحادثة من الطرفين.' });
-    }
-});
-
-
-// --- وظائف API للرسائل ---
-
-// إرسال رسالة (نص أو وسائط) (باستخدام Storj DCS)
-app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
-    const { chatId } = req.params;
-    const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
-
-    console.log("DEBUG: req.file for message upload:", req.file);
-
-    if (!senderId || !senderName) {
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        return res.status(400).json({ error: 'بيانات المرسل (senderId, senderName) مطلوبة.' });
-    }
-
-    try {
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
-        const chat = chatResult.rows[0];
-        if (!chat) {
-            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
-        }
-        if (!chat.participants.some(p => p.uid === senderId)) {
-            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-            return res.status(403).json({ error: 'المرسل ليس مشاركاً في هذه المحادثة.' });
-        }
-
-        let mediaUrl = null;
-        let finalMediaType = mediaType || 'text';
-
-        if (req.file) {
-            // التحقق من متغيرات Storj قبل محاولة الرفع
-            if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
-                throw new Error('Storj DCS environment variables not set. Cannot upload media.');
-            }
-
-            // قراءة حجم الملف أولاً بشكل غير متزامن
-            const fileStats = await stat(req.file.path);
-            const fileSize = fileStats.size;
-
-            const fileStream = fs.createReadStream(req.file.path);
-            const objectKey = `chat-media/${chatId}/${req.file.filename}`; // المسار في Storj DCS
-
-            const uploadParams = {
-                Bucket: STORJ_BUCKET_NAME,
-                Key: objectKey,
-                Body: fileStream,
-                ContentType: req.file.mimetype,
-                ContentLength: fileSize // هذا هو الإصلاح المطلوب
-            };
-            await s3Client.send(new PutObjectCommand(uploadParams));
-
-            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
-            finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
-            if (finalMediaType === 'unknown') {
-                await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
-                throw new Error('Unsupported media type for Storj upload.');
-            }
-            console.log(`DEBUG: Uploaded message media to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
-        } else {
-            console.log("DEBUG: No media file uploaded for message.");
-        }
-
-        const newMessageId = uuidv4();
-        const insertQuery = `
-            INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`;
-        const messageResult = await pool.query(insertQuery, [
-            newMessageId, chatId, senderId, senderName, text || '', finalMediaType,
-            mediaUrl, Date.now(), senderProfileBg || null
-        ]);
-        const createdMessage = messageResult.rows[0];
-
-        console.log(`INFO: New message created. Message ID: ${createdMessage.id}, Media URL saved: ${createdMessage.media_url || 'None'}`);
-        res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', message: createdMessage });
-    } catch (error) {
-        console.error('ERROR: Send message error:', error.stack);
-        res.status(500).json({ error: 'فشل في إرسال الرسالة.' });
-    } finally {
-        // دائماً قم بحذف الملف المؤقت بعد محاولة الرفع
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
-        }
-    }
-});
 
 // جلب رسائل محادثة معينة
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
-    const since = parseInt(req.query.since) || 0;
+    const since = req.query.since ? parseInt(req.query.since) : 0; // جلب الرسائل التي أُنشئت بعد هذا الطابع الزمني
 
     try {
-        const result = await pool.query('SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC', [chatId, since]);
-        res.status(200).json(result.rows.map(msg => ({
+        const messagesResult = await pool.query(
+            `SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC`,
+            [chatId, since]
+        );
+
+        res.status(200).json(messagesResult.rows.map(msg => ({
             id: msg.id,
             chatId: msg.chat_id,
             senderId: msg.sender_id,
@@ -1109,7 +973,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             mediaType: msg.media_type,
             mediaUrl: msg.media_url,
             timestamp: msg.timestamp,
-            senderProfileBg: msg.sender_profile_bg
+            senderProfileBg: msg.sender_profile_bg // تمرير خلفية الملف الشخصي للمرسل
         })));
     } catch (error) {
         console.error('ERROR: Get chat messages error:', error.stack);
@@ -1117,59 +981,280 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
     }
 });
 
+// إرسال رسالة جديدة (مع دعم الوسائط عبر Storj DCS)
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
+    const { chatId } = req.params;
+    const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
 
-// --- وظائف API للمجموعات ---
+    console.log("DEBUG: Received message send request for chatId:", chatId);
+    console.log("DEBUG: req.file for message media:", req.file);
+    console.log("DEBUG: Message text:", text);
+    console.log("DEBUG: Message mediaType from body:", mediaType);
 
-// إنشاء مجموعة جديدة
-app.post('/api/groups', async (req, res) => {
-    const { name, description, adminId, members } = req.body;
-
-    if (!name || !adminId || !members || Object.keys(members).length < 2) {
-        return res.status(400).json({ error: 'اسم المجموعة والمشرف وعضوان على الأقل مطلوبان.' });
+    if (!senderId || !senderName) {
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        return res.status(400).json({ error: 'بيانات المرسل (senderId, senderName) مطلوبة.' });
+    }
+    if (!text && !req.file) {
+        return res.status(400).json({ error: 'الرسالة لا يمكن أن تكون فارغة (يجب أن تحتوي على نص أو وسائط).' });
     }
 
     try {
-        const adminUserResult = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [adminId]);
-        const adminUser = adminUserResult.rows[0];
-        if (!adminUser) {
-            return res.status(404).json({ error: 'المشرف المحدد غير موجود.' });
+        const chatResult = await pool.query('SELECT type FROM chats WHERE id = $1', [chatId]);
+        const chat = chatResult.rows[0];
+        if (!chat) {
+            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
 
-        const participants = [];
-        for (const uid in members) {
-            const userResult = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [uid]);
-            const user = userResult.rows[0];
-            if (user) {
-                participants.push({
-                    uid: user.uid,
-                    name: user.username,
-                    customId: user.custom_id,
-                    role: members[uid],
-                    profileBgUrl: user.profile_bg_url
+        let mediaUrl = null;
+        let finalMediaType = mediaType || 'text';
+
+        if (req.file) {
+            // التحقق من متغيرات Storj قبل محاولة الرفع
+            if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
+                throw new Error('Storj DCS environment variables not set. Cannot upload media for message.');
+            }
+
+            const fileStats = await stat(req.file.path);
+            const fileSize = fileStats.size;
+            console.log(`DEBUG: File size for message media upload: ${fileSize}`); // DEBUG: Log file size
+
+            const fileStream = fs.createReadStream(req.file.path);
+            const objectKey = `chat-media/${chatId}/${uuidv4()}-${req.file.filename}`; // مسار فريد في Storj DCS
+
+            const uploadParams = {
+                Bucket: STORJ_BUCKET_NAME,
+                Key: objectKey,
+                Body: fileStream,
+                ContentType: req.file.mimetype,
+                ContentLength: fileSize
+            };
+            await s3Client.send(new PutObjectCommand(uploadParams));
+
+            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
+            finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
+            if (finalMediaType === 'unknown') {
+                await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
+                throw new Error('Unsupported media type for Storj upload in message.');
+            }
+            console.log(`INFO: Message media uploaded to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
+        } else {
+            console.log("DEBUG: No media file attached to message.");
+        }
+
+        const messageId = uuidv4();
+        const timestamp = Date.now();
+        const insertMessageQuery = `
+            INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`;
+        const newMessageResult = await pool.query(insertMessageQuery, [
+            messageId, chatId, senderId, senderName, text || '', finalMediaType, mediaUrl, timestamp, senderProfileBg || null
+        ]);
+        const newMessage = newMessageResult.rows[0];
+
+        // تحديث آخر رسالة وطابعها الزمني في جدول المحادثات
+        await pool.query(
+            'UPDATE chats SET last_message_text = $1, last_message_timestamp = $2 WHERE id = $3',
+            [text || (finalMediaType === 'image' ? 'صورة' : (finalMediaType === 'video' ? 'فيديو' : 'رسالة')), timestamp, chatId]
+        );
+
+        console.log(`INFO: Message sent in chat ${chatId}. Message ID: ${newMessage.id}`);
+        res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', messageData: newMessage });
+
+    } catch (error) {
+        console.error('ERROR: Send message error:', error.stack);
+        res.status(500).json({ error: 'فشل في إرسال الرسالة.' });
+    } finally {
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+        }
+    }
+});
+
+
+// حذف محادثة لمستخدم واحد (خاصة أو مجموعة)
+app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
+    const { chatId } = req.params;
+    const { userId } = req.body; // المستخدم الذي يريد حذف المحادثة من عنده
+
+    if (!userId) {
+        return res.status(400).json({ error: 'معرف المستخدم مطلوب.' });
+    }
+
+    try {
+        const chatResult = await pool.query('SELECT participants, type FROM chats WHERE id = $1', [chatId]);
+        const chat = chatResult.rows[0];
+
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+        }
+
+        let updatedParticipants = chat.participants.map(p => {
+            if (p.uid === userId) {
+                // تعيين علامة "محذوف" للمشارك في هذه المحادثة
+                return { ...p, deleted_for_user: true };
+            }
+            return p;
+        });
+
+        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatId]);
+
+        console.log(`INFO: Chat ${chatId} marked as deleted for user ${userId}.`);
+        res.status(200).json({ message: 'تم حذف المحادثة من عندك.' });
+
+    } catch (error) {
+        console.error('ERROR: Delete chat for user error:', error.stack);
+        res.status(500).json({ error: 'فشل في حذف المحادثة من عندك.' });
+    }
+});
+
+// حذف محادثة خاصة من الطرفين (يجب أن يزيلها من كلا المستخدمين)
+// هذه العملية أكثر تعقيداً، ستقوم حالياً بإزالتها من المستخدمين وتصفير الرسائل
+app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
+    const { chatId } = req.params;
+    const { callerUid } = req.body; // المستخدم الذي بدأ الحذف
+
+    if (!callerUid) {
+        return res.status(400).json({ error: 'معرف المتصل (callerUid) مطلوب.' });
+    }
+
+    try {
+        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'private\'', [chatId]);
+        const chat = chatResult.rows[0];
+
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة الخاصة غير موجودة.' });
+        }
+
+        const participantUids = chat.participants.map(p => p.uid);
+        if (!participantUids.includes(callerUid)) {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذه المحادثة.' });
+        }
+
+        // حذف جميع الرسائل المتعلقة بهذه المحادثة
+        await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
+        console.log(`INFO: All messages for private chat ${chatId} deleted.`);
+
+        // حذف إدخال المحادثة نفسها
+        await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
+        console.log(`INFO: Private chat ${chatId} deleted for both users.`);
+
+        res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
+
+    } catch (error) {
+        console.error('ERROR: Delete private chat for both error:', error.stack);
+        res.status(500).json({ error: 'فشل في حذف المحادثة من الطرفين.' });
+    }
+});
+
+
+// تعديل اسم جهة اتصال في محادثة خاصة (من جانب مستخدم واحد)
+app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
+    const { chatId } = req.params;
+    const { userId, newContactName } = req.body;
+
+    if (!userId || !newContactName) {
+        return res.status(400).json({ error: 'معرف المستخدم واسم جهة الاتصال الجديد مطلوبان.' });
+    }
+
+    try {
+        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'private\'', [chatId]);
+        const chat = chatResult.rows[0];
+
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة غير موجودة أو ليست محادثة خاصة.' });
+        }
+
+        let updatedParticipants = chat.participants.map(p => {
+            if (p.uid === userId) {
+                return { ...p, contact_name: newContactName };
+            }
+            return p;
+        });
+
+        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatId]);
+        console.log(`INFO: Contact name for chat ${chatId} updated by user ${userId} to "${newContactName}".`);
+        res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
+
+    } catch (error) {
+        console.error('ERROR: Update contact name error:', error.stack);
+        res.status(500).json({ error: 'فشل في تحديث اسم جهة الاتصال.' });
+    }
+});
+
+
+// إنشاء مجموعة جديدة
+app.post('/api/groups', async (req, res) => {
+    const { name, description, adminId, members } = req.body; // 'members' يجب أن تكون كائن { uid: role }
+
+    if (!name || !adminId || !members || Object.keys(members).length < 2) {
+        return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوين على الأقل مطلوبان.' });
+    }
+    if (members[adminId] !== 'admin') {
+        return res.status(400).json({ error: 'المشرف المحدد يجب أن يكون دوره "admin" في قائمة الأعضاء.' });
+    }
+
+    try {
+        const newGroupId = uuidv4();
+        const timestamp = Date.now();
+
+        // جلب بيانات كاملة لكل عضو (بما في ذلك custom_id و profile_bg_url)
+        const memberUids = Object.keys(members);
+        const usersResult = await pool.query(
+            `SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = ANY($1::uuid[])`,
+            [memberUids]
+        );
+        const usersDataMap = new Map(usersResult.rows.map(u => [u.uid, u]));
+
+        const groupParticipants = [];
+        for (const uid of memberUids) {
+            const userData = usersDataMap.get(uid);
+            if (userData) {
+                groupParticipants.push({
+                    uid: userData.uid,
+                    username: userData.username,
+                    custom_id: userData.custom_id,
+                    profile_bg_url: userData.profile_bg_url,
+                    role: members[uid], // 'admin' أو 'member'
+                    contact_name: userData.username // للمجموعات، اسم جهة الاتصال هو اسم المستخدم
                 });
+            } else {
+                console.warn(`WARN: Member UID ${uid} not found in users table during group creation.`);
             }
         }
 
-        if (participants.length < 2) {
-            return res.status(400).json({ error: 'يجب أن تحتوي المجموعة على عضوين على الأقل.' });
+        if (groupParticipants.length < 2) {
+            return res.status(400).json({ error: 'لا يمكن إنشاء المجموعة بأقل من عضوين صالحين.' });
         }
 
-        const newGroupId = uuidv4();
-        const insertQuery = `
-            INSERT INTO chats (id, type, name, description, admin_id, participants, created_at, profile_bg_url)
+        const insertGroupQuery = `
+            INSERT INTO chats (id, type, participants, created_at, name, description, profile_bg_url, admin_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`;
-        const newGroupResult = await pool.query(insertQuery, [
-            newGroupId, 'group', name, description, adminId, JSON.stringify(participants), Date.now(), null
-        ]);
         
+        const newGroupResult = await pool.query(insertGroupQuery, [
+            newGroupId,
+            'group',
+            JSON.stringify(groupParticipants),
+            timestamp,
+            name,
+            description || '',
+            null, // خلفية المجموعة (يمكن إضافتها لاحقاً إذا لزم الأمر)
+            adminId
+        ]);
+
+        console.log(`INFO: New group created: ${name}, ID: ${newGroupId}`);
         res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح!', groupId: newGroupResult.rows[0].id });
+
     } catch (error) {
         console.error('ERROR: Create group error:', error.stack);
         res.status(500).json({ error: 'فشل في إنشاء المجموعة.' });
     }
 });
 
-// جلب أعضاء المجموعة
+
+// جلب أعضاء مجموعة معينة
 app.get('/api/group/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
     try {
@@ -1178,20 +1263,14 @@ app.get('/api/group/:groupId/members', async (req, res) => {
         if (!group) {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
-        res.status(200).json(group.participants.map(p => ({
-            uid: p.uid,
-            username: p.name,
-            customId: p.customId,
-            role: p.role,
-            profileBgUrl: p.profileBgUrl
-        })));
+        res.status(200).json(group.participants || []);
     } catch (error) {
         console.error('ERROR: Get group members error:', error.stack);
         res.status(500).json({ error: 'فشل في جلب أعضاء المجموعة.' });
     }
 });
 
-// جلب عدد أعضاء المجموعة
+// جلب عدد أعضاء مجموعة معينة
 app.get('/api/group/:groupId/members/count', async (req, res) => {
     const { groupId } = req.params;
     try {
@@ -1207,220 +1286,241 @@ app.get('/api/group/:groupId/members/count', async (req, res) => {
     }
 });
 
-// إضافة أعضاء إلى مجموعة موجودة
+
+// إضافة أعضاء إلى مجموعة
 app.post('/api/groups/:groupId/add-members', async (req, res) => {
     const { groupId } = req.params;
-    const { newMemberUids, callerUid } = req.body;
+    const { newMemberUids, callerUid } = req.body; // callerUid هو المستخدم الذي يقوم بإضافة الأعضاء
 
-    try {
-        const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
-        const group = groupResult.rows[0];
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        let participants = group.participants;
-        const callerIsAdmin = participants.some(p => p.uid === callerUid && p.role === 'admin');
-        if (!callerIsAdmin) {
-            return res.status(403).json({ error: 'أنت غير مخول بإضافة أعضاء إلى هذه المجموعة.' });
-        }
-
-        const addedMembers = [];
-        for (const uid of newMemberUids) {
-            if (!participants.some(p => p.uid === uid)) {
-                const userResult = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [uid]);
-                const user = userResult.rows[0];
-                if (user) {
-                    participants.push({
-                        uid: user.uid,
-                        name: user.username,
-                        customId: user.custom_id,
-                        role: 'member',
-                        profileBgUrl: user.profile_bg_url
-                    });
-                    addedMembers.push(user.username);
-                }
-            }
-        }
-
-        if (addedMembers.length > 0) {
-            await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), groupId]);
-            res.status(200).json({ message: `تم إضافة الأعضاء: ${addedMembers.join(', ')} بنجاح.` });
-        } else {
-            res.status(200).json({ message: 'لم يتم إضافة أعضاء جدد (ربما كانوا موجودين بالفعل).' });
-        }
-    } catch (error) {
-        console.error('ERROR: Add group members error:', error.stack);
-        res.status(500).json({ error: 'فشل في إضافة أعضاء المجموعة.' });
+    if (!Array.isArray(newMemberUids) || newMemberUids.length === 0 || !callerUid) {
+        return res.status(400).json({ error: 'قائمة بمعرفات الأعضاء الجدد ومعرف المتصل مطلوبة.' });
     }
-});
-
-// تغيير دور عضو في المجموعة (مشرف/عضو)
-app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
-    const { groupId, memberUid } = req.params;
-    const { newRole, callerUid } = req.body;
 
     try {
         const groupResult = await pool.query('SELECT participants, admin_id FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
+
         if (!group) {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        let participants = group.participants;
-        const caller = participants.find(p => p.uid === callerUid);
-        const targetMember = participants.find(p => p.uid === memberUid);
-
-        if (!caller || !targetMember) {
-            return res.status(404).json({ error: 'المستخدم الذي يقوم بالعملية أو العضو المستهدف غير موجود في هذه المجموعة.' });
+        // التحقق مما إذا كان المتصل مشرفًا في المجموعة
+        const currentParticipants = Array.isArray(group.participants) ? group.participants : [];
+        const callerParticipant = currentParticipants.find(p => p.uid === callerUid);
+        if (!callerParticipant || callerParticipant.role !== 'admin') {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لإضافة أعضاء إلى هذه المجموعة.' });
         }
 
-        if (caller.role !== 'admin') {
-            return res.status(403).json({ error: 'غير مصرح لك بتغيير أدوار الأعضاء.' });
+        // جلب بيانات الأعضاء الجدد كاملة (uid, username, custom_id, profile_bg_url)
+        const usersResult = await pool.query(
+            `SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = ANY($1::uuid[])`,
+            [newMemberUids]
+        );
+        const newUsersDataMap = new Map(usersResult.rows.map(u => [u.uid, u]));
+
+        let updatedParticipants = [...currentParticipants];
+        let addedCount = 0;
+
+        for (const uid of newMemberUids) {
+            // التحقق مما إذا كان العضو موجوداً بالفعل في المجموعة لتجنب التكرار
+            if (!currentParticipants.some(p => p.uid === uid)) {
+                const userData = newUsersDataMap.get(uid);
+                if (userData) {
+                    updatedParticipants.push({
+                        uid: userData.uid,
+                        username: userData.username,
+                        custom_id: userData.custom_id,
+                        profile_bg_url: userData.profile_bg_url,
+                        role: 'member', // الأعضاء المضافون افتراضيا يكونون 'member'
+                        contact_name: userData.username
+                    });
+                    addedCount++;
+                } else {
+                    console.warn(`WARN: New member UID ${uid} not found in users table.`);
+                }
+            }
         }
 
-        if (targetMember.uid === group.admin_id && newRole === 'member' && caller.uid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا يمكنك إزالة إشراف مالك المجموعة.' });
+        if (addedCount === 0) {
+            return res.status(200).json({ message: 'جميع الأعضاء المحددين موجودون بالفعل في المجموعة أو غير صالحين.' });
         }
 
-        if (targetMember.role === 'admin' && newRole === 'member' && caller.uid !== group.admin_id && targetMember.uid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا يمكنك إزالة إشراف مشرف آخر.' });
+        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), groupId]);
+        console.log(`INFO: Added ${addedCount} new members to group ${groupId}.`);
+        res.status(200).json({ message: `تم إضافة ${addedCount} أعضاء جدد بنجاح إلى المجموعة.`, newMembersCount: addedCount });
+
+    } catch (error) {
+        console.error('ERROR: Add members to group error:', error.stack);
+        res.status(500).json({ error: 'فشل في إضافة أعضاء إلى المجموعة.' });
+    }
+});
+
+
+// تغيير دور عضو في مجموعة (مشرف/عضو)
+app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
+    const { groupId, memberUid } = req.params;
+    const { newRole, callerUid } = req.body; // callerUid هو المستخدم الذي يقوم بالتغيير
+
+    if (!newRole || !['admin', 'member'].includes(newRole) || !callerUid) {
+        return res.status(400).json({ error: 'الدور الجديد (admin أو member) ومعرف المتصل مطلوبان.' });
+    }
+
+    try {
+        const groupResult = await pool.query('SELECT participants, admin_id FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        targetMember.role = newRole;
-        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), groupId]);
-        res.status(200).json({ message: `تم تغيير دور ${targetMember.name} إلى ${newRole}.` });
+        let currentParticipants = Array.isArray(group.participants) ? group.participants : [];
+        const callerParticipant = currentParticipants.find(p => p.uid === callerUid);
+        const targetParticipantIndex = currentParticipants.findIndex(p => p.uid === memberUid);
+
+        if (!callerParticipant || callerParticipant.role !== 'admin') {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير أدوار الأعضاء في هذه المجموعة.' });
+        }
+        if (targetParticipantIndex === -1) {
+            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+        }
+        if (memberUid === callerUid && newRole === 'member') {
+            return res.status(400).json({ error: 'لا يمكنك إزالة نفسك من الإشراف. إذا كنت تريد مغادرة المجموعة، استخدم خيار المغادرة.' });
+        }
+        // لا يمكن لغير المالك إزالة مشرف آخر من الإشراف، إلا إذا كان هو المالك نفسه
+        if (currentParticipants[targetParticipantIndex].role === 'admin' && newRole === 'member' && callerUid !== group.admin_id) {
+             return res.status(403).json({ error: 'فقط مالك المجموعة يمكنه إزالة المشرفين الآخرين.' });
+        }
+        // لا يمكن إزالة المالك من المجموعة أو تغيير دوره إلا إذا كان هو المالك نفسه
+        if (memberUid === group.admin_id && callerUid !== group.admin_id) {
+            return res.status(403).json({ error: 'لا يمكنك تغيير دور مالك المجموعة.' });
+        }
+
+        currentParticipants[targetParticipantIndex].role = newRole;
+
+        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(currentParticipants), groupId]);
+        console.log(`INFO: Member ${memberUid} role changed to ${newRole} in group ${groupId}.`);
+        res.status(200).json({ message: `تم تغيير دور العضو بنجاح إلى ${newRole === 'admin' ? 'مشرف' : 'عضو'}.` });
+
     } catch (error) {
         console.error('ERROR: Change member role error:', error.stack);
         res.status(500).json({ error: 'فشل في تغيير دور العضو.' });
     }
 });
 
-// إزالة عضو من المجموعة
+// إزالة عضو من مجموعة
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
     const { groupId, memberUid } = req.params;
-    const { callerUid } = req.body;
+    const { callerUid } = req.body; // المستخدم الذي يقوم بالإزالة
+
+    if (!callerUid) {
+        return res.status(400).json({ error: 'معرف المتصل (callerUid) مطلوب.' });
+    }
 
     try {
         const groupResult = await pool.query('SELECT participants, admin_id FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
+
         if (!group) {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        let participants = group.participants;
-        const caller = participants.find(p => p.uid === callerUid);
-        const targetMemberIndex = participants.findIndex(p => p.uid === memberUid);
+        let currentParticipants = Array.isArray(group.participants) ? group.participants : [];
+        const callerParticipant = currentParticipants.find(p => p.uid === callerUid);
+        const targetParticipant = currentParticipants.find(p => p.uid === memberUid);
 
-        if (!caller || targetMemberIndex === -1) {
-            return res.status(404).json({ error: 'المستخدم الذي يقوم بالعملية أو العضو المستهدف غير موجود في هذه المجموعة.' });
+        if (!callerParticipant || callerParticipant.role !== 'admin') {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لإزالة أعضاء من هذه المجموعة.' });
         }
-
-        if (caller.role !== 'admin') {
-            return res.status(403).json({ error: 'غير مصرح لك بإزالة الأعضاء.' });
+        if (!targetParticipant) {
+            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
         }
-
-        const targetMember = participants[targetMemberIndex];
-
-        if (targetMember.uid === group.admin_id) {
+        if (memberUid === callerUid) {
+            return res.status(400).json({ error: 'لا يمكنك إزالة نفسك من المجموعة بهذه الطريقة. استخدم خيار مغادرة المجموعة.' });
+        }
+        // لا يمكن إزالة المالك من المجموعة إلا إذا كان هو المالك نفسه
+        if (memberUid === group.admin_id && callerUid !== group.admin_id) {
             return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
         }
 
-        if (targetMember.role === 'admin' && caller.uid !== group.admin_id) {
-            return res.status(403).json({ error: 'المشرف العادي لا يمكنه إزالة مشرف آخر.' });
-        }
+        // فلترة العضو المستهدف من قائمة المشاركين
+        const updatedParticipants = currentParticipants.filter(p => p.uid !== memberUid);
 
-        participants.splice(targetMemberIndex, 1);
-        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), groupId]);
-        res.status(200).json({ message: `تم إزالة ${targetMember.name} من المجموعة بنجاح.` });
+        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), groupId]);
+        console.log(`INFO: Member ${memberUid} removed from group ${groupId}.`);
+        res.status(200).json({ message: 'تم إزالة العضو بنجاح من المجموعة.' });
+
     } catch (error) {
-        console.error('ERROR: Remove group member error:', error.stack);
+        console.error('ERROR: Remove member error:', error.stack);
         res.status(500).json({ error: 'فشل في إزالة العضو.' });
     }
 });
 
-// مغادرة المجموعة
+// مغادرة المجموعة (يتم التعامل معها كحذف من جانب المستخدم في الواجهة الأمامية)
 app.delete('/api/group/:groupId/leave', async (req, res) => {
     const { groupId } = req.params;
-    const { memberUid } = req.body;
+    const { memberUid } = req.body; // المستخدم الذي يغادر
+
+    if (!memberUid) {
+        return res.status(400).json({ error: 'معرف العضو (memberUid) مطلوب.' });
+    }
 
     try {
         const groupResult = await pool.query('SELECT participants, admin_id FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
+
         if (!group) {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        let participants = group.participants;
-        const memberIndex = participants.findIndex(p => p.uid === memberUid);
-        if (memberIndex === -1) {
-            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+        let currentParticipants = Array.isArray(group.participants) ? group.participants : [];
+        const memberToLeave = currentParticipants.find(p => p.uid === memberUid);
+
+        if (!memberToLeave) {
+            return res.status(404).json({ error: 'أنت لست عضواً في هذه المجموعة.' });
         }
-
-        const leavingMember = participants[memberIndex];
-
-        if (leavingMember.uid === group.admin_id) {
-            if (participants.length > 1) {
-                const newAdmin = participants.find(p => p.uid !== memberUid && p.role === 'admin');
-                if (newAdmin) {
-                    group.admin_id = newAdmin.uid;
-                } else {
-                    const firstAvailableMember = participants.find(p => p.uid !== memberUid);
-                    if (firstAvailableMember) {
-                        group.admin_id = firstAvailableMember.uid;
-                        firstAvailableMember.role = 'admin';
-                    } else {
-                        await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
-                        await pool.query('DELETE FROM messages WHERE chat_id = $1', [groupId]);
-                        return res.status(200).json({ message: 'غادرت المجموعة وتم حذفها لعدم وجود أعضاء آخرين.' });
-                    }
-                }
-                await pool.query('UPDATE chats SET admin_id = $1 WHERE id = $2', [group.admin_id, groupId]);
+        // إذا كان المستخدم هو المالك الوحيد، فيجب أن تظهر رسالة خطأ
+        if (memberUid === group.admin_id && currentParticipants.length === 1) {
+            // تحقق مما إذا كان المالك هو العضو الوحيد
+            return res.status(400).json({ error: 'أنت المالك الوحيد للمجموعة والعضو الأخير. لا يمكنك مغادرة المجموعة.' });
+        }
+        
+        // إذا كان المالك يغادر، يجب تعيين مشرف جديد تلقائيًا إذا كان هناك آخرون
+        if (memberUid === group.admin_id) {
+            const remainingAdmins = currentParticipants.filter(p => p.uid !== memberUid && p.role === 'admin');
+            if (remainingAdmins.length > 0) {
+                // تعيين أول مشرف متبقي كمالك جديد
+                group.admin_id = remainingAdmins[0].uid;
+                console.log(`INFO: Group ${groupId} new admin_id set to ${group.admin_id} after owner left.`);
             } else {
-                await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
-                await pool.query('DELETE FROM messages WHERE chat_id = $1', [groupId]);
-                return res.status(200).json({ message: 'غادرت المجموعة وتم حذفها لعدم وجود أعضاء آخرين.' });
+                // تعيين أول عضو متبقي كمشرف جديد
+                const remainingMembers = currentParticipants.filter(p => p.uid !== memberUid);
+                if (remainingMembers.length > 0) {
+                    group.admin_id = remainingMembers[0].uid;
+                    remainingMembers[0].role = 'admin'; // ترقية أول عضو إلى مشرف
+                    console.log(`INFO: Group ${groupId} new admin_id set to ${group.admin_id} (promoted member) after owner left.`);
+                } else {
+                    // لا يوجد أعضاء متبقين، المجموعة ستصبح فارغة
+                    // يمكن أن تختار حذف المجموعة هنا إذا أردت
+                    await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
+                    console.log(`INFO: Group ${groupId} became empty and was deleted after owner left.`);
+                    return res.status(200).json({ message: 'لقد غادرت المجموعة، وأصبحت فارغة وتم حذفها.' });
+                }
             }
         }
 
-        participants.splice(memberIndex, 1);
-        await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(participants), groupId]);
-
-        if (participants.length === 0) {
-            await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
-            await pool.query('DELETE FROM messages WHERE chat_id = $1', [groupId]);
-        }
+        // إزالة العضو من قائمة المشاركين
+        const updatedParticipants = currentParticipants.filter(p => p.uid !== memberUid);
         
-        res.status(200).json({ message: 'غادرت المجموعة بنجاح.' });
-    }
-     catch (error) {
+        await pool.query(
+            'UPDATE chats SET participants = $1, admin_id = $2 WHERE id = $3',
+            [JSON.stringify(updatedParticipants), group.admin_id, groupId]
+        );
+        console.log(`INFO: User ${memberUid} left group ${groupId}.`);
+        res.status(200).json({ message: 'لقد غادرت المجموعة بنجاح.' });
+
+    } catch (error) {
         console.error('ERROR: Leave group error:', error.stack);
         res.status(500).json({ error: 'فشل في مغادرة المجموعة.' });
-    }
-});
-
-// تغيير اسم المجموعة
-app.put('/api/groups/:groupId/name', async (req, res) => {
-    const { groupId } = req.params;
-    const { newName, callerUid } = req.body;
-
-    try {
-        const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
-        const group = groupResult.rows[0];
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        const caller = group.participants.find(p => p.uid === callerUid);
-        if (!caller || caller.role !== 'admin') {
-            return res.status(403).json({ error: 'غير مصرح لك بتغيير اسم المجموعة.' });
-        }
-
-        await pool.query('UPDATE chats SET name = $1 WHERE id = $2', [newName, groupId]);
-        res.status(200).json({ message: 'تم تغيير اسم المجموعة بنجاح.' });
-    } catch (error) {
-        console.error('ERROR: Change group name error:', error.stack);
-        res.status(500).json({ error: 'فشل في تغيير اسم المجموعة.' });
     }
 });
 
@@ -1428,274 +1528,4 @@ app.put('/api/groups/:groupId/name', async (req, res) => {
 // بدء الخادم
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    console.log(`Backend URL: http://localhost:${PORT}`);
 });
-
-// --- وظائف PostgreSQL لإنشاء الجداول (يجب تشغيلها مرة واحدة فقط) ---
-async function createTables() {
-    try {
-        // جدول المستخدمين
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                uid UUID PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                custom_id VARCHAR(8) UNIQUE NOT NULL,
-                profile_bg_url TEXT,
-                followers JSONB DEFAULT '[]'::jsonb,
-                following JSONB DEFAULT '[]'::jsonb
-            );
-        `);
-        console.log('INFO: Table "users" ensured to exist.');
-
-        // جدول المنشورات
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS posts (
-                id UUID PRIMARY KEY,
-                author_id UUID NOT NULL REFERENCES users(uid),
-                author_name VARCHAR(255) NOT NULL,
-                text TEXT,
-                media_type VARCHAR(50),
-                media_url TEXT,
-                timestamp BIGINT NOT NULL,
-                likes JSONB DEFAULT '[]'::jsonb,
-                comments JSONB DEFAULT '[]'::jsonb,
-                views JSONB DEFAULT '[]'::jsonb,
-                author_profile_bg TEXT,
-                follower_count INTEGER DEFAULT 0
-            );
-        `);
-        console.log('INFO: Table "posts" ensured to exist.');
-
-        // جدول المحادثات
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS chats (
-                id UUID PRIMARY KEY,
-                type VARCHAR(50) NOT NULL, -- 'private' or 'group'
-                name VARCHAR(255), -- for groups
-                description TEXT, -- for groups
-                admin_id UUID REFERENCES users(uid), -- for groups, admin of the group
-                participants JSONB NOT NULL, -- array of {uid, name, customId, role, profileBgUrl, contactName}
-                created_at BIGINT NOT NULL,
-                profile_bg_url TEXT -- for group profile pic
-            );
-        `);
-        console.log('INFO: Table "chats" ensured to exist.');
-
-        // جدول الرسائل
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS messages (
-                id UUID PRIMARY KEY,
-                chat_id UUID NOT NULL REFERENCES chats(id),
-                sender_id UUID NOT NULL REFERENCES users(uid),
-                sender_name VARCHAR(255) NOT NULL,
-                text TEXT,
-                media_type VARCHAR(50),
-                media_url TEXT,
-                timestamp BIGINT NOT NULL,
-                sender_profile_bg TEXT
-            );
-        `);
-        console.log('INFO: Table "messages" ensured to exist.');
-
-        // إضافة بيانات تجريبية (إذا كانت الجداول فارغة)
-        await setupInitialData();
-
-    } catch (error) {
-        console.error('ERROR: Error creating tables or setting up initial data:', error.stack);
-        // لا ننهي العملية هنا مباشرة لتجنب تكرار الأخطاء إذا كانت الجداول موجودة بالفعل
-    }
-}
-
-// دالة لإضافة بيانات تجريبية (الآن ستضاف إلى PostgreSQL)
-async function setupInitialData() {
-    try {
-        const userCountResult = await pool.query('SELECT COUNT(*) FROM users');
-        if (parseInt(userCountResult.rows[0].count) === 0) {
-            const passwordHash1 = await bcrypt.hash('password123', 10);
-            const passwordHash2 = await bcrypt.hash('password456', 10);
-            const passwordHash3 = await bcrypt.hash('password789', 10);
-
-            const user1 = { uid: uuidv4(), username: 'محمد', passwordHash: passwordHash1, customId: '12345678', profileBgUrl: null, followers: [], following: [] };
-            const user2 = { uid: uuidv4(), username: 'أحمد', passwordHash: passwordHash2, customId: '87654321', profileBgUrl: null, followers: [], following: [] };
-            const user3 = { uid: uuidv4(), username: 'فاطمة', passwordHash: passwordHash3, customId: '11223344', profileBgUrl: null, followers: [], following: [] };
-            
-            await pool.query(
-                `INSERT INTO users (uid, username, password_hash, custom_id, profile_bg_url, followers, following) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [user1.uid, user1.username, user1.passwordHash, user1.customId, user1.profileBgUrl, JSON.stringify(user1.followers), JSON.stringify(user1.following)]
-            );
-            await pool.query(
-                `INSERT INTO users (uid, username, password_hash, custom_id, profile_bg_url, followers, following) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [user2.uid, user2.username, user2.passwordHash, user2.customId, user2.profileBgUrl, JSON.stringify(user2.followers), JSON.stringify(user2.following)]
-            );
-            await pool.query(
-                `INSERT INTO users (uid, username, password_hash, custom_id, profile_bg_url, followers, following) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [user3.uid, user3.username, user3.passwordHash, user3.customId, user3.profileBgUrl, JSON.stringify(user3.followers), JSON.stringify(user3.following)]
-            );
-            console.log('INFO: Added initial users to PostgreSQL.');
-
-            // تحديث المتابعة (يجب جلب المستخدمين أولاً لتحديثهم)
-            const usersInDbResult = await pool.query('SELECT uid, followers, following FROM users');
-            const usersInDb = usersInDbResult.rows.reduce((acc, u) => {
-                acc[u.uid] = { 
-                    uid: u.uid, 
-                    followers: Array.isArray(u.followers) ? u.followers : [], 
-                    following: Array.isArray(u.following) ? u.following : [] 
-                }; 
-                return acc; 
-            }, {});
-
-            // جعل محمد يتابع أحمد وفاطمة
-            usersInDb[user1.uid].following.push(user2.uid, user3.uid);
-            usersInDb[user2.uid].followers.push(user1.uid);
-            usersInDb[user3.uid].followers.push(user1.uid);
-
-            // جعل أحمد يتابع محمد
-            usersInDb[user2.uid].following.push(user1.uid);
-            usersInDb[user1.uid].followers.push(user2.uid);
-
-            // تحديث المستخدمين بعد تغييرات المتابعة
-            await pool.query('UPDATE users SET following = $1, followers = $2 WHERE uid = $3', [JSON.stringify(usersInDb[user1.uid].following), JSON.stringify(usersInDb[user1.uid].followers), user1.uid]);
-            await pool.query('UPDATE users SET following = $1, followers = $2 WHERE uid = $3', [JSON.stringify(usersInDb[user2.uid].following), JSON.stringify(usersInDb[user2.uid].followers), user2.uid]);
-            await pool.query('UPDATE users SET following = $1, followers = $2 WHERE uid = $3', [JSON.stringify(usersInDb[user3.uid].following), JSON.stringify(usersInDb[user3.uid].followers), user3.uid]);
-            console.log('INFO: Updated user followings in PostgreSQL.');
-
-            // إضافة منشورات افتراضية (هذه المنشورات ستستخدم روابط Storj DCS)
-            const baseUrlForDummyMedia = STORJ_ENDPOINT ? `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}` : `http://localhost:${PORT}/uploads`;
-            const dummyImageUrl = `${baseUrlForDummyMedia}/dummy-image.jpg`; // افتراضياً يجب أن تكون هذه الملفات موجودة في Storj
-            const dummyVideoUrl = `${baseUrlForDummyMedia}/dummy-video.mp4`; // افتراضياً يجب أن تكون هذه الملفات موجودة في Storj
-
-            // ملاحظة: لكي تعمل هذه الروابط الافتراضية، يجب أن تقوم يدوياً برفع
-            // ملفي "dummy-image.jpg" و "dummy-video.mp4" إلى Storj bucket الخاص بك
-            // ضمن المسار الجذر للـ bucket.
-            // يمكنك استخدام أي صورة وفيديو صغيرين.
-
-            const post1 = {
-                id: uuidv4(),
-                authorId: user1.uid,
-                authorName: user1.username,
-                text: 'أول منشور لي على وتسليجرم! 👋',
-                mediaType: 'text',
-                mediaUrl: null,
-                timestamp: Date.now() - 50000,
-                likes: [], // لايكات فارغة في البداية
-                comments: [], // تعليقات فارغة في البداية
-                views: [], // مشاهدات فارغة في البداية
-                authorProfileBg: user1.profileBgUrl,
-                followerCount: (usersInDb[user1.uid].followers || []).length
-            };
-
-            const post2 = {
-                id: uuidv4(),
-                authorId: user2.uid,
-                authorName: user2.username,
-                text: 'يوم جميل في المدينة 🏙️',
-                mediaType: 'text',
-                mediaUrl: null,
-                timestamp: Date.now() - 40000,
-                likes: [],
-                comments: [],
-                views: [],
-                authorProfileBg: user2.profileBgUrl,
-                followerCount: (usersInDb[user2.uid].followers || []).length
-            };
-
-            const post3 = {
-                id: uuidv4(),
-                authorId: user1.uid,
-                authorName: user1.username,
-                text: 'صورة من رحلتي الأخيرة! 🏞️ (صورة تجريبية من Storj)',
-                mediaType: 'image',
-                mediaUrl: dummyImageUrl,
-                timestamp: Date.now() - 30000,
-                likes: [], // likes: [user2.uid, user3.uid], // تم تغييرها إلى فارغة لتبسيط التجربة
-                comments: [],
-                views: [],
-                authorProfileBg: user1.profileBgUrl,
-                followerCount: (usersInDb[user1.uid].followers || []).length
-            };
-            const post4 = {
-                id: uuidv4(),
-                authorId: user3.uid,
-                authorName: user3.username,
-                text: 'فيديو رائع للطبيعة 🎥 (فيديو تجريبي من Storj)',
-                mediaType: 'video',
-                mediaUrl: dummyVideoUrl,
-                timestamp: Date.now() - 20000,
-                likes: [], // likes: [user1.uid], // تم تغييرها إلى فارغة لتبسيط التجربة
-                comments: [],
-                views: [],
-                authorProfileBg: user3.profileBgUrl,
-                followerCount: (usersInDb[user3.uid].followers || []).length
-            };
-
-            await pool.query(
-                `INSERT INTO posts (id, author_id, author_name, text, media_type, media_url, timestamp, likes, comments, views, author_profile_bg, follower_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                [post1.id, post1.authorId, post1.authorName, post1.text, post1.mediaType, post1.mediaUrl, post1.timestamp, JSON.stringify(post1.likes), JSON.stringify(post1.comments), JSON.stringify(post1.views), post1.authorProfileBg, post1.followerCount]
-            );
-            await pool.query(
-                `INSERT INTO posts (id, author_id, author_name, text, media_type, media_url, timestamp, likes, comments, views, author_profile_bg, follower_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                [post2.id, post2.authorId, post2.authorName, post2.text, post2.mediaType, post2.mediaUrl, post2.timestamp, JSON.stringify(post2.likes), JSON.stringify(post2.comments), JSON.stringify(post2.views), post2.authorProfileBg, post2.followerCount]
-            );
-            await pool.query(
-                `INSERT INTO posts (id, author_id, author_name, text, media_type, media_url, timestamp, likes, comments, views, author_profile_bg, follower_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                [post3.id, post3.authorId, post3.authorName, post3.text, post3.mediaType, post3.mediaUrl, post3.timestamp, JSON.stringify(post3.likes), JSON.stringify(post3.comments), JSON.stringify(post3.views), post3.authorProfileBg, post3.followerCount]
-            );
-            await pool.query(
-                `INSERT INTO posts (id, author_id, author_name, text, media_type, media_url, timestamp, likes, comments, views, author_profile_bg, follower_count) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                [post4.id, post4.authorId, post4.authorName, post4.text, post4.mediaType, post4.mediaUrl, post4.timestamp, JSON.stringify(post4.likes), JSON.stringify(post4.comments), JSON.stringify(post4.views), post4.authorProfileBg, post4.followerCount]
-            );
-            console.log('INFO: Added initial posts to PostgreSQL.');
-
-            // إضافة محادثات افتراضية
-            const chat1to2Id = uuidv4();
-            const chat1to2Participants = [
-                { uid: user1.uid, name: user1.username, customId: user1.customId, profileBgUrl: user1.profileBgUrl, contactName: user2.username },
-                { uid: user2.uid, name: user2.username, customId: user2.customId, profileBgUrl: user2.profileBgUrl, contactName: user1.username }
-            ];
-            await pool.query(
-                `INSERT INTO chats (id, type, participants, created_at) VALUES ($1, $2, $3, $4)`,
-                [chat1to2Id, 'private', JSON.stringify(chat1to2Participants), Date.now() - 60000]
-            );
-
-            await pool.query(
-                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [uuidv4(), chat1to2Id, user1.uid, user1.username, 'مرحباً أحمد! كيف حالك؟', 'text', null, Date.now() - 59000, user1.profileBgUrl]
-            );
-            await pool.query(
-                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [uuidv4(), chat1to2Id, user2.uid, user2.username, 'أهلاً محمد! أنا بخير، شكراً لك. ماذا عنك؟', 'text', null, Date.now() - 58000, user2.profileBgUrl]
-            );
-
-            const group1Id = uuidv4();
-            const group1Participants = [
-                { uid: user1.uid, name: user1.username, customId: user1.customId, role: 'admin', profileBgUrl: user1.profileBgUrl },
-                { uid: user2.uid, name: user2.username, customId: user2.customId, role: 'member', profileBgUrl: user2.profileBgUrl },
-                { uid: user3.uid, name: user3.username, customId: user3.customId, role: 'member', profileBgUrl: user3.profileBgUrl }
-            ];
-            await pool.query(
-                `INSERT INTO chats (id, type, name, description, admin_id, participants, created_at, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [group1Id, 'group', 'مجموعة الأصدقاء', 'مجموعة للتحدث مع الأصدقاء المقربين.', user1.uid, JSON.stringify(group1Participants), Date.now() - 70000, null]
-            );
-
-            await pool.query(
-                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [uuidv4(), group1Id, user1.uid, user1.username, 'مرحباً بالجميع في المجموعة!', 'text', null, Date.now() - 69000, user1.profileBgUrl]
-            );
-            await pool.query(
-                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, media_type, media_url, timestamp, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [uuidv4(), group1Id, user3.uid, user3.username, 'أهلاً محمد! كيف حالكم جميعاً؟', 'text', null, Date.now() - 68000, user3.profileBgUrl]
-            );
-            console.log('INFO: Added initial chats and messages to PostgreSQL.');
-        } else {
-            console.log('INFO: PostgreSQL already contains data, skipping initial data setup.');
-        }
-    } catch (error) {
-        console.error('ERROR: Error setting up initial data for PostgreSQL:', error.stack);
-    }
-}
-
-// تشغيل دالة إنشاء الجداول والبيانات الأولية عند بدء تشغيل الخادم
-createTables();
-
-
