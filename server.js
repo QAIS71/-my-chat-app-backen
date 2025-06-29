@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs'); // للتعامل مع نظام الملفات المؤقتة
+const util = require('util'); // لاستخدام promisify
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { customAlphabet } = require('nanoid');
@@ -12,6 +13,9 @@ const { Pool } = require('pg'); // مكتبة PostgreSQL
 
 // استيراد مكتبة AWS SDK S3 (للتوافق مع Storj DCS S3 API)
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
+// تحويل fs.stat إلى دالة تدعم async/await
+const stat = util.promisify(fs.stat);
 
 // تهيئة تطبيق Express
 const app = express();
@@ -196,8 +200,10 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
-        // قراءة حجم الملف أولاً
-        const fileSize = fs.statSync(req.file.path).size;
+        // قراءة حجم الملف أولاً بشكل غير متزامن
+        const fileStats = await stat(req.file.path);
+        const fileSize = fileStats.size;
+
         // قراءة الملف المؤقت كـ Stream
         const fileStream = fs.createReadStream(req.file.path);
         const objectKey = `profile-backgrounds/${userId}/${req.file.filename}`; // المسار في Storj DCS
@@ -414,8 +420,10 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 throw new Error('Storj DCS environment variables not set. Cannot upload media.');
             }
 
-            // قراءة حجم الملف أولاً
-            const fileSize = fs.statSync(req.file.path).size;
+            // قراءة حجم الملف أولاً بشكل غير متزامن
+            const fileStats = await stat(req.file.path);
+            const fileSize = fileStats.size;
+
             const fileStream = fs.createReadStream(req.file.path);
             const objectKey = `posts/${authorId}/${req.file.filename}`; // المسار في Storj DCS
 
@@ -945,7 +953,7 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
 
     try {
         const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
-        let chat = chat.rows[0];
+        const chat = chatResult.rows[0]; // تم تصحيح هذا السطر: كان chat.rows[0] بدلاً من chat
         if (!chat) {
             return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
@@ -1034,8 +1042,10 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 throw new Error('Storj DCS environment variables not set. Cannot upload media.');
             }
 
-            // قراءة حجم الملف أولاً
-            const fileSize = fs.statSync(req.file.path).size;
+            // قراءة حجم الملف أولاً بشكل غير متزامن
+            const fileStats = await stat(req.file.path);
+            const fileSize = fileStats.size;
+
             const fileStream = fs.createReadStream(req.file.path);
             const objectKey = `chat-media/${chatId}/${req.file.filename}`; // المسار في Storj DCS
 
@@ -1288,7 +1298,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 
 // إزالة عضو من المجموعة
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId } = req.params;
+    const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
 
     try {
@@ -1598,7 +1608,7 @@ async function setupInitialData() {
                 mediaType: 'image',
                 mediaUrl: dummyImageUrl,
                 timestamp: Date.now() - 30000,
-                likes: [user2.uid, user3.uid],
+                likes: [], // likes: [user2.uid, user3.uid], // تم تغييرها إلى فارغة لتبسيط التجربة
                 comments: [],
                 views: [],
                 authorProfileBg: user1.profileBgUrl,
@@ -1612,7 +1622,7 @@ async function setupInitialData() {
                 mediaType: 'video',
                 mediaUrl: dummyVideoUrl,
                 timestamp: Date.now() - 20000,
-                likes: [user1.uid],
+                likes: [], // likes: [user1.uid], // تم تغييرها إلى فارغة لتبسيط التجربة
                 comments: [],
                 views: [],
                 authorProfileBg: user3.profileBgUrl,
@@ -1687,3 +1697,5 @@ async function setupInitialData() {
 
 // تشغيل دالة إنشاء الجداول والبيانات الأولية عند بدء تشغيل الخادم
 createTables();
+
+
