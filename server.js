@@ -4,11 +4,14 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const fs = require('fs'); // للتعامل مع نظام الملفات المؤقتة
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { customAlphabet } = require('nanoid');
-const { Pool } = require('pg'); // استيراد مكتبة PostgreSQL
+const { Pool } = require('pg'); // مكتبة PostgreSQL
+
+// استيراد مكتبة AWS SDK S3 (للتوافق مع Storj DCS S3 API)
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
 // تهيئة تطبيق Express
 const app = express();
@@ -25,11 +28,11 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL, // جلب رابط قاعدة البيانات من متغيرات البيئة
     ssl: {
-        rejectUnauthorized: false // مطلوب لـ Render PostgreSQL
+        rejectUnauthorized: false // مطلوب لـ Render PostgreSQL (تجنب مشاكل شهادات SSL)
     }
 });
 
-// اختبار الاتصال بقاعدة البيانات
+// اختبار الاتصال بقاعدة البيانات عند بدء التشغيل
 pool.connect()
     .then(client => {
         console.log('INFO: Connected to PostgreSQL database successfully!');
@@ -37,32 +40,54 @@ pool.connect()
     })
     .catch(err => {
         console.error('ERROR: Database connection failed!', err.stack);
-        process.exit(1); // إنهاء التطبيق إذا فشل الاتصال بقاعدة البيانات
+        // في بيئة الإنتاج، قد ترغب في إنهاء التطبيق هنا إذا كان الاتصال بالقاعدة ضرورياً
+        // process.exit(1); 
     });
 
-// --- إعداد تخزين Multer للتخزين المحلي المؤقت ---
-// هذا المجلد سيتم مسحه عند إعادة تشغيل الخادم على Render.
-// لتخزين دائم، ستحتاج إلى خدمة تخزين سحابي مثل Cloudinary أو AWS S3.
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
-    console.log(`INFO: Created uploads directory at ${uploadsDir}`);
+// --- إعداد Storj DCS (متوافق مع S3 API) ---
+// جلب متغيرات البيئة لـ Storj DCS
+const STORJ_ENDPOINT = process.env.STORJ_ENDPOINT;
+const STORJ_ACCESS_KEY_ID = process.env.STORJ_ACCESS_KEY_ID;
+const STORJ_SECRET_ACCESS_KEY = process.env.STORJ_SECRET_ACCESS_KEY;
+const STORJ_BUCKET_NAME = process.env.STORJ_BUCKET_NAME;
+
+// تهيئة S3 Client للاتصال ببوابة Storj DCS
+const s3Client = new S3Client({
+    endpoint: STORJ_ENDPOINT,
+    credentials: {
+        accessKeyId: STORJ_ACCESS_KEY_ID,
+        secretAccessKey: STORJ_SECRET_ACCESS_KEY,
+    },
+    region: 'us-east-1', // Storj DCS لا يستخدم مناطق تقليدية مثل AWS، ولكن هذه القيمة مطلوبة لمكتبة S3.
+                         // يمكنك استخدام 'auto' أو أي منطقة صالحة مثل 'us-east-1'.
+    forcePathStyle: true, // هام جداً لبعض الخدمات المتوافقة مع S3 مثل Storj DCS (مثل Storj)
+});
+
+// التحقق من أن متغيرات Storj DCS تم تعيينها
+if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
+    console.error('ERROR: Storj DCS (S3-compatible) environment variables not fully set. Image/video uploads will likely fail. Please ensure STORJ_ENDPOINT, STORJ_ACCESS_KEY_ID, STORJ_SECRET_ACCESS_KEY, and STORJ_BUCKET_NAME are properly configured in Render environment variables.');
 } else {
-    console.log(`INFO: Uploads directory already exists at ${uploadsDir}`);
+    console.log('INFO: Storj DCS (S3-compatible) client initialized and ready.');
 }
 
-// توفير الملفات الثابتة من مجلد 'uploads'
-app.use('/uploads', express.static(uploadsDir));
-console.log(`INFO: Serving static files from /uploads to ${uploadsDir}`);
+// --- إعداد تخزين Multer للملفات المؤقتة قبل الرفع إلى Storj ---
+// Multer سيقوم بحفظ الملفات مؤقتاً على القرص، ثم نقوم نحن برفعها إلى Storj DCS
+const tempUploadsDir = path.join(__dirname, 'temp_uploads');
+if (!fs.existsSync(tempUploadsDir)) {
+    fs.mkdirSync(tempUploadsDir);
+    console.log(`INFO: Created temporary uploads directory at ${tempUploadsDir}`);
+} else {
+    console.log(`INFO: Temporary uploads directory already exists at ${tempUploadsDir}`);
+}
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, uploadsDir); // مجلد الوجهة لرفع الملفات
+        cb(null, tempUploadsDir); // مجلد الوجهة المؤقت لرفع الملفات
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const newFileName = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
-        console.log(`DEBUG: Multer generated filename: ${newFileName}`);
+        console.log(`DEBUG: Multer generated temporary filename: ${newFileName}`);
         cb(null, newFileName);
     }
 });
@@ -145,7 +170,7 @@ app.post('/api/login', async (req, res) => {
 
 // --- وظائف API للملفات الشخصية وخلفيات المستخدمين ---
 
-// رفع خلفية الملف الشخصي (باستخدام التخزين المحلي المؤقت)
+// رفع خلفية الملف الشخصي (باستخدام Storj DCS)
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     console.log("DEBUG: Received request to upload profile background.");
     console.log("DEBUG: req.file for profile background:", req.file);
@@ -157,33 +182,53 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     const { userId } = req.body;
     if (!userId) {
         console.warn("WARN: userId missing for profile background upload.");
-        fs.unlinkSync(req.file.path);
+        fs.unlinkSync(req.file.path); // حذف الملف المؤقت
         return res.status(400).json({ error: 'معرف المستخدم (userId) مطلوب.' });
     }
 
     try {
-        const result = await pool.query('SELECT * FROM users WHERE uid = $1', [userId]);
-        const user = result.rows[0];
+        const userResult = await pool.query('SELECT * FROM users WHERE uid = $1', [userId]);
+        const user = userResult.rows[0];
 
         if (!user) {
             console.warn(`WARN: User ${userId} not found for profile background upload.`);
-            fs.unlinkSync(req.file.path);
+            fs.unlinkSync(req.file.path); // حذف الملف المؤقت
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
-        const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+        // قراءة الملف المؤقت كـ Stream
+        const fileStream = fs.createReadStream(req.file.path);
+        const objectKey = `profile-backgrounds/${userId}/${req.file.filename}`; // المسار في Storj DCS
+
+        // رفع الملف إلى Storj DCS
+        const uploadParams = {
+            Bucket: STORJ_BUCKET_NAME,
+            Key: objectKey,
+            Body: fileStream,
+            ContentType: req.file.mimetype // هام لكي يتم عرض الملف بشكل صحيح في المتصفح
+        };
+        await s3Client.send(new PutObjectCommand(uploadParams));
+
+        // بناء الرابط العام للملف في Storj DCS
+        const fileUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
         await pool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [fileUrl, userId]);
         
-        console.log(`INFO: Profile background uploaded for ${userId}. URL: ${fileUrl}`);
+        console.log(`INFO: Profile background uploaded for ${userId} to Storj DCS. URL: ${fileUrl}`);
         res.status(200).json({ message: 'تم تحديث خلفية الملف الشخصي بنجاح!', url: fileUrl });
+
     } catch (error) {
-        console.error('ERROR: Profile background upload error:', error.stack);
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        res.status(500).json({ error: 'فشل في تحديث خلفية الملف الشخصي.' });
+        console.error('ERROR: Profile background upload to Storj DCS failed!', error.stack);
+        res.status(500).json({ error: 'فشل في رفع خلفية الملف الشخصي إلى Storj DCS.' });
+    } finally {
+        // دائماً قم بحذف الملف المؤقت بعد محاولة الرفع
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+        }
     }
 });
 
-// جلب خلفية الملف الشخصي للمستخدم
+// جلب خلفية الملف الشخصي للمستخدم (الرابط يأتي من DB الآن)
 app.get('/api/user/:userId/profile-background', async (req, res) => {
     const { userId } = req.params;
     try {
@@ -249,7 +294,7 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
         const contacts = new Map();
 
         for (const chat of userChats) {
-            const participants = chat.participants; // Assuming participants is jsonb array
+            const participants = chat.participants;
             const otherParticipant = participants.find(p => p.uid !== userId);
 
             if (otherParticipant) {
@@ -299,14 +344,14 @@ app.post('/api/user/:followerId/follow/:followingId', async (req, res) => {
         if (isFollowing) {
             followerFollowing = followerFollowing.filter(id => id !== followingId);
             followingFollowers = followingFollowers.filter(id => id !== followerId);
-            await pool.query('UPDATE users SET following = $1 WHERE uid = $2', [followerFollowing, followerId]);
-            await pool.query('UPDATE users SET followers = $1 WHERE uid = $2', [followingFollowers, followingId]);
+            await pool.query('UPDATE users SET following = $1 WHERE uid = $2', [JSON.stringify(followerFollowing), followerId]);
+            await pool.query('UPDATE users SET followers = $1 WHERE uid = $2', [JSON.stringify(followingFollowers), followingId]);
             res.status(200).json({ message: 'تم إلغاء المتابعة بنجاح.', isFollowing: false });
         } else {
             followerFollowing.push(followingId);
             followingFollowers.push(followerId);
-            await pool.query('UPDATE users SET following = $1 WHERE uid = $2', [followerFollowing, followerId]);
-            await pool.query('UPDATE users SET followers = $1 WHERE uid = $2', [followingFollowers, followingId]);
+            await pool.query('UPDATE users SET following = $1 WHERE uid = $2', [JSON.stringify(followerFollowing), followerId]);
+            await pool.query('UPDATE users SET followers = $1 WHERE uid = $2', [JSON.stringify(followingFollowers), followingId]);
             res.status(200).json({ message: 'تمت المتابعة بنجاح.', isFollowing: true });
         }
     } catch (error) {
@@ -317,7 +362,7 @@ app.post('/api/user/:followerId/follow/:followingId', async (req, res) => {
 
 // التحقق مما إذا كان المستخدم يتابع آخر
 app.get('/api/user/:followerId/following/:followingId', async (req, res) => {
-    const { followerId, followingId } = req.params;
+    const { followerId } = req.params;
     try {
         const result = await pool.query('SELECT following FROM users WHERE uid = $1', [followerId]);
         const follower = result.rows[0];
@@ -335,7 +380,7 @@ app.get('/api/user/:followerId/following/:followingId', async (req, res) => {
 
 // --- وظائف API للمنشورات ---
 
-// نشر منشور جديد (باستخدام التخزين المحلي المؤقت)
+// نشر منشور جديد (باستخدام Storj DCS)
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
 
@@ -361,52 +406,60 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         let finalMediaType = mediaType || 'text';
 
         if (req.file) {
-            mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+            // التحقق من متغيرات Storj قبل محاولة الرفع
+            if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
+                throw new Error('Storj DCS environment variables not set. Cannot upload media.');
+            }
+
+            const fileStream = fs.createReadStream(req.file.path);
+            const objectKey = `posts/${authorId}/${req.file.filename}`; // المسار في Storj DCS
+
+            const uploadParams = {
+                Bucket: STORJ_BUCKET_NAME,
+                Key: objectKey,
+                Body: fileStream,
+                ContentType: req.file.mimetype
+            };
+            await s3Client.send(new PutObjectCommand(uploadParams));
+
+            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
             finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
             if (finalMediaType === 'unknown') {
-                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
+                // إذا كان نوع الملف غير معروف، احذفه من Storj أيضاً
+                await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
+                throw new Error('Unsupported media type for Storj upload.');
             }
-            console.log(`DEBUG: Generated mediaUrl for post: ${mediaUrl}, mediaType: ${finalMediaType}`);
+            console.log(`DEBUG: Uploaded post media to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
         } else {
             console.log("DEBUG: No media file uploaded for post.");
         }
 
-        const newPost = {
-            id: uuidv4(),
-            authorId,
-            authorName,
-            text: text || '',
-            mediaType: finalMediaType,
-            mediaUrl: mediaUrl,
-            timestamp: Date.now(),
-            likes: [],
-            comments: [],
-            views: [],
-            authorProfileBg: authorProfileBg || null,
-            followerCount: (author.followers || []).length
-        };
-
+        const newPostId = uuidv4();
         const insertQuery = `
             INSERT INTO posts (id, author_id, author_name, text, media_type, media_url, timestamp, likes, comments, views, author_profile_bg, follower_count)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`;
         const postResult = await pool.query(insertQuery, [
-            newPost.id, newPost.authorId, newPost.authorName, newPost.text, newPost.mediaType,
-            newPost.mediaUrl, newPost.timestamp, newPost.likes, newPost.comments, newPost.views,
-            newPost.authorProfileBg, newPost.followerCount
+            newPostId, authorId, authorName, text || '', finalMediaType,
+            mediaUrl, Date.now(), [], [], [],
+            authorProfileBg || null, (author.followers || []).length
         ]);
         const createdPost = postResult.rows[0];
 
         console.log(`INFO: New post created. Post ID: ${createdPost.id}, Media URL saved: ${createdPost.media_url || 'None'}`);
         res.status(201).json({ message: 'تم نشر المنشور بنجاح!', post: createdPost });
     } catch (error) {
-        console.error('ERROR: Post creation error:', error.stack);
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        res.status(500).json({ error: 'فشل في نشر المنشور.' });
+        console.error('ERROR: Post creation and Storj upload failed:', error.stack);
+        res.status(500).json({ error: 'فشل في نشر المنشور أو رفع الوسائط.' });
+    } finally {
+        // دائماً قم بحذف الملف المؤقت بعد محاولة الرفع
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+        }
     }
 });
 
-// جلب جميع المنشورات
+// جلب جميع المنشورات (الروابط تأتي من DB الآن)
 app.get('/api/posts', async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM posts ORDER BY timestamp DESC');
@@ -442,7 +495,7 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
 
         const followedUids = user.following || [];
         if (followedUids.length === 0) {
-            return res.status(200).json([]); // لا توجد منشورات لمتابعين إذا لم يكن يتابع أحداً
+            return res.status(200).json([]);
         }
 
         const postsResult = await pool.query(
@@ -492,7 +545,6 @@ app.get('/api/posts/search', async (req, res) => {
                 whereClauses.push(`author_id = ANY($${queryParams.length + 1}::uuid[])`);
                 queryParams.push(followedUids);
             } else if (user) {
-                // If filter is 'followed' but user follows no one, return empty results
                 return res.status(200).json([]);
             } else {
                 return res.status(404).json({ error: 'المستخدم غير موجود.' });
@@ -547,11 +599,11 @@ app.post('/api/posts/:postId/like', async (req, res) => {
 
         if (hasLiked) {
             currentLikes = currentLikes.filter(id => id !== userId);
-            await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [currentLikes, postId]);
+            await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), postId]);
             res.status(200).json({ message: 'تم إلغاء الإعجاب.', isLiked: false, likesCount: currentLikes.length });
         } else {
             currentLikes.push(userId);
-            await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [currentLikes, postId]);
+            await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), postId]);
             res.status(200).json({ message: 'تم الإعجاب بالمنشور!', isLiked: true, likesCount: currentLikes.length });
         }
     } catch (error) {
@@ -594,7 +646,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
         };
         currentComments.push(newComment);
 
-        await pool.query('UPDATE posts SET comments = $1 WHERE id = $2', [currentComments, postId]);
+        await pool.query('UPDATE posts SET comments = $1 WHERE id = $2', [JSON.stringify(currentComments), postId]);
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح!', comment: newComment });
     } catch (error) {
         console.error('ERROR: Add comment error:', error.stack);
@@ -655,7 +707,7 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
         }
 
         currentComments[commentIndex] = targetComment;
-        await pool.query('UPDATE posts SET comments = $1 WHERE id = $2', [currentComments, postId]);
+        await pool.query('UPDATE posts SET comments = $1 WHERE id = $2', [JSON.stringify(currentComments), postId]);
     } catch (error) {
         console.error('ERROR: Like/unlike comment error:', error.stack);
         res.status(500).json({ error: 'فشل في عملية الإعجاب/إلغاء الإعجاب بالتعليق.' });
@@ -681,7 +733,7 @@ app.post('/api/posts/:postId/view', async (req, res) => {
         let currentViews = Array.isArray(post.views) ? post.views : [];
         if (!currentViews.includes(userId)) {
             currentViews.push(userId);
-            await pool.query('UPDATE posts SET views = $1 WHERE id = $2', [currentViews, postId]);
+            await pool.query('UPDATE posts SET views = $1 WHERE id = $2', [JSON.stringify(currentViews), postId]);
             res.status(200).json({ message: 'تم تسجيل المشاهدة.', viewsCount: currentViews.length });
         } else {
             res.status(200).json({ message: 'تمت مشاهدة المنشور بالفعل بواسطة هذا المستخدم.', viewsCount: currentViews.length });
@@ -692,20 +744,30 @@ app.post('/api/posts/:postId/view', async (req, res) => {
     }
 });
 
-// حذف منشور (مع حذف الملف المحلي إذا كان موجوداً)
+// حذف منشور (مع حذف الملف من Storj DCS)
 app.delete('/api/posts/:postId', async (req, res) => {
     const { postId } = req.params;
     
     try {
-        const postResult = await pool.query('SELECT media_url FROM posts WHERE id = $1', [postId]);
+        const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
         const postToDelete = postResult.rows[0];
 
         if (postToDelete && postToDelete.media_url) {
-            const filename = path.basename(postToDelete.media_url);
-            const filePath = path.join(uploadsDir, filename);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                console.log(`INFO: Deleted local media file: ${filePath}`);
+            try {
+                // استخراج الـ objectKey من الـ URL
+                // مثال: https://gateway.storjshare.io/your-bucket/posts/authorId/filename.jpg
+                const urlParts = postToDelete.media_url.split('/');
+                // ابحث عن اسم الـ bucket في الرابط ثم خذ كل ما بعده
+                const bucketNameIndex = urlParts.indexOf(STORJ_BUCKET_NAME);
+                if (bucketNameIndex !== -1 && urlParts.length > bucketNameIndex + 1) {
+                    const objectKey = urlParts.slice(bucketNameIndex + 1).join('/');
+                    await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
+                    console.log(`INFO: Deleted media from Storj DCS: ${objectKey}`);
+                } else {
+                    console.warn(`WARN: Could not extract objectKey from URL: ${postToDelete.media_url} for deletion.`);
+                }
+            } catch (storjError) {
+                console.error('ERROR: Error deleting media from Storj DCS:', storjError.stack);
             }
         }
 
@@ -728,11 +790,10 @@ app.delete('/api/posts/:postId', async (req, res) => {
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
     try {
-        // جلب المحادثات التي يشارك فيها المستخدم
         const chatsResult = await pool.query(
             `SELECT id, type, participants, created_at, name, profile_bg_url, admin_id FROM chats 
              WHERE $1 = ANY(ARRAY(SELECT (p->>'uid') FROM jsonb_array_elements(participants) p)) 
-             ORDER BY created_at DESC`, // ستُفرز لاحقاً بالرسالة الأخيرة
+             ORDER BY created_at DESC`,
             [userId]
         );
 
@@ -760,7 +821,6 @@ app.get('/api/user/:userId/chats', async (req, res) => {
                 adminId = chat.admin_id;
             }
 
-            // جلب آخر رسالة
             const lastMessageResult = await pool.query(
                 `SELECT text, timestamp FROM messages WHERE chat_id = $1 ORDER BY timestamp DESC LIMIT 1`,
                 [chat.id]
@@ -780,7 +840,7 @@ app.get('/api/user/:userId/chats', async (req, res) => {
         });
         
         const userChats = await Promise.all(userChatsPromises);
-        userChats.sort((a, b) => b.timestamp - a.timestamp); // فرز حسب الطابع الزمني لآخر رسالة
+        userChats.sort((a, b) => b.timestamp - a.timestamp);
 
         res.status(200).json(userChats);
     } catch (error) {
@@ -798,9 +858,8 @@ app.post('/api/chats/private', async (req, res) => {
     }
 
     try {
-        // التحقق مما إذا كانت المحادثة موجودة بالفعل
         const existingChatResult = await pool.query(
-            `SELECT id FROM chats WHERE type = 'private' 
+            `SELECT id, participants FROM chats WHERE type = 'private' 
              AND (
                  (participants @> '[{"uid": $1}]' AND participants @> '[{"uid": $2}]')
              )`,
@@ -809,12 +868,7 @@ app.post('/api/chats/private', async (req, res) => {
         const existingChat = existingChatResult.rows[0];
 
         if (existingChat) {
-            // إذا كانت موجودة، نقوم بتحديث اسم جهة الاتصال للمستخدم الحالي
-            const chatParticipantsResult = await pool.query(
-                `SELECT participants FROM chats WHERE id = $1`, [existingChat.id]
-            );
-            let participants = chatParticipantsResult.rows[0].participants;
-
+            let participants = existingChat.participants;
             const currentUserParticipantIndex = participants.findIndex(p => p.uid === user1Id);
             if (currentUserParticipantIndex !== -1) {
                 participants[currentUserParticipantIndex].contactName = contactName;
@@ -941,7 +995,7 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
 
 // --- وظائف API للرسائل ---
 
-// إرسال رسالة (نص أو وسائط) (باستخدام التخزين المحلي المؤقت)
+// إرسال رسالة (نص أو وسائط) (باستخدام Storj DCS)
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
@@ -969,13 +1023,29 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         let finalMediaType = mediaType || 'text';
 
         if (req.file) {
-            mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+            // التحقق من متغيرات Storj قبل محاولة الرفع
+            if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
+                throw new Error('Storj DCS environment variables not set. Cannot upload media.');
+            }
+
+            const fileStream = fs.createReadStream(req.file.path);
+            const objectKey = `chat-media/${chatId}/${req.file.filename}`; // المسار في Storj DCS
+
+            const uploadParams = {
+                Bucket: STORJ_BUCKET_NAME,
+                Key: objectKey,
+                Body: fileStream,
+                ContentType: req.file.mimetype
+            };
+            await s3Client.send(new PutObjectCommand(uploadParams));
+
+            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
             finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
             if (finalMediaType === 'unknown') {
-                if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-                return res.status(400).json({ error: 'نوع ملف الوسائط غير مدعوم.' });
+                await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
+                throw new Error('Unsupported media type for Storj upload.');
             }
-            console.log(`DEBUG: Generated mediaUrl for message: ${mediaUrl}, mediaType: ${finalMediaType}`);
+            console.log(`DEBUG: Uploaded message media to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
         } else {
             console.log("DEBUG: No media file uploaded for message.");
         }
@@ -994,15 +1064,20 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', message: createdMessage });
     } catch (error) {
         console.error('ERROR: Send message error:', error.stack);
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         res.status(500).json({ error: 'فشل في إرسال الرسالة.' });
+    } finally {
+        // دائماً قم بحذف الملف المؤقت بعد محاولة الرفع
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+        }
     }
 });
 
 // جلب رسائل محادثة معينة
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
-    const since = parseInt(req.query.since) || 0; // جلب الرسائل الأحدث من هذا الطابع الزمني
+    const since = parseInt(req.query.since) || 0;
 
     try {
         const result = await pool.query('SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC', [chatId, since]);
@@ -1298,7 +1373,8 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
         }
         
         res.status(200).json({ message: 'غادرت المجموعة بنجاح.' });
-    } catch (error) {
+    }
+     catch (error) {
         console.error('ERROR: Leave group error:', error.stack);
         res.status(500).json({ error: 'فشل في مغادرة المجموعة.' });
     }
@@ -1408,7 +1484,7 @@ async function createTables() {
 
     } catch (error) {
         console.error('ERROR: Error creating tables or setting up initial data:', error.stack);
-        process.exit(1);
+        // لا ننهي العملية هنا مباشرة لتجنب تكرار الأخطاء إذا كانت الجداول موجودة بالفعل
     }
 }
 
@@ -1441,16 +1517,23 @@ async function setupInitialData() {
 
             // تحديث المتابعة (يجب جلب المستخدمين أولاً لتحديثهم)
             const usersInDbResult = await pool.query('SELECT uid, followers, following FROM users');
-            const usersInDb = usersInDbResult.rows.reduce((acc, u) => { acc[u.uid] = u; return acc; }, {});
+            const usersInDb = usersInDbResult.rows.reduce((acc, u) => {
+                acc[u.uid] = { 
+                    uid: u.uid, 
+                    followers: Array.isArray(u.followers) ? u.followers : [], 
+                    following: Array.isArray(u.following) ? u.following : [] 
+                }; 
+                return acc; 
+            }, {});
 
             // جعل محمد يتابع أحمد وفاطمة
-            usersInDb[user1.uid].following = [...(usersInDb[user1.uid].following || []), user2.uid, user3.uid];
-            usersInDb[user2.uid].followers = [...(usersInDb[user2.uid].followers || []), user1.uid];
-            usersInDb[user3.uid].followers = [...(usersInDb[user3.uid].followers || []), user1.uid];
+            usersInDb[user1.uid].following.push(user2.uid, user3.uid);
+            usersInDb[user2.uid].followers.push(user1.uid);
+            usersInDb[user3.uid].followers.push(user1.uid);
 
             // جعل أحمد يتابع محمد
-            usersInDb[user2.uid].following = [...(usersInDb[user2.uid].following || []), user1.uid];
-            usersInDb[user1.uid].followers = [...(usersInDb[user1.uid].followers || []), user2.uid];
+            usersInDb[user2.uid].following.push(user1.uid);
+            usersInDb[user1.uid].followers.push(user2.uid);
 
             // تحديث المستخدمين بعد تغييرات المتابعة
             await pool.query('UPDATE users SET following = $1, followers = $2 WHERE uid = $3', [JSON.stringify(usersInDb[user1.uid].following), JSON.stringify(usersInDb[user1.uid].followers), user1.uid]);
@@ -1458,23 +1541,15 @@ async function setupInitialData() {
             await pool.query('UPDATE users SET following = $1, followers = $2 WHERE uid = $3', [JSON.stringify(usersInDb[user3.uid].following), JSON.stringify(usersInDb[user3.uid].followers), user3.uid]);
             console.log('INFO: Updated user followings in PostgreSQL.');
 
+            // إضافة منشورات افتراضية (هذه المنشورات ستستخدم روابط Storj DCS)
+            const baseUrlForDummyMedia = STORJ_ENDPOINT ? `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}` : `http://localhost:${PORT}/uploads`;
+            const dummyImageUrl = `${baseUrlForDummyMedia}/dummy-image.jpg`; // افتراضياً يجب أن تكون هذه الملفات موجودة في Storj
+            const dummyVideoUrl = `${baseUrlForDummyMedia}/dummy-video.mp4`; // افتراضياً يجب أن تكون هذه الملفات موجودة في Storj
 
-            // إضافة منشورات افتراضية
-            const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL || `http://localhost:${PORT}`;
-            const dummyImageUrl = `${baseUrl}/uploads/dummy-image.jpg`;
-            const dummyVideoUrl = `${baseUrl}/uploads/dummy-video.mp4`;
-
-            const dummyImagePath = path.join(uploadsDir, 'dummy-image.jpg');
-            const dummyVideoPath = path.join(uploadsDir, 'dummy-video.mp4');
-
-            if (!fs.existsSync(dummyImagePath)) {
-                fs.writeFileSync(dummyImagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", 'base64'));
-                console.log('INFO: Created dummy-image.jpg in uploads.');
-            }
-            if (!fs.existsSync(dummyVideoPath)) {
-                fs.writeFileSync(dummyVideoPath, Buffer.from(""));
-                console.log('INFO: Created dummy-video.mp4 in uploads.');
-            }
+            // ملاحظة: لكي تعمل هذه الروابط الافتراضية، يجب أن تقوم يدوياً برفع
+            // ملفي "dummy-image.jpg" و "dummy-video.mp4" إلى Storj bucket الخاص بك
+            // ضمن المسار الجذر للـ bucket.
+            // يمكنك استخدام أي صورة وفيديو صغيرين.
 
             const post1 = {
                 id: uuidv4(),
@@ -1484,9 +1559,9 @@ async function setupInitialData() {
                 mediaType: 'text',
                 mediaUrl: null,
                 timestamp: Date.now() - 50000,
-                likes: [user2.uid],
-                comments: [],
-                views: [],
+                likes: [], // لايكات فارغة في البداية
+                comments: [], // تعليقات فارغة في البداية
+                views: [], // مشاهدات فارغة في البداية
                 authorProfileBg: user1.profileBgUrl,
                 followerCount: (usersInDb[user1.uid].followers || []).length
             };
@@ -1510,7 +1585,7 @@ async function setupInitialData() {
                 id: uuidv4(),
                 authorId: user1.uid,
                 authorName: user1.username,
-                text: 'صورة من رحلتي الأخيرة! 🏞️ (مؤقتة)',
+                text: 'صورة من رحلتي الأخيرة! 🏞️ (صورة تجريبية من Storj)',
                 mediaType: 'image',
                 mediaUrl: dummyImageUrl,
                 timestamp: Date.now() - 30000,
@@ -1524,7 +1599,7 @@ async function setupInitialData() {
                 id: uuidv4(),
                 authorId: user3.uid,
                 authorName: user3.username,
-                text: 'فيديو رائع للطبيعة 🎥 (مؤقت)',
+                text: 'فيديو رائع للطبيعة 🎥 (فيديو تجريبي من Storj)',
                 mediaType: 'video',
                 mediaUrl: dummyVideoUrl,
                 timestamp: Date.now() - 20000,
