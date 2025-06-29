@@ -186,7 +186,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     const { userId } = req.body;
     if (!userId) {
         console.warn("WARN: userId missing for profile background upload.");
-        fs.unlinkSync(req.file.path); // حذف الملف المؤقت
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // حذف الملف المؤقت
         return res.status(400).json({ error: 'معرف المستخدم (userId) مطلوب.' });
     }
 
@@ -196,14 +196,14 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 
         if (!user) {
             console.warn(`WARN: User ${userId} not found for profile background upload.`);
-            fs.unlinkSync(req.file.path); // حذف الملف المؤقت
+            if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // حذف الملف المؤقت
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
         // قراءة حجم الملف أولاً بشكل غير متزامن
         const fileStats = await stat(req.file.path);
         const fileSize = fileStats.size;
-        console.log(`DEBUG: File size for profile background upload: ${fileSize}`); // DEBUG: Log file size
+        console.log(`DEBUG: File size for profile background upload: ${fileSize} bytes`); // DEBUG: Log file size
 
         // قراءة الملف المؤقت كـ Stream
         const fileStream = fs.createReadStream(req.file.path);
@@ -395,7 +395,9 @@ app.get('/api/user/:followerId/following/:followingId', async (req, res) => {
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
 
-    console.log("DEBUG: req.file for post upload:", req.file);
+    console.log("DEBUG: Received post creation request.");
+    console.log("DEBUG: Request body:", { authorId, authorName, text, mediaType, authorProfileBg });
+    console.log("DEBUG: req.file received:", req.file);
 
     if (!authorId || !authorName) {
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -417,17 +419,37 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         let finalMediaType = mediaType || 'text';
 
         if (req.file) {
+            console.log(`DEBUG: Attempting to upload media file: ${req.file.originalname}`);
             // التحقق من متغيرات Storj قبل محاولة الرفع
             if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
-                throw new Error('Storj DCS environment variables not set. Cannot upload media.');
+                const errorMsg = 'Storj DCS environment variables not set. Cannot upload media.';
+                console.error(`ERROR: ${errorMsg}`);
+                throw new Error(errorMsg);
             }
 
             // قراءة حجم الملف أولاً بشكل غير متزامن
-            const fileStats = await stat(req.file.path);
+            let fileStats;
+            try {
+                fileStats = await stat(req.file.path);
+            } catch (statError) {
+                console.error(`ERROR: Failed to get file stats for ${req.file.path}:`, statError.stack);
+                throw new Error(`Failed to get file information: ${statError.message}`);
+            }
+            
             const fileSize = fileStats.size;
-            console.log(`DEBUG: File size for post media upload: ${fileSize}`); // DEBUG: Log file size
+
+            if (fileSize === 0) {
+                const errorMsg = `File size is 0 bytes for ${req.file.originalname}. Cannot upload empty file.`;
+                console.error(`ERROR: ${errorMsg}`);
+                throw new Error(errorMsg);
+            }
+            console.log(`DEBUG: File size for post media upload: ${fileSize} bytes`);
 
             const fileStream = fs.createReadStream(req.file.path);
+            fileStream.on('error', (streamErr) => {
+                console.error(`ERROR: File stream error for ${req.file.path}:`, streamErr.stack);
+            });
+
             const objectKey = `posts/${authorId}/${req.file.filename}`; // المسار في Storj DCS
 
             const uploadParams = {
@@ -437,18 +459,23 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 ContentType: req.file.mimetype,
                 ContentLength: fileSize // هذا هو الإصلاح المطلوب (موجود بالفعل)
             };
+            
+            console.log(`DEBUG: S3 PutObjectCommand params: Bucket=${STORJ_BUCKET_NAME}, Key=${objectKey}, ContentType=${req.file.mimetype}, ContentLength=${fileSize}`);
+
             await s3Client.send(new PutObjectCommand(uploadParams));
+            console.log(`INFO: PutObjectCommand successful for ${objectKey}`);
 
             mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
             finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
             if (finalMediaType === 'unknown') {
+                console.warn(`WARN: Unsupported media type detected: ${req.file.mimetype}. Attempting to delete from Storj.`);
                 // إذا كان نوع الملف غير معروف، احذفه من Storj أيضاً
                 await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
                 throw new Error('Unsupported media type for Storj upload.');
             }
-            console.log(`DEBUG: Uploaded post media to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
+            console.log(`INFO: Uploaded post media to Storj DCS. URL: ${mediaUrl}, mediaType: ${finalMediaType}`);
         } else {
-            console.log("DEBUG: No media file uploaded for post.");
+            console.log("DEBUG: No media file uploaded for post. Creating text-only post.");
         }
 
         const newPostId = uuidv4();
@@ -465,13 +492,17 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         console.log(`INFO: New post created. Post ID: ${createdPost.id}, Media URL saved: ${createdPost.media_url || 'None'}`);
         res.status(201).json({ message: 'تم نشر المنشور بنجاح!', post: createdPost });
     } catch (error) {
-        console.error('ERROR: Post creation and Storj upload failed:', error.stack);
-        res.status(500).json({ error: 'فشل في نشر المنشور أو رفع الوسائط.' });
+        console.error('CRITICAL ERROR: Post creation and Storj upload failed:', error.stack);
+        res.status(500).json({ error: 'فشل في نشر المنشور أو رفع الوسائط. (راجع سجلات الخادم للمزيد من التفاصيل)' });
     } finally {
         // دائماً قم بحذف الملف المؤقت بعد محاولة الرفع
         if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+            try {
+                fs.unlinkSync(req.file.path);
+                console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+            } catch (unlinkError) {
+                console.error(`ERROR: Failed to delete temporary file ${req.file.path}:`, unlinkError.stack);
+            }
         }
     }
 });
@@ -778,7 +809,7 @@ app.delete('/api/posts/:postId', async (req, res) => {
         if (postToDelete.media_url) {
             try {
                 // استخراج الـ objectKey من الـ URL (لأن Storj DCS لا يستخدم مسارات URL تقليدية)
-                // مثال: https://gateway.storjshare.io/your-bucket/posts/authorId/filename.jpg
+                // مثال: [https://gateway.storjshare.io/your-bucket/posts/authorId/filename.jpg](https://gateway.storjshare.io/your-bucket/posts/authorId/filename.jpg)
                 const urlParts = postToDelete.media_url.split('/');
                 const bucketIndex = urlParts.indexOf(STORJ_BUCKET_NAME);
                 if (bucketIndex !== -1 && urlParts.length > bucketIndex + 1) {
@@ -1005,16 +1036,35 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         let finalMediaType = mediaType || 'text';
 
         if (req.file) {
+            console.log(`DEBUG: Attempting to upload message media file: ${req.file.originalname}`);
             // التحقق من متغيرات Storj قبل محاولة الرفع
             if (!STORJ_ENDPOINT || !STORJ_ACCESS_KEY_ID || !STORJ_SECRET_ACCESS_KEY || !STORJ_BUCKET_NAME) {
-                throw new Error('Storj DCS environment variables not set. Cannot upload media for message.');
+                const errorMsg = 'Storj DCS environment variables not set. Cannot upload media for message.';
+                console.error(`ERROR: ${errorMsg}`);
+                throw new Error(errorMsg);
             }
 
-            const fileStats = await stat(req.file.path);
+            let fileStats;
+            try {
+                fileStats = await stat(req.file.path);
+            } catch (statError) {
+                console.error(`ERROR: Failed to get file stats for message media ${req.file.path}:`, statError.stack);
+                throw new Error(`Failed to get file information for message media: ${statError.message}`);
+            }
+
             const fileSize = fileStats.size;
-            console.log(`DEBUG: File size for message media upload: ${fileSize}`); // DEBUG: Log file size
+            if (fileSize === 0) {
+                const errorMsg = `File size is 0 bytes for message media ${req.file.originalname}. Cannot upload empty file.`;
+                console.error(`ERROR: ${errorMsg}`);
+                throw new Error(errorMsg);
+            }
+            console.log(`DEBUG: File size for message media upload: ${fileSize} bytes`);
 
             const fileStream = fs.createReadStream(req.file.path);
+            fileStream.on('error', (streamErr) => {
+                console.error(`ERROR: File stream error for message media ${req.file.path}:`, streamErr.stack);
+            });
+
             const objectKey = `chat-media/${chatId}/${uuidv4()}-${req.file.filename}`; // مسار فريد في Storj DCS
 
             const uploadParams = {
@@ -1024,11 +1074,16 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 ContentType: req.file.mimetype,
                 ContentLength: fileSize
             };
+            
+            console.log(`DEBUG: S3 PutObjectCommand params for message media: Bucket=${STORJ_BUCKET_NAME}, Key=${objectKey}, ContentType=${req.file.mimetype}, ContentLength=${fileSize}`);
+
             await s3Client.send(new PutObjectCommand(uploadParams));
+            console.log(`INFO: PutObjectCommand successful for message media ${objectKey}`);
 
             mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${objectKey}`;
             finalMediaType = req.file.mimetype.startsWith('image/') ? 'image' : (req.file.mimetype.startsWith('video/') ? 'video' : 'unknown');
             if (finalMediaType === 'unknown') {
+                console.warn(`WARN: Unsupported media type detected for message: ${req.file.mimetype}. Attempting to delete from Storj.`);
                 await s3Client.send(new DeleteObjectCommand({ Bucket: STORJ_BUCKET_NAME, Key: objectKey }));
                 throw new Error('Unsupported media type for Storj upload in message.');
             }
@@ -1050,19 +1105,23 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         // تحديث آخر رسالة وطابعها الزمني في جدول المحادثات
         await pool.query(
             'UPDATE chats SET last_message_text = $1, last_message_timestamp = $2 WHERE id = $3',
-            [text || (finalMediaType === 'image' ? 'صورة' : (finalMediaType === 'video' ? 'فيديو' : 'رسالة')), timestamp, chatId]
+            [text || (finalMediaType === 'image' ? 'صورة' : (finalMediaType === 'video' ? 'فيديو' : 'رسالة وسائط')), timestamp, chatId] // تم تغيير "رسالة" إلى "رسالة وسائط" للتوضيح
         );
 
         console.log(`INFO: Message sent in chat ${chatId}. Message ID: ${newMessage.id}`);
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح!', messageData: newMessage });
 
     } catch (error) {
-        console.error('ERROR: Send message error:', error.stack);
-        res.status(500).json({ error: 'فشل في إرسال الرسالة.' });
+        console.error('CRITICAL ERROR: Send message error:', error.stack);
+        res.status(500).json({ error: 'فشل في إرسال الرسالة. (راجع سجلات الخادم للمزيد من التفاصيل)' });
     } finally {
         if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-            console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+            try {
+                fs.unlinkSync(req.file.path);
+                console.log(`DEBUG: Deleted temporary file: ${req.file.path}`);
+            } catch (unlinkError) {
+                console.error(`ERROR: Failed to delete temporary file ${req.file.path} after message upload:`, unlinkError.stack);
+            }
         }
     }
 });
