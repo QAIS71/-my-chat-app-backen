@@ -196,6 +196,8 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
+        // قراءة حجم الملف أولاً
+        const fileSize = fs.statSync(req.file.path).size;
         // قراءة الملف المؤقت كـ Stream
         const fileStream = fs.createReadStream(req.file.path);
         const objectKey = `profile-backgrounds/${userId}/${req.file.filename}`; // المسار في Storj DCS
@@ -205,7 +207,8 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
             Bucket: STORJ_BUCKET_NAME,
             Key: objectKey,
             Body: fileStream,
-            ContentType: req.file.mimetype // هام لكي يتم عرض الملف بشكل صحيح في المتصفح
+            ContentType: req.file.mimetype, // هام لكي يتم عرض الملف بشكل صحيح في المتصفح
+            ContentLength: fileSize // هذا هو الإصلاح المطلوب
         };
         await s3Client.send(new PutObjectCommand(uploadParams));
 
@@ -411,6 +414,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 throw new Error('Storj DCS environment variables not set. Cannot upload media.');
             }
 
+            // قراءة حجم الملف أولاً
+            const fileSize = fs.statSync(req.file.path).size;
             const fileStream = fs.createReadStream(req.file.path);
             const objectKey = `posts/${authorId}/${req.file.filename}`; // المسار في Storj DCS
 
@@ -418,7 +423,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 Bucket: STORJ_BUCKET_NAME,
                 Key: objectKey,
                 Body: fileStream,
-                ContentType: req.file.mimetype
+                ContentType: req.file.mimetype,
+                ContentLength: fileSize // هذا هو الإصلاح المطلوب
             };
             await s3Client.send(new PutObjectCommand(uploadParams));
 
@@ -939,7 +945,7 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
 
     try {
         const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
-        let chat = chatResult.rows[0];
+        let chat = chat.rows[0];
         if (!chat) {
             return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
@@ -1028,6 +1034,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 throw new Error('Storj DCS environment variables not set. Cannot upload media.');
             }
 
+            // قراءة حجم الملف أولاً
+            const fileSize = fs.statSync(req.file.path).size;
             const fileStream = fs.createReadStream(req.file.path);
             const objectKey = `chat-media/${chatId}/${req.file.filename}`; // المسار في Storj DCS
 
@@ -1035,7 +1043,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 Bucket: STORJ_BUCKET_NAME,
                 Key: objectKey,
                 Body: fileStream,
-                ContentType: req.file.mimetype
+                ContentType: req.file.mimetype,
+                ContentLength: fileSize // هذا هو الإصلاح المطلوب
             };
             await s3Client.send(new PutObjectCommand(uploadParams));
 
@@ -1279,7 +1288,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 
 // إزالة عضو من المجموعة
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
+    const { groupId } = req.params;
     const { callerUid } = req.body;
 
     try {
