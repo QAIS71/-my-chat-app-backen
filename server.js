@@ -16,9 +16,9 @@ app.use(express.json()); // لتمكين تحليل JSON في جسم الطلب�
 // ----------------------------------------------------
 // معلومات اتصال Storj DCS - تم تحديث هذه القيم بمفاتيحك الحقيقية
 // من ملف Storj-S3-Credentials- Watsaligram-App-Key-2025-06-29T11_08_36.629Z.txt
-[cite_start]const STORJ_ACCESS_KEY_ID = 'jwsutdemteo7a3odjeweckixb5oa'; [cite: 1]
-[cite_start]const STORJ_SECRET_ACCESS_KEY = 'j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms'; [cite: 1]
-[cite_start]const STORJ_ENDPOINT = 'https://gateway.storjshare.io'; [cite: 1]
+const STORJ_ACCESS_KEY_ID = 'jwsutdemteo7a3odjeweckixb5oa';
+const STORJ_SECRET_ACCESS_KEY = 'j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms';
+const STORJ_ENDPOINT = 'https://gateway.storjshare.io';
 
 // اسم الـ Bucket الذي حددته في الصورة
 const STORJ_BUCKET_NAME = 'my-chat-uploads'; // اسم الـ Bucket الخاص بك
@@ -116,6 +116,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         Key: fileName,
         Body: file.buffer,
         ContentType: file.mimetype,
+        ContentLength: file.size, // **تمت الإضافة**: تحديد حجم المحتوى
         ACL: 'public-read' // لجعل الملف متاحاً للعامة عبر URL
     };
 
@@ -164,16 +165,21 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             Key: fileName,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
+            ContentLength: mediaFile.size, // **تمت الإضافة**: تحديد حجم المحتوى
             ACL: 'public-read' // لجعل الملف متاحاً للعامة
         };
 
         try {
             const data = await s3.upload(params).promise();
             mediaUrl = data.Location;
-            console.log(`تم تحميل ملف الوسائط: ${mediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للمنشور: ${mediaUrl}`);
         } catch (error) {
-            console.error('خطأ في تحميل ملف الوسائط إلى Storj DCS:', error);
-            return res.status(500).json({ error: 'فشل تحميل ملف الوسائط.' });
+            console.error('خطأ في تحميل ملف الوسائط للمنشور إلى Storj DCS:', error);
+            // تفاصيل أكثر عن الخطأ
+            if (error.code === 'MissingContentLength') {
+                 console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.size.');
+            }
+            return res.status(500).json({ error: `فشل تحميل ملف الوسائط للمنشور: ${error.message}` });
         }
     }
 
@@ -741,6 +747,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             Key: fileName,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
+            ContentLength: mediaFile.size, // **تمت الإضافة**: تحديد حجم المحتوى
             ACL: 'public-read'
         };
 
@@ -750,7 +757,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             console.log(`تم تحميل ملف الدردشة: ${mediaUrl}`);
         } catch (error) {
             console.error('خطأ في تحميل ملف الوسائط للدردشة إلى Storj DCS:', error);
-            return res.status(500).json({ error: 'فشل تحميل ملف الوسائط للدردشة.' });
+            // تفاصيل أكثر عن الخطأ
+            if (error.code === 'MissingContentLength') {
+                console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.size.');
+            }
+            return res.status(500).json({ error: `فشل تحميل ملف الوسائط للدردشة: ${error.message}` });
         }
     }
 
