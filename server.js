@@ -116,7 +116,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         Key: fileName,
         Body: file.buffer,
         ContentType: file.mimetype,
-        ContentLength: file.size, // **تمت الإضافة**: تحديد حجم المحتوى
+        ContentLength: file.buffer.length, // **تم التغيير**: استخدام file.buffer.length
         ACL: 'public-read' // لجعل الملف متاحاً للعامة عبر URL
     };
 
@@ -165,7 +165,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             Key: fileName,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
-            ContentLength: mediaFile.size, // **تمت الإضافة**: تحديد حجم المحتوى
+            ContentLength: mediaFile.buffer.length, // **تم التغيير**: استخدام file.buffer.length
             ACL: 'public-read' // لجعل الملف متاحاً للعامة
         };
 
@@ -177,7 +177,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             console.error('خطأ في تحميل ملف الوسائط للمنشور إلى Storj DCS:', error);
             // تفاصيل أكثر عن الخطأ
             if (error.code === 'MissingContentLength') {
-                 console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.size.');
+                 console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.buffer.length.');
             }
             return res.status(500).json({ error: `فشل تحميل ملف الوسائط للمنشور: ${error.message}` });
         }
@@ -747,7 +747,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             Key: fileName,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
-            ContentLength: mediaFile.size, // **تمت الإضافة**: تحديد حجم المحتوى
+            ContentLength: mediaFile.buffer.length, // **تم التغيير**: استخدام file.buffer.length
             ACL: 'public-read'
         };
 
@@ -759,7 +759,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             console.error('خطأ في تحميل ملف الوسائط للدردشة إلى Storj DCS:', error);
             // تفاصيل أكثر عن الخطأ
             if (error.code === 'MissingContentLength') {
-                console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.size.');
+                console.error('خطأ: MissingContentLength. تأكد من أن Multer يقوم بتوفير file.buffer.length.');
             }
             return res.status(500).json({ error: `فشل تحميل ملف الوسائط للدردشة: ${error.message}` });
         }
@@ -789,15 +789,13 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
 // جلب رسائل الدردشة
 app.get('/api/chats/:chatId/messages', (req, res) => {
-    const { chatId } = req.params;
-    const since = parseInt(req.query.since || '0'); // جلب الرسائل الأحدث من هذا الطابع الزمني
-
+    const { chatId = 'default', since = '0' } = req.params; // Add default values
+    // Ensure chatId exists in the chats array before proceeding
     const chat = chats.find(c => c.id === chatId);
     if (!chat) {
         return res.status(404).json({ error: 'المحادثة غير موجودة.' });
     }
-    // تأكد أن chat.messages هو مصفوفة قبل التصفية
-    const messagesToReturn = Array.isArray(chat.messages) ? chat.messages.filter(msg => msg.timestamp > since) : [];
+    const messagesToReturn = chat.messages.filter(msg => msg.timestamp > since);
     res.json(messagesToReturn);
 });
 
