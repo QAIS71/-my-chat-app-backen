@@ -3,9 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer'); // لمعالجة رفع الملفات
 // **تغيير مهم**: استخدام الإصدار الثالث من AWS SDK
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid'); // لتوليد معرفات فريدة للملفات
-// const { nanoid } = require('nanoid'); // إذا أردت استخدام nanoid بدلاً من uuid
 
 // تهيئة تطبيق Express
 const app = express();
@@ -111,23 +110,22 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     }
 
     const fileExtension = file.originalname.split('.').pop();
-    const fileName = `${userId}/profile_bg/${uuidv4()}.${fileExtension}`;
+    const fileNameInStorj = `${userId}/profile_bg/${uuidv4()}.${fileExtension}`; // الاسم الفعلي في Storj
 
-    // **تغيير مهم**: استخدام PutObjectCommand مع S3Client
     const uploadParams = {
         Bucket: STORJ_BUCKET_NAME,
-        Key: fileName,
+        Key: fileNameInStorj,
         Body: file.buffer,
         ContentType: file.mimetype,
-        ContentLength: file.buffer.length, // التأكد من وجود ContentLength
+        ContentLength: file.buffer.length,
         ACL: 'public-read'
     };
 
     try {
         const command = new PutObjectCommand(uploadParams);
-        await s3Client.send(command); // إرسال الأمر
-        const fileUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${fileName}`; // بناء URL يدوياً
-        user.profileBgUrl = fileUrl;
+        await s3Client.send(command);
+        // **تغيير**: تخزين رابط الوكالة بدلاً من رابط Storj المباشر
+        user.profileBgUrl = `/api/media/${fileNameInStorj}`;
         console.log(`تم تحميل خلفية الملف الشخصي لـ ${user.username}: ${user.profileBgUrl}`);
         res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: user.profileBgUrl });
     } catch (error) {
@@ -163,22 +161,22 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     let mediaUrl = null;
     if (mediaFile) {
         const fileExtension = mediaFile.originalname.split('.').pop();
-        const fileName = `${authorId}/posts/${uuidv4()}.${fileExtension}`;
+        const fileNameInStorj = `${authorId}/posts/${uuidv4()}.${fileExtension}`; // الاسم الفعلي في Storj
 
-        // **تغيير مهم**: استخدام PutObjectCommand مع S3Client
         const uploadParams = {
             Bucket: STORJ_BUCKET_NAME,
-            Key: fileName,
+            Key: fileNameInStorj,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
-            ContentLength: mediaFile.buffer.length, // التأكد من وجود ContentLength
+            ContentLength: mediaFile.buffer.length,
             ACL: 'public-read'
         };
 
         try {
             const command = new PutObjectCommand(uploadParams);
-            await s3Client.send(command); // إرسال الأمر
-            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${fileName}`; // بناء URL يدوياً
+            await s3Client.send(command);
+            // **تغيير**: تخزين رابط الوكالة بدلاً من رابط Storj المباشر
+            mediaUrl = `/api/media/${fileNameInStorj}`;
             console.log(`تم تحميل ملف الوسائط للمنشور: ${mediaUrl}`);
         } catch (error) {
             console.error('خطأ في تحميل ملف الوسائط للمنشور إلى Storj DCS:', error);
@@ -697,22 +695,22 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     let mediaUrl = null;
     if (mediaFile) {
         const fileExtension = mediaFile.originalname.split('.').pop();
-        const fileName = `${senderId}/chat_media/${uuidv4()}.${fileExtension}`;
+        const fileNameInStorj = `${senderId}/chat_media/${uuidv4()}.${fileExtension}`; // الاسم الفعلي في Storj
 
-        // **تغيير مهم**: استخدام PutObjectCommand مع S3Client
         const uploadParams = {
             Bucket: STORJ_BUCKET_NAME,
-            Key: fileName,
+            Key: fileNameInStorj,
             Body: mediaFile.buffer,
             ContentType: mediaFile.mimetype,
-            ContentLength: mediaFile.buffer.length, // التأكد من وجود ContentLength
+            ContentLength: mediaFile.buffer.length,
             ACL: 'public-read'
         };
 
         try {
             const command = new PutObjectCommand(uploadParams);
-            await s3Client.send(command); // إرسال الأمر
-            mediaUrl = `${STORJ_ENDPOINT}/${STORJ_BUCKET_NAME}/${fileName}`; // بناء URL يدوياً
+            await s3Client.send(command);
+            // **تغيير**: تخزين رابط الوكالة بدلاً من رابط Storj المباشر
+            mediaUrl = `/api/media/${fileNameInStorj}`;
             console.log(`تم تحميل ملف الدردشة: ${mediaUrl}`);
         } catch (error) {
             console.error('خطأ في تحميل ملف الوسائط للدردشة إلى Storj DCS:', error);
@@ -954,6 +952,41 @@ app.put('/api/groups/:groupId/name', (req, res) => {
 
     group.name = newName;
     res.json({ message: 'تم تحديث اسم المجموعة بنجاح.' });
+});
+
+// ----------------------------------------------------
+// **مسار جديد**: وكيل لجلب الملفات من Storj DCS
+// ----------------------------------------------------
+app.get('/api/media/:fileName', async (req, res) => {
+    const { fileName } = req.params;
+    // ملاحظة: fileName هنا هو المسار الكامل للملف داخل الـ Bucket،
+    // مثل "user1_uid/posts/uuid.jpg"
+    const getObjectParams = {
+        Bucket: STORJ_BUCKET_NAME,
+        Key: fileName,
+    };
+
+    try {
+        const command = new GetObjectCommand(getObjectParams);
+        const data = await s3Client.send(command);
+
+        // تعيين رؤوس الاستجابة لضمان أن المتصفح يتعامل مع الملف بشكل صحيح
+        res.setHeader('Content-Type', data.ContentType || 'application/octet-stream');
+        res.setHeader('Content-Length', data.ContentLength);
+        
+        // إرسال محتوى الملف مباشرة إلى المتصفح
+        if (data.Body instanceof require('stream').Readable) {
+            data.Body.pipe(res);
+        } else {
+            res.send(data.Body);
+        }
+    } catch (error) {
+        console.error(`خطأ في جلب الملف ${fileName} من Storj DCS:`, error);
+        if (error.Code === 'NoSuchKey') {
+            return res.status(404).json({ error: 'الملف غير موجود.' });
+        }
+        res.status(500).json({ error: `فشل جلب الملف: ${error.message}` });
+    }
 });
 
 
