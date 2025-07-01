@@ -710,7 +710,13 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     try {
-        const result = await pool.query('SELECT * FROM comments WHERE post_id = $1 ORDER BY timestamp ASC', [postId]);
+        // **التعديل هنا: تغيير اسم المفتاح من 'الإعجابات' إلى 'likes'**
+        const result = await pool.query(`
+            SELECT id, user_id, username, text, timestamp, user_profile_bg, likes
+            FROM comments
+            WHERE post_id = $1
+            ORDER BY timestamp ASC
+        `, [postId]);
         const comments = result.rows.map(row => ({
             id: row.id,
             userId: row.user_id,
@@ -1389,4 +1395,3 @@ app.listen(port, async () => {
     console.log('Storj DCS Keys are directly in code. For production, consider environment variables.');
     await createTables(); // استدعاء لإنشاء الجداول عند بدء التشغيل
 });
-
