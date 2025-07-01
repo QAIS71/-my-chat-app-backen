@@ -50,7 +50,7 @@ const pool = new Pool({
 // وظيفة لإنشاء الجداول إذا لم تكن موجودة (مع إسقاط الجداول أولاً)
 async function createTables() {
     try {
-        // **جديد: إسقاط الجداول بترتيب عكسي للتبعيات لضمان بيئة نظيفة**
+        // إسقاط الجداول بترتيب عكسي للتبعيات لضمان بيئة نظيفة
         await pool.query('DROP TABLE IF EXISTS followers CASCADE;');
         await pool.query('DROP TABLE IF EXISTS messages CASCADE;');
         await pool.query('DROP TABLE IF EXISTS comments CASCADE;');
@@ -339,7 +339,7 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
             SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url
             FROM users u
             JOIN chats c ON (
-                (c.type = 'private' AND c.participants @> ARRAY[$1]::VARCHAR[] AND c.participants @> ARRAY[u.uid]::VARCHAR[] AND u.uid != $1)
+                (c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]) AND u.uid != $1)
             )
         `, [userId]);
 
@@ -805,7 +805,7 @@ app.post('/api/chats/private', async (req, res) => {
         const existingChatResult = await pool.query(`
             SELECT id FROM chats
             WHERE type = 'private'
-            AND (participants @> ARRAY[$1]::VARCHAR[] AND participants @> ARRAY[$2]::VARCHAR[])
+            AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))
         `, [user1Id, user2Id]);
 
         if (existingChatResult.rows.length > 0) {
@@ -842,7 +842,7 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     const { userId, newContactName } = req.body;
 
     try {
-        const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, userId]);
+        const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
         const chat = chatResult.rows[0];
 
         if (!chat) {
@@ -868,7 +868,7 @@ app.get('/api/user/:userId/chats', async (req, res) => {
         const result = await pool.query(`
             SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants
             FROM chats
-            WHERE participants @> ARRAY[$1]::VARCHAR[]
+            WHERE participants @> to_jsonb(ARRAY[$1]::VARCHAR[])
             ORDER BY timestamp DESC
         `, [userId]);
 
@@ -1028,7 +1028,7 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
         // في تطبيق حقيقي، قد لا تحذف المحادثة بالكامل، بل تزيل المستخدم من المشاركين
         // أو تضع علامة على المحادثة بأنها محذوفة لهذا المستخدم.
         // للتبسيط، سنقوم بحذف المحادثة إذا كان المستخدم هو المشارك الوحيد المتبقي.
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, userId]);
+        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
         const chat = chatResult.rows[0];
 
         if (!chat) {
@@ -1076,7 +1076,7 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
         // حذف جميع الرسائل المتعلقة بالمحادثة
         await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
         // حذف المحادثة نفسها
-        await pool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, callerUid]);
+        await pool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, callerUid]);
 
         console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
         res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
