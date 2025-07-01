@@ -431,7 +431,8 @@ app.get('/api/posts', async (req, res) => {
         const result = await pool.query(`
             SELECT p.*,
                    (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
-                    FROM comments c WHERE c.post_id = p.id) AS comments
+                    FROM comments c WHERE c.post_id = p.id) AS comments,
+                   (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
             FROM posts p
             ORDER BY p.timestamp DESC
         `);
@@ -447,8 +448,10 @@ app.get('/api/posts', async (req, res) => {
             views: row.views,
             mediaUrl: row.media_url,
             mediaType: row.media_type,
-            authorProfileBg: row.author_profile_bg
+            authorProfileBg: row.author_profile_bg,
+            authorFollowersCount: parseInt(row.author_followers_count)
         }));
+        console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithComments.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithComments);
     } catch (error) {
         console.error('ERROR: Failed to get all posts:', error);
@@ -463,7 +466,7 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
         const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
 
-        // **تعديل: تضمين منشورات المستخدم نفسه**
+        // تضمين منشورات المستخدم نفسه
         followedUsersIds.push(userId); // إضافة معرف المستخدم الحالي
 
         if (followedUsersIds.length === 0) {
@@ -473,7 +476,8 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
         const result = await pool.query(`
             SELECT p.*,
                    (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
-                    FROM comments c WHERE c.post_id = p.id) AS comments
+                    FROM comments c WHERE c.post_id = p.id) AS comments,
+                   (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
             FROM posts p
             WHERE p.author_id = ANY($1::VARCHAR[])
             ORDER BY p.timestamp DESC
@@ -490,8 +494,10 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
             views: row.views,
             mediaUrl: row.media_url,
             mediaType: row.media_type,
-            authorProfileBg: row.author_profile_bg
+            authorProfileBg: row.author_profile_bg,
+            authorFollowersCount: parseInt(row.author_followers_count)
         }));
+        console.log('DEBUG: Followed posts data being sent (first post):', JSON.stringify(postsWithComments.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithComments);
     } catch (error) {
         console.error('ERROR: Failed to get followed posts:', error);
@@ -507,7 +513,8 @@ app.get('/api/posts/search', async (req, res) => {
     let queryText = `
         SELECT p.*,
                (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
-                FROM comments c WHERE c.post_id = p.id) AS comments
+                FROM comments c WHERE c.post_id = p.id) AS comments,
+               (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
         FROM posts p
     `;
     const queryParams = [];
@@ -554,8 +561,10 @@ app.get('/api/posts/search', async (req, res) => {
             views: row.views,
             mediaUrl: row.media_url,
             mediaType: row.media_type,
-            authorProfileBg: row.author_profile_bg
+            authorProfileBg: row.author_profile_bg,
+            authorFollowersCount: parseInt(row.author_followers_count)
         }));
+        console.log('DEBUG: Search results data being sent (first post):', JSON.stringify(filteredPosts.slice(0, 1))); // Log first post for brevity
         res.status(200).json(filteredPosts);
     } catch (error) {
         console.error('ERROR: Failed to search posts:', error);
@@ -689,6 +698,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             likes: [],
             userProfileBg: userProfileBg
         };
+        console.log('DEBUG: New comment created and sent:', newComment);
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
     } catch (error) {
         console.error('ERROR: Failed to add comment:', error);
@@ -710,6 +720,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
             userProfileBg: row.user_profile_bg,
             likes: row.likes // JSONB is already an array in Node.js
         }));
+        console.log('DEBUG: Comments data being sent (first comment):', JSON.stringify(comments.slice(0, 1))); // Log first comment for brevity
         res.status(200).json(comments);
     } catch (error) {
         console.error('ERROR: Failed to get comments:', error);
@@ -743,6 +754,7 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
         }
 
         await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
+        console.log('DEBUG: Comment like updated. Likes:', currentLikes.length, 'IsLiked:', isLiked);
         res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
     } catch (error) {
         console.error('ERROR: Failed to like comment:', error);
@@ -907,7 +919,7 @@ app.get('/api/user/:userId/chats', async (req, res) => {
                 adminId: chatAdminId
             });
         }
-
+        console.log('DEBUG: User chats data being sent (first chat):', JSON.stringify(userChats.slice(0, 1))); // Log first chat for brevity
         res.status(200).json(userChats);
     } catch (error) {
         console.error('ERROR: Failed to get user chats:', error);
@@ -983,7 +995,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             senderProfileBg: senderProfileBg || null
         };
 
-        console.log('تم إرسال رسالة جديدة في المحادثة:', chatId, newMessage);
+        console.log('DEBUG: New message sent in chat:', chatId, newMessage);
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('ERROR: Failed to send message:', error);
@@ -1012,6 +1024,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             mediaType: row.media_type,
             senderProfileBg: row.sender_profile_bg
         }));
+        console.log('DEBUG: Chat messages data being sent (first message):', JSON.stringify(messages.slice(0, 1))); // Log first message for brevity
         res.status(200).json(messages);
     } catch (error) {
         console.error('ERROR: Failed to get chat messages:', error);
@@ -1175,7 +1188,7 @@ app.get('/api/group/:groupId/members', async (req, res) => {
             }
             return null;
         }).filter(Boolean);
-
+        console.log('DEBUG: Group members data being sent:', JSON.stringify(membersInfo.slice(0, 1))); // Log first member for brevity
         res.status(200).json(membersInfo);
     } catch (error) {
         console.error('ERROR: Failed to get group members:', error);
