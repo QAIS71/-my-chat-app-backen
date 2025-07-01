@@ -7,7 +7,7 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3'); // عميل Storj DCS S3
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // لإنشاء روابط مؤقتة للملفات
 const path = require('path'); // للتعامل مع مسارات الملفات
-const { Pool } = require('pg'); // **جديد: لاستخدام PostgreSQL**
+const { Pool } = require('pg'); // لاستخدام PostgreSQL
 
 // تهيئة تطبيق Express
 const app = express();
@@ -37,7 +37,7 @@ const bucketName = STORJ_BUCKET_NAME;
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ----------------------------------------------------------------------------------------------------
-// **جديد: تهيئة PostgreSQL Pool**
+// تهيئة PostgreSQL Pool
 // ----------------------------------------------------------------------------------------------------
 const connectionString = "postgresql://watsaligram_new_db_user:4eANGsVHChH1xByG9LRMBP8N4FGytaK0@dpg-d1gjijnfte5s738npfr0-a.singapore-postgres.render.com/watsaligram_new_db";
 const pool = new Pool({
@@ -47,9 +47,18 @@ const pool = new Pool({
     }
 });
 
-// **جديد: وظيفة لإنشاء الجداول إذا لم تكن موجودة**
+// وظيفة لإنشاء الجداول إذا لم تكن موجودة (مع إسقاط الجداول أولاً)
 async function createTables() {
     try {
+        // **جديد: إسقاط الجداول بترتيب عكسي للتبعيات لضمان بيئة نظيفة**
+        await pool.query('DROP TABLE IF EXISTS followers CASCADE;');
+        await pool.query('DROP TABLE IF EXISTS messages CASCADE;');
+        await pool.query('DROP TABLE IF EXISTS comments CASCADE;');
+        await pool.query('DROP TABLE IF EXISTS posts CASCADE;');
+        await pool.query('DROP TABLE IF EXISTS chats CASCADE;');
+        await pool.query('DROP TABLE IF EXISTS users CASCADE;');
+        console.log('Existing tables dropped (if any).');
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 uid VARCHAR(255) PRIMARY KEY,
@@ -115,7 +124,7 @@ async function createTables() {
                 PRIMARY KEY (follower_id, followed_id)
             );
         `);
-        console.log('Tables created or already exist.');
+        console.log('Tables created successfully.');
     } catch (err) {
         console.error('ERROR: Failed to create tables:', err);
     }
@@ -1365,5 +1374,5 @@ app.listen(port, async () => {
     console.log(`Server is running on port ${port}`);
     console.log(`Backend URL: http://localhost:${port}`);
     console.log('Storj DCS Keys are directly in code. For production, consider environment variables.');
-    await createTables(); // **جديد: استدعاء لإنشاء الجداول عند بدء التشغيل**
+    await createTables(); // استدعاء لإنشاء الجداول عند بدء التشغيل
 });
