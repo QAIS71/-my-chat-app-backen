@@ -20,7 +20,7 @@ const port = process.env.PORT || 3000; // استخدام المنفذ المحد
 const STORJ_ENDPOINT = "https://gateway.storjshare.io";
 const STORJ_REGION = "us-east-1"; // يمكن أن يكون أي شيء لـ Storj
 const STORJ_ACCESS_KEY_ID = "jwsutdemteo7a3odjeweckixb5oa";
-const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogfjorms"; // تأكد من صحة هذا المفتاح السري
+const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms"; // **تم تصحيح هذا المفتاح السري**
 const STORJ_BUCKET_NAME = "my-chat-uploads"; // تم تصحيح هذا الاسم ليتطابق مع الصورة
 
 // تهيئة Storj DCS S3 Client
@@ -127,9 +127,9 @@ app.get('/api/user/by-custom-id/:customId', (req, res) => {
 // نقطة نهاية لرفع خلفية الملف الشخصي
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
-    const uploadedFile = req.file; // تم تصحيح: استخدام uploadedFile بدلاً من file
+    const uploadedFile = req.file;
 
-    if (!userId || !uploadedFile) { // تم تصحيح: استخدام uploadedFile
+    if (!userId || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
 
@@ -138,15 +138,15 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         return res.status(404).json({ error: 'المستخدم غير موجود.' });
     }
 
-    const fileExtension = path.extname(uploadedFile.originalname); // تم تصحيح: استخدام uploadedFile
+    const fileExtension = path.extname(uploadedFile.originalname);
     const fileName = `${uuidv4()}${fileExtension}`;
     const filePath = `profile_bg/${fileName}`; // مسار التخزين في الباكت
 
     const params = {
         Bucket: bucketName,
         Key: filePath,
-        Body: uploadedFile.buffer, // تم تصحيح: استخدام uploadedFile
-        ContentType: uploadedFile.mimetype, // تم تصحيح: استخدام uploadedFile
+        Body: uploadedFile.buffer,
+        ContentType: uploadedFile.mimetype,
     };
 
     try {
@@ -258,7 +258,7 @@ app.get('/api/user/:userId/contacts', (req, res) => {
 // نقطة نهاية لنشر منشور جديد
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
-    const mediaFile = req.file; // تم تصحيح: استخدام mediaFile بدلاً من file
+    const mediaFile = req.file;
 
     if (!authorId || !authorName || (!text && !mediaFile)) {
         return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
@@ -266,15 +266,15 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
     let mediaUrl = null;
     if (mediaFile) {
-        const fileExtension = path.extname(mediaFile.originalname); // تم تصحيح: استخدام mediaFile
+        const fileExtension = path.extname(mediaFile.originalname);
         const fileName = `${uuidv4()}${fileExtension}`;
         const filePath = `posts/${fileName}`; // مسار التخزين في الباكت
 
         const params = {
             Bucket: bucketName,
             Key: filePath,
-            Body: mediaFile.buffer, // تم تصحيح: استخدام mediaFile
-            ContentType: mediaFile.mimetype, // تم تصحيح: استخدام mediaFile
+            Body: mediaFile.buffer,
+            ContentType: mediaFile.mimetype,
         };
 
         try {
@@ -694,7 +694,7 @@ app.get('/api/user/:userId/chats', (req, res) => {
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
-    const mediaFile = req.file; // تم تصحيح: استخدام mediaFile بدلاً من file
+    const mediaFile = req.file;
 
     const chat = chats.find(c => c.id === chatId);
     if (!chat) {
@@ -706,15 +706,15 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
     let mediaUrl = null;
     if (mediaFile) {
-        const fileExtension = path.extname(mediaFile.originalname); // تم تصحيح: استخدام mediaFile
+        const fileExtension = path.extname(mediaFile.originalname);
         const fileName = `${uuidv4()}${fileExtension}`;
         const filePath = `chat_media/${fileName}`; // مسار التخزين في الباكت
 
         const params = {
             Bucket: bucketName,
             Key: filePath,
-            Body: mediaFile.buffer, // تم تصحيح: استخدام mediaFile
-            ContentType: mediaFile.mimetype, // تم تصحيح: استخدام mediaFile
+            Body: mediaFile.buffer,
+            ContentType: mediaFile.mimetype,
         };
 
         try {
