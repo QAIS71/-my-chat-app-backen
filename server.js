@@ -513,7 +513,7 @@ app.get('/api/posts/search', async (req, res) => {
     let queryText = `
         SELECT p.*,
                (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
-                FROM comments c WHERE c.post_id = p.id) AS comments,
+                    FROM comments c WHERE c.post_id = p.id) AS comments,
                (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
         FROM posts p
     `;
@@ -698,7 +698,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             likes: [],
             userProfileBg: userProfileBg
         };
-        console.log('DEBUG: New comment created and sent:', newComment);
+        console.log('DEBUG: New comment created and sent:', newComment); // تأكيد إرسال التعليق
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
     } catch (error) {
         console.error('ERROR: Failed to add comment:', error);
@@ -754,7 +754,7 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
         }
 
         await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
-        console.log('DEBUG: Comment like updated. Likes:', currentLikes.length, 'IsLiked:', isLiked);
+        console.log('DEBUG: Comment like updated. Likes:', currentLikes.length, 'IsLiked:', isLiked); // تأكيد إرسال بيانات الإعجاب
         res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
     } catch (error) {
         console.error('ERROR: Failed to like comment:', error);
@@ -1389,3 +1389,4 @@ app.listen(port, async () => {
     console.log('Storj DCS Keys are directly in code. For production, consider environment variables.');
     await createTables(); // استدعاء لإنشاء الجداول عند بدء التشغيل
 });
+
