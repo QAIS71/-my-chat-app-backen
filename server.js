@@ -20,8 +20,8 @@ const port = process.env.PORT || 3000; // استخدام المنفذ المحد
 const STORJ_ENDPOINT = "https://gateway.storjshare.io";
 const STORJ_REGION = "us-east-1"; // يمكن أن يكون أي شيء لـ Storj
 const STORJ_ACCESS_KEY_ID = "jwsutdemteo7a3odjeweckixb5oa";
-const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms";
-const STORJ_BUCKET_NAME = "watsaligram"; // تأكد من أن هذا هو اسم الباكت الخاص بك على Storj DCS
+const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogffjorms"; // تأكد من صحة هذا المفتاح السري
+const STORJ_BUCKET_NAME = "my-chat-uploads"; // **تم تصحيح هذا الاسم ليتطابق مع الصورة**
 
 // تهيئة Storj DCS S3 Client
 const s3Client = new S3Client({
@@ -274,7 +274,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             Bucket: bucketName,
             Key: filePath,
             Body: mediaFile.buffer,
-            ContentType: mediaFile.mimetype,
+            ContentType: file.mimetype,
         };
 
         try {
@@ -714,7 +714,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             Bucket: bucketName,
             Key: filePath,
             Body: mediaFile.buffer,
-            ContentType: mediaFile.mimetype,
+            ContentType: file.mimetype,
         };
 
         try {
