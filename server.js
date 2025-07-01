@@ -20,7 +20,7 @@ const port = process.env.PORT || 3000; // استخدام المنفذ المحد
 const STORJ_ENDPOINT = "https://gateway.storjshare.io";
 const STORJ_REGION = "us-east-1"; // يمكن أن يكون أي شيء لـ Storj
 const STORJ_ACCESS_KEY_ID = "jwsutdemteo7a3odjeweckixb5oa";
-const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms"; // **تم تصحيح هذا المفتاح السري**
+const STORJ_SECRET_ACCESS_KEY = "j3h3b4tvphprkdmfy7ntxw5el4wk46i6xhifxl573zuuogvfjorms";
 const STORJ_BUCKET_NAME = "my-chat-uploads"; // تم تصحيح هذا الاسم ليتطابق مع الصورة
 
 // تهيئة Storj DCS S3 Client
@@ -39,11 +39,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // ----------------------------------------------------------------------------------------------------
 // Middleware (البرمجيات الوسيطة)
-// ----------------------------------------------------------------------------------------------------
 
-// تمكين CORS لجميع الطلبات
+// تمكين CORS لجميع الطلبات من نطاق Netlify الخاص بك
 // هذا يسمح للواجهة الأمامية (Netlify) بالاتصال بالخادم الخلفي (Render)
-app.use(cors());
+const corsOptions = {
+    origin: 'https://watsaligram-frontend-web.netlify.app', // **هذا هو الرابط الدقيق لتطبيقك الأمامي على Netlify**
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true, // للسماح بإرسال ملفات تعريف الارتباط (الكوكيز) أو رؤوس التخويل
+    optionsSuccessStatus: 204
+};
+app.use(cors(corsOptions)); // استخدام خيارات CORS المحددة
 
 // تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
@@ -928,7 +933,6 @@ app.post('/api/groups/:groupId/add-members', (req, res) => {
     });
 
     if (addedMembers.length > 0) {
-        console.log(`تم إضافة أعضاء جدد إلى المجموعة ${groupId}: ${addedMembers.join(', ')}`);
         res.status(200).json({ message: `تم إضافة ${addedMembers.length} أعضاء بنجاح: ${addedMembers.join(', ')}` });
     } else {
         res.status(200).json({ message: 'لم يتم إضافة أعضاء جدد (ربما كانوا موجودين بالفعل).' });
@@ -965,7 +969,6 @@ app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
     }
 
     group.memberRoles[memberUid] = newRole;
-    console.log(`تم تغيير دور العضو ${memberUid} في المجموعة ${groupId} إلى ${newRole}.`);
     res.status(200).json({ message: 'تم تغيير دور العضو بنجاح.' });
 });
 
@@ -1001,7 +1004,6 @@ app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
 
     group.participants.splice(memberIndex, 1);
     delete group.memberRoles[memberUid]; // إزالة الدور أيضاً
-    console.log(`تم إزالة العضو ${memberUid} من المجموعة ${groupId}.`);
     res.status(200).json({ message: 'تم إزالة العضو بنجاح.' });
 });
 
@@ -1022,22 +1024,17 @@ app.delete('/api/group/:groupId/leave', (req, res) => {
 
     // إذا كان العضو المغادر هو المالك، يجب عليه تعيين مالك جديد أو حذف المجموعة
     if (memberUid === group.adminId) {
-        // في تطبيق حقيقي، ستحتاج إلى واجهة لتغيير المالك قبل المغادرة
-        // أو فرض حذف المجموعة إذا كان هو العضو الوحيد المتبقي
         if (group.participants.length > 1) {
              return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
         } else {
-            // إذا كان المالك هو العضو الوحيد، يمكنه حذف المجموعة
             const groupIndex = chats.findIndex(c => c.id === groupId);
             chats.splice(groupIndex, 1);
-            console.log(`تم حذف المجموعة ${groupId} لأن المالك غادر وكان العضو الوحيد.`);
             return res.status(200).json({ message: 'تم حذف المجموعة بنجاح بعد مغادرتك.' });
         }
     }
 
     group.participants.splice(memberIndex, 1);
     delete group.memberRoles[memberUid];
-    console.log(`غادر العضو ${memberUid} المجموعة ${groupId}.`);
     res.status(200).json({ message: 'تمت مغادرة المجموعة بنجاح.' });
 });
 
