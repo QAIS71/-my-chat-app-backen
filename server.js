@@ -39,6 +39,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // ----------------------------------------------------------------------------------------------------
 // Middleware (البرمجيات الوسيطة)
+// ----------------------------------------------------------------------------------------------------
 
 // تمكين CORS لجميع الطلبات من نطاق Netlify الخاص بك
 // هذا يسمح للواجهة الأمامية (Netlify) بالاتصال بالخادم الخلفي (Render)
@@ -265,11 +266,9 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
 
-    if (!authorId || !authorName || (!text && !mediaFile)) {
-        return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
-    }
+    let postMediaUrl = null; // تهيئة بـ null
+    let postMediaType = mediaType || 'text'; // تهيئة بنوع الوسائط من الطلب أو 'text' افتراضياً
 
-    let mediaUrl = null;
     if (mediaFile) {
         const fileExtension = path.extname(mediaFile.originalname);
         const fileName = `${uuidv4()}${fileExtension}`;
@@ -284,12 +283,20 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
         try {
             await s3Client.send(new PutObjectCommand(params));
-            mediaUrl = `/api/media/${authorId}/${filePath}`; // رابط الوكالة (proxy URL)
-            console.log(`تم تحميل ملف الوسائط للمنشور: ${mediaUrl}`);
+            postMediaUrl = `/api/media/${authorId}/${filePath}`; // تعيين الرابط فقط عند النجاح
+            console.log(`تم تحميل ملف الوسائط للمنشور: ${postMediaUrl}`);
+
+            // تحديث نوع الوسائط بناءً على نوع الملف الفعلي إذا لم يتم تحديده
+            if (!mediaType || mediaType === 'text') {
+                if (mediaFile.mimetype.startsWith('image/')) {
+                    postMediaType = 'image';
+                } else if (mediaFile.mimetype.startsWith('video/')) {
+                    postMediaType = 'video';
+                }
+            }
         } catch (error) {
-            console.error('ERROR: Failed to upload media to Storj DCS:', error);
-            // لا تفشل العملية بالكامل إذا فشل تحميل الوسائط، ولكن لا تضع رابط الوسائط
-            mediaUrl = null;
+            console.error('ERROR: فشل تحميل الوسائط إلى Storj DCS أثناء إنشاء المنشور:', error);
+            // في حالة الفشل، postMediaUrl سيبقى null، و postMediaType سيبقى كما هو (نص أو ما تم تحديده)
         }
     }
 
@@ -302,8 +309,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         likes: [],
         comments: [],
         views: [],
-        mediaUrl: mediaUrl,
-        mediaType: mediaType || 'text',
+        mediaUrl: postMediaUrl, // استخدام القيمة النهائية لـ postMediaUrl
+        mediaType: postMediaType, // استخدام القيمة النهائية لـ postMediaType
         authorProfileBg: authorProfileBg || null // إضافة خلفية ملف المؤلف
     };
     posts.push(newPost);
@@ -701,15 +708,13 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
 
-    const chat = chats.find(c => c.id === chatId);
-    if (!chat) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة.' });
-    }
+    let messageMediaUrl = null; // تهيئة بـ null
+    let messageMediaType = mediaType || 'text'; // تهيئة بنوع الوسائط من الطلب أو 'text' افتراضياً
+
     if (!chat.participants.includes(senderId)) {
         return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
     }
 
-    let mediaUrl = null;
     if (mediaFile) {
         const fileExtension = path.extname(mediaFile.originalname);
         const fileName = `${uuidv4()}${fileExtension}`;
@@ -724,11 +729,20 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
         try {
             await s3Client.send(new PutObjectCommand(params));
-            mediaUrl = `/api/media/${senderId}/${filePath}`; // رابط الوكالة
-            console.log(`تم تحميل ملف الوسائط للرسالة: ${mediaUrl}`);
+            messageMediaUrl = `/api/media/${senderId}/${filePath}`; // تعيين الرابط فقط عند النجاح
+            console.log(`تم تحميل ملف الوسائط للرسالة: ${messageMediaUrl}`);
+
+            // تحديث نوع الوسائط بناءً على نوع الملف الفعلي إذا لم يتم تحديده
+            if (!mediaType || mediaType === 'text') {
+                if (mediaFile.mimetype.startsWith('image/')) {
+                    messageMediaType = 'image';
+                } else if (mediaFile.mimetype.startsWith('video/')) {
+                    messageMediaType = 'video';
+                }
+            }
         } catch (error) {
-            console.error('ERROR: Failed to upload message media to Storj DCS:', error);
-            mediaUrl = null;
+            console.error('ERROR: فشل تحميل الوسائط إلى Storj DCS أثناء إنشاء الرسالة:', error);
+            // في حالة الفشل، messageMediaUrl سيبقى null، و messageMediaType سيبقى كما هو
         }
     }
 
@@ -738,13 +752,13 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         senderName,
         text: text || '',
         timestamp: Date.now(),
-        mediaUrl: mediaUrl,
-        mediaType: mediaType || 'text',
+        mediaUrl: messageMediaUrl, // استخدام القيمة النهائية لـ messageMediaUrl
+        mediaType: messageMediaType, // استخدام القيمة النهائية لـ messageMediaType
         senderProfileBg: senderProfileBg || null // إضافة خلفية ملف المرسل
     };
 
     chat.messages.push(newMessage);
-    chat.lastMessage = mediaUrl ? (mediaType === 'image' ? 'صورة' : 'فيديو') : text; // تحديث آخر رسالة
+    chat.lastMessage = messageMediaUrl ? (messageMediaType === 'image' ? 'صورة' : 'فيديو') : text; // تحديث آخر رسالة
     chat.timestamp = newMessage.timestamp; // تحديث طابع الوقت للمحادثة
 
     console.log('تم إرسال رسالة جديدة في المحادثة:', chatId, newMessage);
@@ -1045,3 +1059,4 @@ app.listen(port, () => {
     console.log(`Backend URL: http://localhost:${port}`); // هذا للاختبار المحلي
     console.log('Storj DCS Keys are directly in code. For production, consider environment variables.');
 });
+
