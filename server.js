@@ -1,19 +1,21 @@
 // استيراد المكتبات المطلوبة
-const express = require('express');
-const bodyParser = require('body-parser');
-const cors = require('cors'); // للتعامل مع سياسات CORS
-const multer = require('multer');
-const { v4: uuidv4 } = require('uuid');
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const path = require('path');
-const fs = require('fs');
+const express = require('express'); // إطار عمل Express لإنشاء الخادم
+const bodyParser = require('body-parser'); // لتحليل نصوص طلبات HTTP
+const cors = require('cors'); // للتعامل مع سياسات CORS (Cross-Origin Resource Sharing)
+const multer = require('multer'); // للتعامل مع تحميل الملفات (الصور والفيديوهات)
+const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة عالمياً (UUIDs)
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3'); // عميل Storj DCS S3
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // لإنشاء روابط مؤقتة للملفات
+const path = require('path'); // للتعامل مع مسارات الملفات
+const { Pool } = require('pg'); // **جديد: لاستخدام PostgreSQL**
 
 // تهيئة تطبيق Express
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
 
+// ----------------------------------------------------------------------------------------------------
 // مفاتيح Storj DCS
+// ----------------------------------------------------------------------------------------------------
 const STORJ_ENDPOINT = "https://gateway.storjshare.io";
 const STORJ_REGION = "us-east-1";
 const STORJ_ACCESS_KEY_ID = "jwsutdemteo7a3odjeweckixb5oa";
@@ -31,169 +33,322 @@ const s3Client = new S3Client({
 });
 const bucketName = STORJ_BUCKET_NAME;
 
-// تهيئة Multer
+// تهيئة Multer لتخزين الملفات مؤقتاً في الذاكرة
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Middleware
-// تمكين CORS لجميع الطلبات (Netlify Proxy سيتعامل مع الباقي)
-app.use(cors()); // **تم تبسيط هذا السطر ليعود إلى app.use(cors());**
+// ----------------------------------------------------------------------------------------------------
+// **جديد: تهيئة PostgreSQL Pool**
+// ----------------------------------------------------------------------------------------------------
+const connectionString = "postgresql://watsaligram_new_db_user:4eANGsVHChH1xByG9LRMBP8N4FGytaK0@dpg-d1gjijnfte5s738npfr0-a.singapore-postgres.render.com/watsaligram_new_db";
+const pool = new Pool({
+    connectionString: connectionString,
+    ssl: {
+        rejectUnauthorized: false // مطلوب لـ Render PostgreSQL (إذا لم يكن لديك شهادة SSL موثوقة)
+    }
+});
 
+// **جديد: وظيفة لإنشاء الجداول إذا لم تكن موجودة**
+async function createTables() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                uid VARCHAR(255) PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                custom_id VARCHAR(8) UNIQUE NOT NULL,
+                profile_bg_url VARCHAR(255)
+            );
+
+            CREATE TABLE IF NOT EXISTS posts (
+                id VARCHAR(255) PRIMARY KEY,
+                author_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                author_name VARCHAR(255) NOT NULL,
+                text TEXT,
+                timestamp BIGINT NOT NULL,
+                media_url VARCHAR(255),
+                media_type VARCHAR(50),
+                author_profile_bg VARCHAR(255),
+                likes JSONB DEFAULT '[]'::jsonb,
+                views JSONB DEFAULT '[]'::jsonb
+            );
+
+            CREATE TABLE IF NOT EXISTS comments (
+                id VARCHAR(255) PRIMARY KEY,
+                post_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE,
+                user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                username VARCHAR(255) NOT NULL,
+                text TEXT NOT NULL,
+                timestamp BIGINT NOT NULL,
+                user_profile_bg VARCHAR(255),
+                likes JSONB DEFAULT '[]'::jsonb
+            );
+
+            CREATE TABLE IF NOT EXISTS chats (
+                id VARCHAR(255) PRIMARY KEY,
+                type VARCHAR(50) NOT NULL, -- 'private' or 'group'
+                name VARCHAR(255), -- For groups
+                description TEXT, -- For groups
+                admin_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE, -- For groups
+                participants JSONB NOT NULL, -- Array of UIDs
+                member_roles JSONB, -- For groups: {uid: role}
+                last_message TEXT,
+                timestamp BIGINT NOT NULL,
+                profile_bg_url VARCHAR(255), -- For groups
+                contact_names JSONB -- For private chats: {user1Id: user2Name, user2Id: user1Name}
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id VARCHAR(255) PRIMARY KEY,
+                chat_id VARCHAR(255) REFERENCES chats(id) ON DELETE CASCADE,
+                sender_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                sender_name VARCHAR(255) NOT NULL,
+                text TEXT,
+                timestamp BIGINT NOT NULL,
+                media_url VARCHAR(255),
+                media_type VARCHAR(50),
+                sender_profile_bg VARCHAR(255)
+            );
+
+            CREATE TABLE IF NOT EXISTS followers (
+                follower_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                followed_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                PRIMARY KEY (follower_id, followed_id)
+            );
+        `);
+        console.log('Tables created or already exist.');
+    } catch (err) {
+        console.error('ERROR: Failed to create tables:', err);
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------
+// Middleware (البرمجيات الوسيطة)
+// ----------------------------------------------------------------------------------------------------
+
+// تمكين CORS لجميع الطلبات (Netlify Proxy سيتعامل مع الباقي)
+app.use(cors());
+
+// تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
 
-// قاعدة بيانات مؤقتة في الذاكرة
-let users = [];
-let posts = [];
-let chats = [];
+// ----------------------------------------------------------------------------------------------------
+// وظائف المساعدة (Helper Functions)
+// ----------------------------------------------------------------------------------------------------
 
-// وظائف المساعدة
-function generateCustomId() {
+// وظيفة لإنشاء معرف مستخدم فريد مكون من 8 أرقام (من قاعدة البيانات)
+async function generateCustomId() {
     let id;
-    do {
-        id = Math.floor(10000000 + Math.random() * 90000000).toString();
-    } while (users.some(user => user.customId === id));
+    let userExists = true;
+    while (userExists) {
+        id = Math.floor(10000000 + Math.random() * 90000000).toString(); // 8 أرقام
+        const res = await pool.query('SELECT 1 FROM users WHERE custom_id = $1', [id]);
+        userExists = res.rows.length > 0;
+    }
     return id;
 }
 
-// نقاط نهاية API (بدون تغيير في المنطق هنا)
-app.post('/api/register', (req, res) => {
+// ----------------------------------------------------------------------------------------------------
+// نقاط نهاية API (API Endpoints) - تم تعديلها للعمل مع PostgreSQL
+// ----------------------------------------------------------------------------------------------------
+
+// نقطة نهاية تسجيل المستخدم
+app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
+
     if (!username || !password) {
         return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان.' });
     }
-    if (users.some(user => user.username === username)) {
-        return res.status(409).json({ error: 'اسم المستخدم موجود بالفعل.' });
+
+    try {
+        const existingUser = await pool.query('SELECT 1 FROM users WHERE username = $1', [username]);
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({ error: 'اسم المستخدم موجود بالفعل.' });
+        }
+
+        const uid = uuidv4(); // إنشاء معرف فريد للمستخدم
+        const customId = await generateCustomId(); // إنشاء معرف مخصص من 8 أرقام
+
+        await pool.query(
+            'INSERT INTO users (uid, username, password, custom_id, profile_bg_url) VALUES ($1, $2, $3, $4, $5)',
+            [uid, username, password, customId, null]
+        );
+
+        console.log('User registered:', username, 'UID:', uid, 'Custom ID:', customId);
+        res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null } });
+    } catch (error) {
+        console.error('ERROR: Failed to register user:', error);
+        res.status(500).json({ error: 'فشل التسجيل.' });
     }
-    const uid = uuidv4();
-    const customId = generateCustomId();
-    const newUser = { uid, username, password, customId, profileBg: null };
-    users.push(newUser);
-    console.log('User registered:', newUser.username, 'UID:', newUser.uid, 'Custom ID:', newUser.customId);
-    res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null } });
 });
 
-app.post('/api/login', (req, res) => {
+// نقطة نهاية تسجيل الدخول
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    const user = users.find(u => u.username === username && u.password === password);
-    if (!user) {
-        return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
+
+    try {
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password FROM users WHERE username = $1', [username]);
+        const user = result.rows[0];
+
+        if (!user || user.password !== password) { // في تطبيق حقيقي، تحقق من كلمة المرور المشفرة
+            return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
+        }
+
+        console.log('User logged in:', user.username);
+        res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url } });
+    } catch (error) {
+        console.error('ERROR: Failed to log in user:', error);
+        res.status(500).json({ error: 'فشل تسجيل الدخول.' });
     }
-    console.log('User logged in:', user.username);
-    res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.customId, profileBg: user.profileBg } });
 });
 
-app.get('/api/user/by-custom-id/:customId', (req, res) => {
+// نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
+app.get('/api/user/by-custom-id/:customId', async (req, res) => {
     const { customId } = req.params;
-    const user = users.find(u => u.customId === customId);
-    if (user) {
-        res.status(200).json({ uid: user.uid, username: user.username, customId: user.customId, profileBg: user.profileBg });
-    } else {
-        res.status(404).json({ error: 'المستخدم غير موجود.' });
+    try {
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE custom_id = $1', [customId]);
+        const user = result.rows[0];
+        if (user) {
+            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url });
+        } else {
+            res.status(404).json({ error: 'المستخدم غير موجود.' });
+        }
+    } catch (error) {
+        console.error('ERROR: Failed to get user by custom ID:', error);
+        res.status(500).json({ error: 'فشل جلب معلومات المستخدم.' });
     }
 });
 
+// نقطة نهاية لرفع خلفية الملف الشخصي
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
+
     if (!userId || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
-    const user = users.find(u => u.uid === userId);
-    if (!user) {
-        return res.status(404).json({ error: 'المستخدم غير موجود.' });
-    }
-    const fileExtension = path.extname(uploadedFile.originalname);
-    const fileName = `${uuidv4()}${fileExtension}`;
-    const filePath = `profile_bg/${fileName}`;
-    const params = {
-        Bucket: bucketName,
-        Key: filePath,
-        Body: uploadedFile.buffer,
-        ContentType: uploadedFile.mimetype,
-    };
+
     try {
+        const userResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [userId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المستخدم غير موجود.' });
+        }
+
+        const fileExtension = path.extname(uploadedFile.originalname);
+        const fileName = `${uuidv4()}${fileExtension}`;
+        const filePath = `profile_bg/${fileName}`; // مسار التخزين في الباكت
+
+        const params = {
+            Bucket: bucketName,
+            Key: filePath,
+            Body: uploadedFile.buffer,
+            ContentType: uploadedFile.mimetype,
+        };
+
         await s3Client.send(new PutObjectCommand(params));
-        const mediaUrl = `/api/media/${userId}/${filePath}`;
-        user.profileBg = mediaUrl;
+        const mediaUrl = `/api/media/${userId}/${filePath}`; // رابط الوكالة (proxy URL)
+
+        await pool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [mediaUrl, userId]);
+
         console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId}: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: mediaUrl });
     } catch (error) {
-        console.error('ERROR: Failed to upload profile background to Storj DCS:', error);
+        console.error('ERROR: Failed to upload profile background to Storj DCS or update DB:', error);
         res.status(500).json({ error: 'فشل تحميل الخلفية.' });
     }
 });
 
-app.get('/api/user/:userId/followers/count', (req, res) => {
+// نقطة نهاية للحصول على عدد متابعي مستخدم معين
+app.get('/api/user/:userId/followers/count', async (req, res) => {
     const { userId } = req.params;
-    const user = users.find(u => u.uid === userId);
-    if (!user) {
-        return res.status(404).json({ error: 'المستخدم غير موجود.' });
+    try {
+        const result = await pool.query('SELECT COUNT(*) FROM followers WHERE followed_id = $1', [userId]);
+        const followerCount = parseInt(result.rows[0].count);
+        res.status(200).json({ count: followerCount });
+    } catch (error) {
+        console.error('ERROR: Failed to get follower count:', error);
+        res.status(500).json({ error: 'فشل جلب عدد المتابعين.' });
     }
-    let followerCount = 0;
-    users.forEach(u => {
-        if (u.following && u.following.includes(userId)) {
-            followerCount++;
-        }
-    });
-    res.status(200).json({ count: followerCount });
 });
 
-app.get('/api/user/:followerId/following/:followedId', (req, res) => {
+// نقطة نهاية للحصول على حالة المتابعة بين مستخدمين
+app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const followerUser = users.find(u => u.uid === followerId);
-    if (!followerUser) {
-        return res.status(404).json({ error: 'المستخدم المتابع غير موجود.' });
+    try {
+        const result = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
+        const isFollowing = result.rows.length > 0;
+        res.status(200).json({ isFollowing });
+    } catch (error) {
+        console.error('ERROR: Failed to get following status:', error);
+        res.status(500).json({ error: 'فشل جلب حالة المتابعة.' });
     }
-    const isFollowing = followerUser.following && followerUser.following.includes(followedId);
-    res.status(200).json({ isFollowing });
 });
 
-app.post('/api/user/:followerId/follow/:followedId', (req, res) => {
+// نقطة نهاية للمتابعة/إلغاء المتابعة
+app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const followerUser = users.find(u => u.uid === followerId);
-    const followedUser = users.find(u => u.uid === followedId);
-    if (!followerUser || !followedUser) {
-        return res.status(404).json({ error: 'المستخدم (المتابع أو المتابع) غير موجود.' });
-    }
+
     if (followerId === followedId) {
         return res.status(400).json({ error: 'لا يمكنك متابعة نفسك.' });
     }
-    if (!followerUser.following) {
-        followerUser.following = [];
-    }
-    let message;
-    if (followerUser.following.includes(followedId)) {
-        followerUser.following = followerUser.following.filter(id => id !== followedId);
-        message = 'تم إلغاء المتابعة.';
-        res.status(200).json({ message, isFollowing: false });
-    } else {
-        followerUser.following.push(followedId);
-        message = 'تمت المتابعة بنجاح.';
-        res.status(200).json({ message, isFollowing: true });
-    }
-    console.log(`User ${followerUser.username} ${message} user ${followedUser.username}`);
-});
 
-app.get('/api/user/:userId/contacts', (req, res) => {
-    const { userId } = req.params;
-    const userContacts = [];
-    chats.forEach(chat => {
-        if (chat.type === 'private' && chat.participants.includes(userId)) {
-            const otherParticipantId = chat.participants.find(pId => pId !== userId);
-            const otherUser = users.find(u => u.uid === otherParticipantId);
-            if (otherUser) {
-                userContacts.push({
-                    uid: otherUser.uid,
-                    username: otherUser.username,
-                    customId: otherUser.customId,
-                    profileBg: otherUser.profileBg
-                });
-            }
+    try {
+        const followerUserResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [followerId]);
+        const followedUserResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [followedId]);
+
+        if (followerUserResult.rows.length === 0 || followedUserResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المستخدم (المتابع أو المتابع) غير موجود.' });
         }
-    });
-    const uniqueContacts = Array.from(new Map(userContacts.map(contact => [contact.uid, contact])).values());
-    res.status(200).json(uniqueContacts);
+
+        const existingFollow = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
+
+        let message;
+        let isFollowing;
+        if (existingFollow.rows.length > 0) {
+            // إلغاء المتابعة
+            await pool.query('DELETE FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
+            message = 'تم إلغاء المتابعة.';
+            isFollowing = false;
+        } else {
+            // متابعة
+            await pool.query('INSERT INTO followers (follower_id, followed_id) VALUES ($1, $2)', [followerId, followedId]);
+            message = 'تمت المتابعة بنجاح.';
+            isFollowing = true;
+        }
+        console.log(`User ${followerId} ${message} user ${followedId}`);
+        res.status(200).json({ message, isFollowing });
+    } catch (error) {
+        console.error('ERROR: Failed to follow/unfollow user:', error);
+        res.status(500).json({ error: 'فشل في عملية المتابعة/إلغاء المتابعة.' });
+    }
 });
 
+// نقطة نهاية للحصول على جهات الاتصال (المستخدمين الذين أجرى معهم المستخدم الحالي محادثات فردية)
+app.get('/api/user/:userId/contacts', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const result = await pool.query(`
+            SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url
+            FROM users u
+            JOIN chats c ON (
+                (c.type = 'private' AND c.participants @> ARRAY[$1]::VARCHAR[] AND c.participants @> ARRAY[u.uid]::VARCHAR[] AND u.uid != $1)
+            )
+        `, [userId]);
+
+        const userContacts = result.rows.map(row => ({
+            uid: row.uid,
+            username: row.username,
+            customId: row.custom_id,
+            profileBg: row.profile_bg_url
+        }));
+
+        res.status(200).json(userContacts);
+    } catch (error) {
+        console.error('ERROR: Failed to get user contacts:', error);
+        res.status(500).json({ error: 'فشل جلب جهات الاتصال.' });
+    }
+});
+
+// نقطة نهاية لنشر منشور جديد
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
@@ -201,19 +356,23 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     let postMediaUrl = null;
     let postMediaType = mediaType || 'text';
 
-    if (mediaFile) {
-        const fileExtension = path.extname(mediaFile.originalname);
-        const fileName = `${uuidv4()}${fileExtension}`;
-        const filePath = `posts/${fileName}`;
+    if (!authorId || !authorName || (!text && !mediaFile)) {
+        return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
+    }
 
-        const params = {
-            Bucket: bucketName,
-            Key: filePath,
-            Body: mediaFile.buffer,
-            ContentType: mediaFile.mimetype,
-        };
+    try {
+        if (mediaFile) {
+            const fileExtension = path.extname(mediaFile.originalname);
+            const fileName = `${uuidv4()}${fileExtension}`;
+            const filePath = `posts/${fileName}`;
 
-        try {
+            const params = {
+                Bucket: bucketName,
+                Key: filePath,
+                Body: mediaFile.buffer,
+                ContentType: mediaFile.mimetype,
+            };
+
             await s3Client.send(new PutObjectCommand(params));
             postMediaUrl = `/api/media/${authorId}/${filePath}`;
             console.log(`تم تحميل ملف الوسائط للمنشور: ${postMediaUrl}`);
@@ -225,205 +384,364 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                     postMediaType = 'video';
                 }
             }
-        } catch (error) {
-            console.error('ERROR: فشل تحميل الوسائط إلى Storj DCS أثناء إنشاء المنشور:', error);
         }
-    }
 
-    const newPost = {
-        id: uuidv4(),
-        authorId,
-        authorName,
-        text: text || '',
-        timestamp: Date.now(),
-        likes: [],
-        comments: [],
-        views: [],
-        mediaUrl: postMediaUrl,
-        mediaType: postMediaType,
-        authorProfileBg: authorProfileBg || null
-    };
-    posts.push(newPost);
-    console.log('تم نشر منشور جديد:', newPost);
-    res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
-});
+        const postId = uuidv4();
+        const timestamp = Date.now();
 
-app.get('/api/posts', (req, res) => {
-    const postsCopy = posts.map(p => ({
-        ...p,
-        likes: JSON.stringify(p.likes),
-        comments: JSON.stringify(p.comments),
-        views: JSON.stringify(p.views)
-    }));
-    res.status(200).json(postsCopy);
-});
-
-app.get('/api/posts/followed/:userId', (req, res) => {
-    const { userId } = req.params;
-    const currentUser = users.find(u => u.uid === userId);
-    if (!currentUser) {
-        return res.status(404).json({ error: 'المستخدم غير موجود.' });
-    }
-    const followedUsersIds = currentUser.following || [];
-    const followedPosts = posts.filter(p => followedUsersIds.includes(p.authorId));
-    const postsCopy = followedPosts.map(p => ({
-        ...p,
-        likes: JSON.stringify(p.likes),
-        comments: JSON.stringify(p.comments),
-        views: JSON.stringify(p.views)
-    }));
-    res.status(200).json(postsCopy);
-});
-
-app.get('/api/posts/search', (req, res) => {
-    const { q, filter, userId } = req.query;
-    const searchTerm = q ? q.toLowerCase() : '';
-    let filteredPosts = posts;
-    if (filter === 'followed' && userId) {
-        const currentUser = users.find(u => u.uid === userId);
-        if (currentUser) {
-            const followedUsersIds = currentUser.following || [];
-            filteredPosts = filteredPosts.filter(p => followedUsersIds.includes(p.authorId));
-        } else {
-            return res.status(404).json({ error: 'المستخدم غير موجود للبحث في المتابعين.' });
-        }
-    }
-    if (searchTerm) {
-        filteredPosts = filteredPosts.filter(p =>
-            p.text.toLowerCase().includes(searchTerm) ||
-            p.authorName.toLowerCase().includes(searchTerm)
+        await pool.query(
+            `INSERT INTO posts (id, author_id, author_name, text, timestamp, media_url, media_type, author_profile_bg, likes, views)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [postId, authorId, authorName, text || '', timestamp, postMediaUrl, postMediaType, authorProfileBg || null, '[]', '[]']
         );
+
+        const newPost = {
+            id: postId,
+            authorId,
+            authorName,
+            text: text || '',
+            timestamp,
+            likes: [],
+            comments: [], // التعليقات لا تُحفظ هنا، بل في جدول comments
+            views: [],
+            mediaUrl: postMediaUrl,
+            mediaType: postMediaType,
+            authorProfileBg: authorProfileBg || null
+        };
+        console.log('تم نشر منشور جديد:', newPost);
+        res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
+    } catch (error) {
+        console.error('ERROR: Failed to publish post:', error);
+        res.status(500).json({ error: 'فشل نشر المنشور.' });
     }
-    const postsCopy = filteredPosts.map(p => ({
-        ...p,
-        likes: JSON.stringify(p.likes),
-        comments: JSON.stringify(p.comments),
-        views: JSON.stringify(p.views)
-    }));
-    res.status(200).json(postsCopy);
 });
 
-app.delete('/api/posts/:postId', (req, res) => {
+// نقطة نهاية للحصول على جميع المنشورات
+app.get('/api/posts', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT p.*,
+                   (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
+                    FROM comments c WHERE c.post_id = p.id) AS comments
+            FROM posts p
+            ORDER BY p.timestamp DESC
+        `);
+
+        const postsWithComments = result.rows.map(row => ({
+            id: row.id,
+            authorId: row.author_id,
+            authorName: row.author_name,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            likes: row.likes, // JSONB is already an array in Node.js
+            comments: row.comments || [], // Ensure it's an empty array if no comments
+            views: row.views,
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            authorProfileBg: row.author_profile_bg
+        }));
+        res.status(200).json(postsWithComments);
+    } catch (error) {
+        console.error('ERROR: Failed to get all posts:', error);
+        res.status(500).json({ error: 'فشل جلب المنشورات.' });
+    }
+});
+
+// نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
+app.get('/api/posts/followed/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
+        const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
+
+        // **تعديل: تضمين منشورات المستخدم نفسه**
+        followedUsersIds.push(userId); // إضافة معرف المستخدم الحالي
+
+        if (followedUsersIds.length === 0) {
+            return res.status(200).json([]); // لا يوجد متابعون ولا منشورات للمستخدم نفسه
+        }
+
+        const result = await pool.query(`
+            SELECT p.*,
+                   (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
+                    FROM comments c WHERE c.post_id = p.id) AS comments
+            FROM posts p
+            WHERE p.author_id = ANY($1::VARCHAR[])
+            ORDER BY p.timestamp DESC
+        `, [followedUsersIds]);
+
+        const postsWithComments = result.rows.map(row => ({
+            id: row.id,
+            authorId: row.author_id,
+            authorName: row.author_name,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            likes: row.likes,
+            comments: row.comments || [],
+            views: row.views,
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            authorProfileBg: row.author_profile_bg
+        }));
+        res.status(200).json(postsWithComments);
+    } catch (error) {
+        console.error('ERROR: Failed to get followed posts:', error);
+        res.status(500).json({ error: 'فشل جلب منشورات المتابعين.' });
+    }
+});
+
+// نقطة نهاية للبحث في المنشورات
+app.get('/api/posts/search', async (req, res) => {
+    const { q, filter, userId } = req.query; // q هو نص البحث
+    const searchTerm = q ? `%${q.toLowerCase()}%` : ''; // استخدام % للبحث الجزئي
+
+    let queryText = `
+        SELECT p.*,
+               (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
+                FROM comments c WHERE c.post_id = p.id) AS comments
+        FROM posts p
+    `;
+    const queryParams = [];
+    let whereClause = [];
+
+    if (filter === 'followed' && userId) {
+        try {
+            const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
+            const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
+            followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
+            if (followedUsersIds.length > 0) {
+                queryParams.push(followedUsersIds);
+                whereClause.push(`p.author_id = ANY($${queryParams.length}::VARCHAR[])`);
+            } else {
+                return res.status(200).json([]); // لا يوجد متابعون ولا منشورات للمستخدم نفسه
+            }
+        } catch (error) {
+            console.error('ERROR: Failed to get followed users for search:', error);
+            return res.status(500).json({ error: 'فشل في البحث عن منشورات المتابعين.' });
+        }
+    }
+
+    if (searchTerm) {
+        queryParams.push(searchTerm);
+        whereClause.push(`(LOWER(p.text) LIKE $${queryParams.length} OR LOWER(p.author_name) LIKE $${queryParams.length})`);
+    }
+
+    if (whereClause.length > 0) {
+        queryText += ` WHERE ${whereClause.join(' AND ')}`;
+    }
+
+    queryText += ` ORDER BY p.timestamp DESC`;
+
+    try {
+        const result = await pool.query(queryText, queryParams);
+        const filteredPosts = result.rows.map(row => ({
+            id: row.id,
+            authorId: row.author_id,
+            authorName: row.author_name,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            likes: row.likes,
+            comments: row.comments || [],
+            views: row.views,
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            authorProfileBg: row.author_profile_bg
+        }));
+        res.status(200).json(filteredPosts);
+    } catch (error) {
+        console.error('ERROR: Failed to search posts:', error);
+        res.status(500).json({ error: 'فشل البحث في المنشورات.' });
+    }
+});
+
+// نقطة نهاية لحذف منشور
+app.delete('/api/posts/:postId', async (req, res) => {
     const { postId } = req.params;
-    const postIndex = posts.findIndex(p => p.id === postId);
-    if (postIndex === -1) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    try {
+        const postResult = await pool.query('SELECT media_url FROM posts WHERE id = $1', [postId]);
+        const deletedPost = postResult.rows[0];
+
+        if (!deletedPost) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        // إذا كان المنشور يحتوي على وسائط، احذفها من Storj DCS
+        if (deletedPost.media_url) {
+            const urlParts = deletedPost.media_url.split('/');
+            const filePathInBucket = urlParts.slice(4).join('/');
+            const params = { Bucket: bucketName, Key: filePathInBucket };
+            s3Client.send(new DeleteObjectCommand(params))
+                .then(() => console.log(`تم حذف الملف من Storj DCS: ${filePathInBucket}`))
+                .catch(error => console.error('ERROR: Failed to delete media from Storj DCS:', error));
+        }
+
+        await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
+        console.log('تم حذف المنشور:', postId);
+        res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to delete post:', error);
+        res.status(500).json({ error: 'فشل حذف المنشور.' });
     }
-    const deletedPost = posts[postIndex];
-    if (deletedPost.mediaUrl) {
-        const urlParts = deletedPost.mediaUrl.split('/');
-        const userIdPart = urlParts[3];
-        const filePathInBucket = urlParts.slice(4).join('/');
-        const params = { Bucket: bucketName, Key: filePathInBucket };
-        s3Client.send(new DeleteObjectCommand(params))
-            .then(() => console.log(`تم حذف الملف من Storj DCS: ${filePathInBucket}`))
-            .catch(error => console.error('ERROR: Failed to delete media from Storj DCS:', error));
-    }
-    posts.splice(postIndex, 1);
-    console.log('تم حذف المنشور:', postId);
-    res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
 });
 
-app.post('/api/posts/:postId/like', (req, res) => {
+// نقطة نهاية للإعجاب بمنشور
+app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
+
+    try {
+        const postResult = await pool.query('SELECT likes FROM posts WHERE id = $1', [postId]);
+        const post = postResult.rows[0];
+
+        if (!post) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        let currentLikes = post.likes || [];
+        const userIndex = currentLikes.indexOf(userId);
+        let isLiked;
+
+        if (userIndex === -1) {
+            currentLikes.push(userId); // إضافة إعجاب
+            isLiked = true;
+        } else {
+            currentLikes.splice(userIndex, 1); // إزالة إعجاب
+            isLiked = false;
+        }
+
+        await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), postId]);
+        res.status(200).json({ message: 'تم تحديث الإعجاب بنجاح.', likesCount: currentLikes.length, isLiked });
+    } catch (error) {
+        console.error('ERROR: Failed to like post:', error);
+        res.status(500).json({ error: 'فشل تحديث الإعجاب.' });
     }
-    if (!post.likes) {
-        post.likes = [];
-    }
-    const userIndex = post.likes.indexOf(userId);
-    let isLiked;
-    if (userIndex === -1) {
-        post.likes.push(userId);
-        isLiked = true;
-    } else {
-        post.likes.splice(userIndex, 1);
-        isLiked = false;
-    }
-    res.status(200).json({ message: 'تم تحديث الإعجاب بنجاح.', likesCount: post.likes.length, isLiked });
 });
 
-app.post('/api/posts/:postId/view', (req, res) => {
+// نقطة نهاية لزيادة عدد المشاهدات
+app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
+
+    try {
+        const postResult = await pool.query('SELECT views FROM posts WHERE id = $1', [postId]);
+        const post = postResult.rows[0];
+
+        if (!post) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        let currentViews = post.views || [];
+
+        // إضافة المشاهدة فقط إذا لم يشاهدها المستخدم من قبل
+        if (!currentViews.includes(userId)) {
+            currentViews.push(userId);
+            await pool.query('UPDATE posts SET views = $1 WHERE id = $2', [JSON.stringify(currentViews), postId]);
+        }
+        res.status(200).json({ message: 'تم تحديث المشاهدات بنجاح.', viewsCount: currentViews.length });
+    } catch (error) {
+        console.error('ERROR: Failed to update post views:', error);
+        res.status(500).json({ error: 'فشل تحديث المشاهدات.' });
     }
-    if (!post.views) {
-        post.views = [];
-    }
-    if (!post.views.includes(userId)) {
-        post.views.push(userId);
-    }
-    res.status(200).json({ message: 'تم تحديث المشاهدات بنجاح.', viewsCount: post.views.length });
 });
 
-app.post('/api/posts/:postId/comments', (req, res) => {
+// نقطة نهاية لإضافة تعليق على منشور
+app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+
     if (!text) {
         return res.status(400).json({ error: 'نص التعليق مطلوب.' });
     }
-    if (!post.comments) {
-        post.comments = [];
+
+    try {
+        const postResult = await pool.query('SELECT 1 FROM posts WHERE id = $1', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        const userResult = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [userId]);
+        const userProfileBg = userResult.rows[0] ? userResult.rows[0].profile_bg_url : null;
+
+        const commentId = uuidv4();
+        const timestamp = Date.now();
+
+        await pool.query(
+            `INSERT INTO comments (id, post_id, user_id, username, text, timestamp, user_profile_bg, likes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [commentId, postId, userId, username, text, timestamp, userProfileBg, '[]']
+        );
+
+        const newComment = {
+            id: commentId,
+            userId,
+            username,
+            text,
+            timestamp,
+            likes: [],
+            userProfileBg: userProfileBg
+        };
+        res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
+    } catch (error) {
+        console.error('ERROR: Failed to add comment:', error);
+        res.status(500).json({ error: 'فشل إضافة التعليق.' });
     }
-    const user = users.find(u => u.uid === userId);
-    const newComment = {
-        id: uuidv4(),
-        userId,
-        username,
-        text,
-        timestamp: Date.now(),
-        likes: [],
-        userProfileBg: user ? user.profileBg : null
-    };
-    post.comments.push(newComment);
-    res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
 });
 
-app.get('/api/posts/:postId/comments', (req, res) => {
+// نقطة نهاية للحصول على تعليقات منشور
+app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    try {
+        const result = await pool.query('SELECT * FROM comments WHERE post_id = $1 ORDER BY timestamp ASC', [postId]);
+        const comments = result.rows.map(row => ({
+            id: row.id,
+            userId: row.user_id,
+            username: row.username,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            userProfileBg: row.user_profile_bg,
+            likes: row.likes // JSONB is already an array in Node.js
+        }));
+        res.status(200).json(comments);
+    } catch (error) {
+        console.error('ERROR: Failed to get comments:', error);
+        res.status(500).json({ error: 'فشل جلب التعليقات.' });
     }
-    res.status(200).json(JSON.stringify(post.comments || []));
 });
 
-app.post('/api/posts/:postId/comments/:commentId/like', (req, res) => {
+// نقطة نهاية للإعجاب بتعليق
+app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const post = posts.find(p => p.id === postId);
-    if (!post) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
+
+    try {
+        const commentResult = await pool.query('SELECT likes FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
+        const comment = commentResult.rows[0];
+
+        if (!comment) {
+            return res.status(404).json({ error: 'التعليق غير موجود.' });
+        }
+
+        let currentLikes = comment.likes || [];
+        const userIndex = currentLikes.indexOf(userId);
+        let isLiked;
+
+        if (userIndex === -1) {
+            currentLikes.push(userId); // إضافة إعجاب
+            isLiked = true;
+        } else {
+            currentLikes.splice(userIndex, 1); // إزالة إعجاب
+            isLiked = false;
+        }
+
+        await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
+        res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
+    } catch (error) {
+        console.error('ERROR: Failed to like comment:', error);
+        res.status(500).json({ error: 'فشل تحديث الإعجاب بالتعليق.' });
     }
-    const comment = post.comments.find(c => c.id === commentId);
-    if (!comment) {
-        return res.status(404).json({ error: 'التعليق غير موجود.' });
-    }
-    if (!comment.likes) {
-        comment.likes = [];
-    }
-    const userIndex = comment.likes.indexOf(userId);
-    let isLiked;
-    if (userIndex === -1) {
-        comment.likes.push(userId);
-        isLiked = true;
-    } else {
-        comment.likes.splice(userIndex, 1);
-        isLiked = false;
-    }
-    res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: comment.likes.length, isLiked });
 });
 
+// نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات)
 app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
     const { userId, folder, fileName } = req.params;
     const filePathInBucket = `${folder}/${fileName}`;
@@ -461,93 +779,134 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
     }
 });
 
-app.post('/api/chats/private', (req, res) => {
+// ----------------------------------------------------------------------------------------------------
+// وظائف الدردشة (Chat Functions) - تم تعديلها للعمل مع PostgreSQL
+// ----------------------------------------------------------------------------------------------------
+
+// نقطة نهاية لإنشاء محادثة فردية
+app.post('/api/chats/private', async (req, res) => {
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
+
     if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
         return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
     }
-    const existingChat = chats.find(chat =>
-        chat.type === 'private' &&
-        ((chat.participants[0] === user1Id && chat.participants[1] === user2Id) ||
-         (chat.participants[0] === user2Id && chat.participants[1] === user1Id))
-    );
-    if (existingChat) {
-        console.log('محادثة فردية موجودة بالفعل:', existingChat.id);
-        return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChat.id });
-    }
-    const newChatId = uuidv4();
-    const newChat = {
-        id: newChatId,
-        type: 'private',
-        participants: [user1Id, user2Id],
-        messages: [],
-        lastMessage: null,
-        timestamp: Date.now(),
-        participantInfo: {
-            [user1Id]: { name: user1Name, customId: user1CustomId },
-            [user2Id]: { name: user2Name, customId: user2CustomId }
-        },
-        contactNames: {
+
+    try {
+        // تحقق مما إذا كانت المحادثة موجودة بالفعل
+        const existingChatResult = await pool.query(`
+            SELECT id FROM chats
+            WHERE type = 'private'
+            AND (participants @> ARRAY[$1]::VARCHAR[] AND participants @> ARRAY[$2]::VARCHAR[])
+        `, [user1Id, user2Id]);
+
+        if (existingChatResult.rows.length > 0) {
+            const existingChatId = existingChatResult.rows[0].id;
+            console.log('محادثة فردية موجودة بالفعل:', existingChatId);
+            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChatId });
+        }
+
+        const newChatId = uuidv4();
+        const timestamp = Date.now();
+        const participantsArray = [user1Id, user2Id];
+        const contactNamesObject = {
             [user1Id]: contactName,
             [user2Id]: user1Name
-        }
-    };
-    chats.push(newChat);
-    console.log('تم إنشاء محادثة فردية جديدة:', newChatId);
-    res.status(201).json({ message: 'تم إنشاء المحادثة.', chatId: newChatId });
+        };
+
+        await pool.query(
+            `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [newChatId, 'private', JSON.stringify(participantsArray), null, timestamp, JSON.stringify(contactNamesObject)]
+        );
+
+        console.log('تم إنشاء محادثة فردية جديدة:', newChatId);
+        res.status(201).json({ message: 'تم إنشاء المحادثة.', chatId: newChatId });
+    } catch (error) {
+        console.error('ERROR: Failed to create private chat:', error);
+        res.status(500).json({ error: 'فشل إنشاء المحادثة.' });
+    }
 });
 
-app.put('/api/chats/private/:chatId/contact-name', (req, res) => {
+// نقطة نهاية لتعديل اسم جهة الاتصال في محادثة فردية
+app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     const { chatId } = req.params;
     const { userId, newContactName } = req.body;
-    const chat = chats.find(c => c.id === chatId && c.type === 'private' && c.participants.includes(userId));
-    if (!chat) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة أو لا تملك صلاحية التعديل.' });
+
+    try {
+        const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, userId]);
+        const chat = chatResult.rows[0];
+
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة غير موجودة أو لا تملك صلاحية التعديل.' });
+        }
+
+        let currentContactNames = chat.contact_names || {};
+        currentContactNames[userId] = newContactName;
+
+        await pool.query('UPDATE chats SET contact_names = $1 WHERE id = $2', [JSON.stringify(currentContactNames), chatId]);
+        console.log(`تم تحديث اسم جهة الاتصال للمحادثة ${chatId} بواسطة ${userId} إلى ${newContactName}`);
+        res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to update contact name:', error);
+        res.status(500).json({ error: 'فشل تحديث اسم جهة الاتصال.' });
     }
-    chat.contactNames[userId] = newContactName;
-    console.log(`تم تحديث اسم جهة الاتصال للمحادثة ${chatId} بواسطة ${userId} إلى ${newContactName}`);
-    res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
 });
 
-app.get('/api/user/:userId/chats', (req, res) => {
+// نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
+app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
-    const userChats = [];
-    chats.forEach(chat => {
-        if (chat.participants.includes(userId)) {
+    try {
+        const result = await pool.query(`
+            SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants
+            FROM chats
+            WHERE participants @> ARRAY[$1]::VARCHAR[]
+            ORDER BY timestamp DESC
+        `, [userId]);
+
+        const userChats = [];
+        for (const row of result.rows) {
             let chatName = '';
-            let chatCustomId = '';
+            let chatCustomId = null;
             let chatProfileBg = null;
             let chatAdminId = null;
-            if (chat.type === 'private') {
-                chatName = chat.contactNames[userId];
-                const otherParticipantId = chat.participants.find(pId => pId !== userId);
-                const otherUser = users.find(u => u.uid === otherParticipantId);
-                if (otherUser) {
-                    chatCustomId = otherUser.customId;
-                    chatProfileBg = otherUser.profileBg;
+
+            if (row.type === 'private') {
+                chatName = row.contact_names ? row.contact_names[userId] : 'Unknown Contact';
+                const otherParticipantId = row.participants.find(pId => pId !== userId);
+                if (otherParticipantId) {
+                    const otherUserResult = await pool.query('SELECT custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipantId]);
+                    const otherUser = otherUserResult.rows[0];
+                    if (otherUser) {
+                        chatCustomId = otherUser.custom_id;
+                        chatProfileBg = otherUser.profile_bg_url;
+                    }
                 }
-            } else if (chat.type === 'group') {
-                chatName = chat.name;
-                chatCustomId = null;
-                chatProfileBg = chat.profileBg || null;
-                chatAdminId = chat.adminId;
+            } else if (row.type === 'group') {
+                chatName = row.name;
+                chatProfileBg = row.profile_bg_url;
+                chatAdminId = row.admin_id;
             }
+
             userChats.push({
-                id: chat.id,
-                type: chat.type,
+                id: row.id,
+                type: row.type,
                 name: chatName,
-                lastMessage: chat.lastMessage,
-                timestamp: chat.timestamp,
+                lastMessage: row.last_message,
+                timestamp: parseInt(row.timestamp),
                 customId: chatCustomId,
                 profileBg: chatProfileBg,
                 adminId: chatAdminId
             });
         }
-    });
-    userChats.sort((a, b) => b.timestamp - a.timestamp);
-    res.status(200).json(userChats);
+
+        res.status(200).json(userChats);
+    } catch (error) {
+        console.error('ERROR: Failed to get user chats:', error);
+        res.status(500).json({ error: 'فشل جلب المحادثات.' });
+    }
 });
 
+// نقطة نهاية لإرسال رسالة في محادثة
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
@@ -556,27 +915,29 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     let messageMediaUrl = null;
     let messageMediaType = mediaType || 'text';
 
-    const chat = chats.find(c => c.id === chatId);
-    if (!chat) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة.' });
-    }
-    if (!chat.participants.includes(senderId)) {
-        return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
-    }
+    try {
+        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
+        const chat = chatResult.rows[0];
 
-    if (mediaFile) {
-        const fileExtension = path.extname(mediaFile.originalname);
-        const fileName = `${uuidv4()}${fileExtension}`;
-        const filePath = `chat_media/${fileName}`;
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+        }
+        if (!chat.participants.includes(senderId)) {
+            return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
+        }
 
-        const params = {
-            Bucket: bucketName,
-            Key: filePath,
-            Body: mediaFile.buffer,
-            ContentType: mediaFile.mimetype,
-        };
+        if (mediaFile) {
+            const fileExtension = path.extname(mediaFile.originalname);
+            const fileName = `${uuidv4()}${fileExtension}`;
+            const filePath = `chat_media/${fileName}`;
 
-        try {
+            const params = {
+                Bucket: bucketName,
+                Key: filePath,
+                Body: mediaFile.buffer,
+                ContentType: mediaFile.mimetype,
+            };
+
             await s3Client.send(new PutObjectCommand(params));
             messageMediaUrl = `/api/media/${senderId}/${filePath}`;
             console.log(`تم تحميل ملف الوسائط للرسالة: ${messageMediaUrl}`);
@@ -588,253 +949,421 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                     messageMediaType = 'video';
                 }
             }
-        } catch (error) {
-            console.error('ERROR: فشل تحميل الوسائط إلى Storj DCS أثناء إنشاء الرسالة:', error);
         }
+
+        const messageId = uuidv4();
+        const timestamp = Date.now();
+
+        await pool.query(
+            `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_url, media_type, sender_profile_bg)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
+        );
+
+        const lastMessageText = messageMediaUrl ? (messageMediaType === 'image' ? 'صورة' : 'فيديو') : (text || '');
+        await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
+
+        const newMessage = {
+            id: messageId,
+            senderId,
+            senderName,
+            text: text || '',
+            timestamp,
+            mediaUrl: messageMediaUrl,
+            mediaType: messageMediaType,
+            senderProfileBg: senderProfileBg || null
+        };
+
+        console.log('تم إرسال رسالة جديدة في المحادثة:', chatId, newMessage);
+        res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
+    } catch (error) {
+        console.error('ERROR: Failed to send message:', error);
+        res.status(500).json({ error: 'فشل إرسال الرسالة.' });
     }
-
-    const newMessage = {
-        id: uuidv4(),
-        senderId,
-        senderName,
-        text: text || '',
-        timestamp: Date.now(),
-        mediaUrl: messageMediaUrl,
-        mediaType: messageMediaType,
-        senderProfileBg: senderProfileBg || null
-    };
-
-    chat.messages.push(newMessage);
-    chat.lastMessage = messageMediaUrl ? (messageMediaType === 'image' ? 'صورة' : 'فيديو') : text;
-    chat.timestamp = newMessage.timestamp;
-
-    console.log('تم إرسال رسالة جديدة في المحادثة:', chatId, newMessage);
-    res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
 });
 
-app.get('/api/chats/:chatId/messages', (req, res) => {
+// نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
+app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
-    const chat = chats.find(c => c.id === chatId);
-    if (!chat) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+
+    try {
+        const result = await pool.query(
+            'SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC',
+            [chatId, sinceTimestamp]
+        );
+
+        const messages = result.rows.map(row => ({
+            id: row.id,
+            senderId: row.sender_id,
+            senderName: row.sender_name,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            senderProfileBg: row.sender_profile_bg
+        }));
+        res.status(200).json(messages);
+    } catch (error) {
+        console.error('ERROR: Failed to get chat messages:', error);
+        res.status(500).json({ error: 'فشل جلب الرسائل.' });
     }
-    const filteredMessages = chat.messages.filter(msg => msg.timestamp > sinceTimestamp);
-    res.status(200).json(filteredMessages);
 });
 
-app.delete('/api/chats/:chatId/delete-for-user', (req, res) => {
+// نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
+app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
     const { chatId } = req.params;
     const { userId } = req.body;
-    const chatIndex = chats.findIndex(c => c.id === chatId && c.participants.includes(userId));
-    if (chatIndex === -1) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة أو المستخدم ليس عضواً فيها.' });
+
+    try {
+        // في تطبيق حقيقي، قد لا تحذف المحادثة بالكامل، بل تزيل المستخدم من المشاركين
+        // أو تضع علامة على المحادثة بأنها محذوفة لهذا المستخدم.
+        // للتبسيط، سنقوم بحذف المحادثة إذا كان المستخدم هو المشارك الوحيد المتبقي.
+        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, userId]);
+        const chat = chatResult.rows[0];
+
+        if (!chat) {
+            return res.status(404).json({ error: 'المحادثة غير موجودة أو المستخدم ليس عضواً فيها.' });
+        }
+
+        let updatedParticipants = chat.participants.filter(p => p !== userId);
+
+        if (updatedParticipants.length === 0) {
+            // إذا لم يتبق أي مشاركين، احذف المحادثة بالكامل
+            await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
+            console.log(`تم حذف المحادثة ${chatId} بالكامل لأن المستخدم ${userId} كان آخر مشارك.`);
+            res.status(200).json({ message: 'تم حذف المحادثة بالكامل بنجاح.' });
+        } else {
+            // تحديث قائمة المشاركين
+            await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatId]);
+            console.log(`تم حذف المحادثة ${chatId} للمستخدم ${userId} فقط.`);
+            res.status(200).json({ message: 'تم حذف المحادثة من عندك بنجاح.' });
+        }
+    } catch (error) {
+        console.error('ERROR: Failed to delete chat for user:', error);
+        res.status(500).json({ error: 'فشل حذف المحادثة.' });
     }
-    chats.splice(chatIndex, 1);
-    console.log(`تم حذف المحادثة ${chatId} للمستخدم ${userId} فقط.`);
-    res.status(200).json({ message: 'تم حذف المحادثة من عندك بنجاح.' });
 });
 
-app.delete('/api/chats/private/:chatId/delete-for-both', (req, res) => {
+// نقطة نهاية لحذف محادثة فردية من الطرفين
+app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { chatId } = req.params;
     const { callerUid } = req.body;
-    const chatIndex = chats.findIndex(c => c.id === chatId && c.type === 'private' && c.participants.includes(callerUid));
-    if (chatIndex === -1) {
-        return res.status(404).json({ error: 'المحادثة غير موجودة أو لا تملك صلاحية الحذف.' });
-    }
-    const chatToDelete = chats[chatIndex];
-    chatToDelete.messages.forEach(message => {
-        if (message.mediaUrl) {
-            const urlParts = message.mediaUrl.split('/');
+
+    try {
+        const chatResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
+        const messagesMediaUrls = chatResult.rows.map(row => row.media_url).filter(Boolean);
+
+        // حذف ملفات الوسائط المرتبطة بالرسائل في هذه المحادثة من Storj DCS
+        for (const mediaUrl of messagesMediaUrls) {
+            const urlParts = mediaUrl.split('/');
             const filePathInBucket = urlParts.slice(4).join('/');
             const params = { Bucket: bucketName, Key: filePathInBucket };
             s3Client.send(new DeleteObjectCommand(params))
                 .then(() => console.log(`تم حذف ملف الوسائط من Storj DCS: ${filePathInBucket}`))
                 .catch(error => console.error('ERROR: Failed to delete message media from Storj DCS:', error));
         }
-    });
-    chats.splice(chatIndex, 1);
-    console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
-    res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
+
+        // حذف جميع الرسائل المتعلقة بالمحادثة
+        await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
+        // حذف المحادثة نفسها
+        await pool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> ARRAY[$2]::VARCHAR[]', [chatId, callerUid]);
+
+        console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
+        res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to delete private chat for both:', error);
+        res.status(500).json({ error: 'فشل حذف المحادثة من الطرفين.' });
+    }
 });
 
-app.post('/api/groups', (req, res) => {
-    const { name, description, adminId, members } = req.body;
+// ----------------------------------------------------------------------------------------------------
+// وظائف المجموعة (Group Functions) - تم تعديلها للعمل مع PostgreSQL
+// ----------------------------------------------------------------------------------------------------
+
+// نقطة نهاية لإنشاء مجموعة جديدة
+app.post('/api/groups', async (req, res) => {
+    const { name, description, adminId, members } = req.body; // members هو كائن {uid: role}
+
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
         return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
     }
     if (!members[adminId] || members[adminId] !== 'admin') {
         return res.status(400).json({ error: 'يجب أن يكون المشرف المحدد عضواً ومشرفاً.' });
     }
-    const newGroupId = uuidv4();
-    const newGroup = {
-        id: newGroupId,
-        type: 'group',
-        name,
-        description: description || '',
-        adminId,
-        participants: Object.keys(members),
-        memberRoles: members,
-        messages: [],
-        lastMessage: null,
-        timestamp: Date.now(),
-        profileBg: null
-    };
-    chats.push(newGroup);
-    console.log('تم إنشاء مجموعة جديدة:', newGroup);
-    res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح.', groupId: newGroupId });
+
+    try {
+        const newGroupId = uuidv4();
+        const timestamp = Date.now();
+        const participantsArray = Object.keys(members);
+
+        await pool.query(
+            `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null]
+        );
+
+        console.log('تم إنشاء مجموعة جديدة:', newGroupId);
+        res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح.', groupId: newGroupId });
+    } catch (error) {
+        console.error('ERROR: Failed to create group:', error);
+        res.status(500).json({ error: 'فشل إنشاء المجموعة.' });
+    }
 });
 
-app.put('/api/groups/:groupId/name', (req, res) => {
+// نقطة نهاية لتغيير اسم المجموعة
+app.put('/api/groups/:groupId/name', async (req, res) => {
     const { groupId } = req.params;
     const { newName, callerUid } = req.body;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-    }
-    if (!group.memberRoles[callerUid] || group.memberRoles[callerUid] !== 'admin') {
-        return res.status(403).json({ error: 'لا تملك صلاحية تغيير اسم المجموعة.' });
-    }
-    group.name = newName;
-    console.log(`تم تغيير اسم المجموعة ${groupId} إلى ${newName}`);
-    res.status(200).json({ message: 'تم تغيير اسم المجموعة بنجاح.' });
-});
 
-app.get('/api/group/:groupId/members', (req, res) => {
-    const { groupId } = req.params;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-    }
-    const membersInfo = group.participants.map(pId => {
-        const user = users.find(u => u.uid === pId);
-        if (user) {
-            return {
-                uid: user.uid,
-                username: user.username,
-                customId: user.customId,
-                role: group.memberRoles[pId] || 'member'
-            };
+    try {
+        const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
-        return null;
-    }).filter(Boolean);
-    res.status(200).json(membersInfo);
-});
 
-app.get('/api/group/:groupId/members/count', (req, res) => {
-    const { groupId } = req.params;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية تغيير اسم المجموعة.' });
+        }
+
+        await pool.query('UPDATE chats SET name = $1 WHERE id = $2', [newName, groupId]);
+        console.log(`تم تغيير اسم المجموعة ${groupId} إلى ${newName}`);
+        res.status(200).json({ message: 'تم تغيير اسم المجموعة بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to change group name:', error);
+        res.status(500).json({ error: 'فشل تغيير اسم المجموعة.' });
     }
-    res.status(200).json({ count: group.participants.length });
 });
 
-app.post('/api/groups/:groupId/add-members', (req, res) => {
+// نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
+app.get('/api/group/:groupId/members', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        const memberUids = group.participants;
+        const memberRoles = group.member_roles;
+
+        const usersResult = await pool.query('SELECT uid, username, custom_id FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
+        const usersMap = new Map(usersResult.rows.map(u => [u.uid, u]));
+
+        const membersInfo = memberUids.map(pId => {
+            const user = usersMap.get(pId);
+            if (user) {
+                return {
+                    uid: user.uid,
+                    username: user.username,
+                    customId: user.custom_id,
+                    role: memberRoles[pId] || 'member'
+                };
+            }
+            return null;
+        }).filter(Boolean);
+
+        res.status(200).json(membersInfo);
+    } catch (error) {
+        console.error('ERROR: Failed to get group members:', error);
+        res.status(500).json({ error: 'فشل جلب أعضاء المجموعة.' });
+    }
+});
+
+// نقطة نهاية للحصول على عدد أعضاء المجموعة
+app.get('/api/group/:groupId/members/count', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+        res.status(200).json({ count: group.participants.length });
+    } catch (error) {
+        console.error('ERROR: Failed to get group members count:', error);
+        res.status(500).json({ error: 'فشل جلب عدد أعضاء المجموعة.' });
+    }
+});
+
+// نقطة نهاية لإضافة أعضاء إلى مجموعة موجودة
+app.post('/api/groups/:groupId/add-members', async (req, res) => {
     const { groupId } = req.params;
     const { newMemberUids, callerUid } = req.body;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-    }
-    if (!group.memberRoles[callerUid] || group.memberRoles[callerUid] !== 'admin') {
-        return res.status(403).json({ error: 'لا تملك صلاحية إضافة أعضاء إلى هذه المجموعة.' });
-    }
-    const addedMembers = [];
-    newMemberUids.forEach(uid => {
-        if (!group.participants.includes(uid)) {
-            const user = users.find(u => u.uid === uid);
-            if (user) {
-                group.participants.push(uid);
-                group.memberRoles[uid] = 'member';
-                addedMembers.push(user.username);
+
+    try {
+        const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية إضافة أعضاء إلى هذه المجموعة.' });
+        }
+
+        let currentParticipants = group.participants;
+        let currentMemberRoles = group.member_roles;
+        const addedMembers = [];
+
+        for (const uid of newMemberUids) {
+            if (!currentParticipants.includes(uid)) {
+                const userResult = await pool.query('SELECT username FROM users WHERE uid = $1', [uid]);
+                const user = userResult.rows[0];
+                if (user) {
+                    currentParticipants.push(uid);
+                    currentMemberRoles[uid] = 'member';
+                    addedMembers.push(user.username);
+                }
             }
         }
-    });
-    if (addedMembers.length > 0) {
-        res.status(200).json({ message: `تم إضافة ${addedMembers.length} أعضاء بنجاح: ${addedMembers.join(', ')}` });
-    } else {
-        res.status(200).json({ message: 'لم يتم إضافة أعضاء جدد (ربما كانوا موجودين بالفعل).' });
+
+        if (addedMembers.length > 0) {
+            await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(currentParticipants), JSON.stringify(currentMemberRoles), groupId]);
+            console.log(`تم إضافة أعضاء جدد إلى المجموعة ${groupId}: ${addedMembers.join(', ')}`);
+            res.status(200).json({ message: `تم إضافة ${addedMembers.length} أعضاء بنجاح: ${addedMembers.join(', ')}` });
+        } else {
+            res.status(200).json({ message: 'لم يتم إضافة أعضاء جدد (ربما كانوا موجودين بالفعل).' });
+        }
+    } catch (error) {
+        console.error('ERROR: Failed to add members to group:', error);
+        res.status(500).json({ error: 'فشل إضافة أعضاء إلى المجموعة.' });
     }
 });
 
-app.put('/api/group/:groupId/members/:memberUid/role', (req, res) => {
+// نقطة نهاية لتغيير دور عضو في المجموعة (مشرف/عضو)
+app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { newRole, callerUid } = req.body;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+
+    try {
+        const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية تغيير أدوار الأعضاء.' });
+        }
+
+        if (memberUid === group.admin_id && callerUid !== group.admin_id) {
+            return res.status(403).json({ error: 'لا تملك صلاحية تغيير دور مالك المجموعة.' });
+        }
+
+        if (group.member_roles[memberUid] === 'admin' && newRole === 'member' && callerUid !== group.admin_id) {
+            return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر من الإشراف.' });
+        }
+
+        if (!group.participants.includes(memberUid)) {
+            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+        }
+
+        let updatedMemberRoles = group.member_roles;
+        updatedMemberRoles[memberUid] = newRole;
+
+        await pool.query('UPDATE chats SET member_roles = $1 WHERE id = $2', [JSON.stringify(updatedMemberRoles), groupId]);
+        res.status(200).json({ message: 'تم تغيير دور العضو بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to change member role:', error);
+        res.status(500).json({ error: 'فشل تغيير دور العضو.' });
     }
-    if (!group.memberRoles[callerUid] || group.memberRoles[callerUid] !== 'admin') {
-        return res.status(403).json({ error: 'لا تملك صلاحية تغيير أدوار الأعضاء.' });
-    }
-    if (memberUid === group.adminId && callerUid !== group.adminId) {
-        return res.status(403).json({ error: 'لا تملك صلاحية تغيير دور مالك المجموعة.' });
-    }
-    if (group.memberRoles[memberUid] === 'admin' && newRole === 'member' && callerUid !== group.adminId) {
-        return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر من الإشراف.' });
-    }
-    if (!group.participants.includes(memberUid)) {
-        return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
-    }
-    group.memberRoles[memberUid] = newRole;
-    res.status(200).json({ message: 'تم تغيير دور العضو بنجاح.' });
 });
 
-app.delete('/api/group/:groupId/members/:memberUid', (req, res) => {
+// نقطة نهاية لإزالة عضو من المجموعة
+app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+
+    try {
+        const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية إزالة أعضاء من هذه المجموعة.' });
+        }
+
+        if (memberUid === group.admin_id) {
+            return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
+        }
+
+        if (group.member_roles[memberUid] === 'admin' && callerUid !== group.admin_id) {
+            return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر.' });
+        }
+
+        const memberIndex = group.participants.indexOf(memberUid);
+        if (memberIndex === -1) {
+            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
+        }
+
+        let updatedParticipants = group.participants.filter(id => id !== memberUid);
+        let updatedMemberRoles = group.member_roles;
+        delete updatedMemberRoles[memberUid];
+
+        await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(updatedParticipants), JSON.stringify(updatedMemberRoles), groupId]);
+        res.status(200).json({ message: 'تم إزالة العضو بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to remove member from group:', error);
+        res.status(500).json({ error: 'فشل إزالة العضو.' });
     }
-    if (!group.memberRoles[callerUid] || group.memberRoles[callerUid] !== 'admin') {
-        return res.status(403).json({ error: 'لا تملك صلاحية إزالة أعضاء من هذه المجموعة.' });
-    }
-    if (memberUid === group.adminId) {
-        return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
-    }
-    if (group.memberRoles[memberUid] === 'admin' && callerUid !== group.adminId) {
-        return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر.' });
-    }
-    const memberIndex = group.participants.indexOf(memberUid);
-    if (memberIndex === -1) {
-        return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
-    }
-    group.participants.splice(memberIndex, 1);
-    delete group.memberRoles[memberUid];
-    res.status(200).json({ message: 'تم إزالة العضو بنجاح.' });
 });
 
-app.delete('/api/group/:groupId/leave', (req, res) => {
+// نقطة نهاية لمغادرة المجموعة
+app.delete('/api/group/:groupId/leave', async (req, res) => {
     const { groupId } = req.params;
     const { memberUid } = req.body;
-    const group = chats.find(c => c.id === groupId && c.type === 'group');
-    if (!group) {
-        return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-    }
-    const memberIndex = group.participants.indexOf(memberUid);
-    if (memberIndex === -1) {
-        return res.status(404).json({ error: 'أنت لست عضواً في هذه المجموعة.' });
-    }
-    if (memberUid === group.adminId) {
-        if (group.participants.length > 1) {
-             return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
-        } else {
-            const groupIndex = chats.findIndex(c => c.id === groupId);
-            chats.splice(groupIndex, 1);
-            return res.status(200).json({ message: 'تم حذف المجموعة بنجاح بعد مغادرتك.' });
+
+    try {
+        const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
+
+        const memberIndex = group.participants.indexOf(memberUid);
+        if (memberIndex === -1) {
+            return res.status(404).json({ error: 'أنت لست عضواً في هذه المجموعة.' });
+        }
+
+        if (memberUid === group.admin_id) {
+            if (group.participants.length > 1) {
+                 return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
+            } else {
+                await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
+                console.log(`تم حذف المجموعة ${groupId} لأن المالك غادر وكان العضو الوحيد.`);
+                return res.status(200).json({ message: 'تم حذف المجموعة بنجاح بعد مغادرتك.' });
+            }
+        }
+
+        let updatedParticipants = group.participants.filter(id => id !== memberUid);
+        let updatedMemberRoles = group.member_roles;
+        delete updatedMemberRoles[memberUid];
+
+        await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(updatedParticipants), JSON.stringify(updatedMemberRoles), groupId]);
+        res.status(200).json({ message: 'تمت مغادرة المجموعة بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to leave group:', error);
+        res.status(500).json({ error: 'فشل مغادرة المجموعة.' });
     }
-    group.participants.splice(memberIndex, 1);
-    delete group.memberRoles[memberUid];
-    res.status(200).json({ message: 'تمت مغادرة المجموعة بنجاح.' });
 });
 
 
 // بدء تشغيل الخادم
-app.listen(port, () => {
+app.listen(port, async () => {
     console.log(`Server is running on port ${port}`);
     console.log(`Backend URL: http://localhost:${port}`);
     console.log('Storj DCS Keys are directly in code. For production, consider environment variables.');
+    await createTables(); // **جديد: استدعاء لإنشاء الجداول عند بدء التشغيل**
 });
