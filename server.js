@@ -47,18 +47,11 @@ const pool = new Pool({
     }
 });
 
-// وظيفة لإنشاء الجداول إذا لم تكن موجودة (مع إسقاط الجداول أولاً)
+// وظيفة لإنشاء الجداول إذا لم تكن موجودة
 async function createTables() {
     try {
-        // إسقاط الجداول بترتيب عكسي للتبعيات لضمان بيئة نظيفة
-        await pool.query('DROP TABLE IF EXISTS followers CASCADE;');
-        await pool.query('DROP TABLE IF EXISTS messages CASCADE;');
-        await pool.query('DROP TABLE IF EXISTS comments CASCADE;');
-        await pool.query('DROP TABLE IF EXISTS posts CASCADE;');
-        await pool.query('DROP TABLE IF EXISTS chats CASCADE;');
-        await pool.query('DROP TABLE IF EXISTS users CASCADE;');
-        console.log('Existing tables dropped (if any).');
-
+        // تم إزالة أوامر إسقاط الجداول (DROP TABLE IF EXISTS) لضمان استمرارية البيانات.
+        // الآن، سيتم إنشاء الجداول فقط إذا لم تكن موجودة بالفعل.
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 uid VARCHAR(255) PRIMARY KEY,
@@ -124,7 +117,7 @@ async function createTables() {
                 PRIMARY KEY (follower_id, followed_id)
             );
         `);
-        console.log('Tables created successfully.');
+        console.log('Tables created successfully (if not already existing).');
     } catch (err) {
         console.error('ERROR: Failed to create tables:', err);
     }
