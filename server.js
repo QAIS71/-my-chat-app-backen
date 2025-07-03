@@ -1728,8 +1728,7 @@ app.post('/api/gemini-proxy', async (req, res) => {
     const { prompt } = req.body;
 
     // يجب أن يكون مفتاح API في متغيرات البيئة في بيئة الإنتاج لضمان الأمان
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyDjGiO3cySsrbFhIzifWIbTQue2YmdZKgY"; // استخدم مفتاحك الخاص هنا
-
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // يجب تعيين هذا كمتغير بيئة على Render
     if (!GEMINI_API_KEY) {
         return res.status(500).json({ error: 'Gemini API Key is not configured.' });
     }
