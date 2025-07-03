@@ -8,6 +8,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = re
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // لإنشاء روابط مؤقتة للملفات
 const path = require('path'); // للتعامل مع مسارات الملفات
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
+const fetch = require('node-fetch'); // لاستخدام fetch في الخلفية لـ Gemini API
 
 // تهيئة تطبيق Express
 const app = express();
@@ -47,18 +48,21 @@ const pool = new Pool({
     }
 });
 
+// متغير بيئة لمفتاح Gemini API (يجب تعيينه في بيئة النشر مثل Render)
+// const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "YOUR_GEMINI_API_KEY_HERE"; // استخدم مفتاحك الخاص هنا
+
 // وظيفة لإنشاء الجداول إذا لم تكن موجودة
 async function createTables() {
     try {
-        // تم إزالة أوامر إسقاط الجداول (DROP TABLE IF EXISTS) لضمان استمرارية البيانات.
-        // الآن، سيتم إنشاء الجداول فقط إذا لم تكن موجودة بالفعل.
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 uid VARCHAR(255) PRIMARY KEY,
                 username VARCHAR(255) UNIQUE NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 custom_id VARCHAR(8) UNIQUE NOT NULL,
-                profile_bg_url VARCHAR(255)
+                profile_bg_url VARCHAR(255),
+                is_verified BOOLEAN DEFAULT FALSE, -- حقل جديد لحالة التوثيق
+                user_role VARCHAR(50) DEFAULT 'normal' -- حقل جديد لنوع المستخدم ('normal', 'admin')
             );
 
             CREATE TABLE IF NOT EXISTS posts (
@@ -71,7 +75,8 @@ async function createTables() {
                 media_type VARCHAR(50),
                 author_profile_bg VARCHAR(255),
                 likes JSONB DEFAULT '[]'::jsonb,
-                views JSONB DEFAULT '[]'::jsonb
+                views JSONB DEFAULT '[]'::jsonb,
+                is_pinned BOOLEAN DEFAULT FALSE -- حقل جديد لحالة التثبيت
             );
 
             CREATE TABLE IF NOT EXISTS comments (
@@ -90,13 +95,14 @@ async function createTables() {
                 type VARCHAR(50) NOT NULL, -- 'private' or 'group'
                 name VARCHAR(255), -- For groups
                 description TEXT, -- For groups
-                admin_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE, -- For groups
+                admin_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE, -- For groups (owner)
                 participants JSONB NOT NULL, -- Array of UIDs
                 member_roles JSONB, -- For groups: {uid: role}
                 last_message TEXT,
                 timestamp BIGINT NOT NULL,
-                profile_bg_url VARCHAR(255), -- For groups
-                contact_names JSONB -- For private chats: {user1Id: user2Name, user2Id: user1Name}
+                profile_bg_url VARCHAR(255), -- For groups (background URL)
+                contact_names JSONB, -- For private chats: {user1Id: user2Name, user2Id: user1Name}
+                send_permission VARCHAR(50) DEFAULT 'all' -- حقل جديد لإعدادات إرسال الرسائل ('all', 'admins_only')
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -116,10 +122,46 @@ async function createTables() {
                 followed_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
                 PRIMARY KEY (follower_id, followed_id)
             );
+
+            -- جدول جديد لتخزين موضع تشغيل الفيديو لكل مستخدم ومنشور
+            CREATE TABLE IF NOT EXISTS video_playback_progress (
+                user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                post_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE,
+                position_seconds REAL NOT NULL DEFAULT 0.0,
+                last_updated BIGINT NOT NULL,
+                PRIMARY KEY (user_id, post_id)
+            );
+
+            -- جدول جديد لتخزين مسارات ملفات الوسائط المؤقتة للمحادثات (إذا كان هناك حاجة لتتبعها على الخادم)
+            -- عادةً ما يتم التعامل مع التخزين المؤقت للوسائط على جانب العميل، ولكن إذا كان القصد هو تتبع
+            -- الملفات التي تم تنزيلها بواسطة المستخدمين من الخادم، يمكن استخدام هذا الجدول.
+            -- سأفترض هنا أنه لتتبع الملفات التي تم تنزيلها بواسطة المستخدمين من Storj DCS.
+            CREATE TABLE IF NOT EXISTS chat_media_cache (
+                user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                media_url VARCHAR(225) NOT NULL,
+                cached_at BIGINT NOT NULL,
+                PRIMARY KEY (user_id, media_url) -- يمكن أن يكون مفتاحًا مركبًا لتتبع كل ملف لكل مستخدم
+            );
         `);
         console.log('Tables created successfully (if not already existing).');
+
+        // إضافة حساب المدير الافتراضي إذا لم يكن موجودًا
+        const adminUsername = "admin"; // اسم مستخدم المدير
+        const adminPassword = "adminpassword"; // كلمة مرور المدير
+        const adminCustomId = "00000001"; // معرف مخصص للمدير
+
+        const adminExists = await pool.query('SELECT 1 FROM users WHERE username = $1', [adminUsername]);
+        if (adminExists.rows.length === 0) {
+            const adminUid = uuidv4();
+            await pool.query(
+                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role) VALUES ($1, $2, $3, $4, TRUE, \'admin\')',
+                [adminUid, adminUsername, adminPassword, adminCustomId]
+            );
+            console.log('Default admin user created.');
+        }
+
     } catch (err) {
-        console.error('ERROR: Failed to create tables:', err);
+        console.error('ERROR: Failed to create tables or add admin:', err);
     }
 }
 
@@ -171,12 +213,12 @@ app.post('/api/register', async (req, res) => {
         const customId = await generateCustomId(); // إنشاء معرف مخصص من 8 أرقام
 
         await pool.query(
-            'INSERT INTO users (uid, username, password, custom_id, profile_bg_url) VALUES ($1, $2, $3, $4, $5)',
+            'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role) VALUES ($1, $2, $3, $4, $5, FALSE, \'normal\')',
             [uid, username, password, customId, null]
         );
 
         console.log('User registered:', username, 'UID:', uid, 'Custom ID:', customId);
-        res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null } });
+        res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null, isVerified: false, userRole: 'normal' } });
     } catch (error) {
         console.error('ERROR: Failed to register user:', error);
         res.status(500).json({ error: 'فشل التسجيل.' });
@@ -188,7 +230,7 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
 
     try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password FROM users WHERE username = $1', [username]);
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password, is_verified, user_role FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
 
         if (!user || user.password !== password) { // في تطبيق حقيقي، تحقق من كلمة المرور المشفرة
@@ -196,7 +238,7 @@ app.post('/api/login', async (req, res) => {
         }
 
         console.log('User logged in:', user.username);
-        res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url } });
+        res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role } });
     } catch (error) {
         console.error('ERROR: Failed to log in user:', error);
         res.status(500).json({ error: 'فشل تسجيل الدخول.' });
@@ -207,10 +249,10 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/user/by-custom-id/:customId', async (req, res) => {
     const { customId } = req.params;
     try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE custom_id = $1', [customId]);
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role FROM users WHERE custom_id = $1', [customId]);
         const user = result.rows[0];
         if (user) {
-            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url });
+            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role });
         } else {
             res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
@@ -329,7 +371,7 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
     const { userId } = req.params;
     try {
         const result = await pool.query(`
-            SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url
+            SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url, u.is_verified, u.user_role
             FROM users u
             JOIN chats c ON (
                 (c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]) AND u.uid != $1)
@@ -340,7 +382,9 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
             uid: row.uid,
             username: row.username,
             customId: row.custom_id,
-            profileBg: row.profile_bg_url
+            profileBg: row.profile_bg_url,
+            isVerified: row.is_verified,
+            userRole: row.user_role
         }));
 
         res.status(200).json(userContacts);
@@ -392,8 +436,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         const timestamp = Date.now();
 
         await pool.query(
-            `INSERT INTO posts (id, author_id, author_name, text, timestamp, media_url, media_type, author_profile_bg, likes, views)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            `INSERT INTO posts (id, author_id, author_name, text, timestamp, media_url, media_type, author_profile_bg, likes, views, is_pinned)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE)`, // is_pinned defaults to FALSE
             [postId, authorId, authorName, text || '', timestamp, postMediaUrl, postMediaType, authorProfileBg || null, '[]', '[]']
         );
 
@@ -408,7 +452,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             views: [],
             mediaUrl: postMediaUrl,
             mediaType: postMediaType,
-            authorProfileBg: authorProfileBg || null
+            authorProfileBg: authorProfileBg || null,
+            isPinned: false // New field
         };
         console.log('تم نشر منشور جديد:', newPost);
         res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
@@ -420,15 +465,27 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
 // نقطة نهاية للحصول على جميع المنشورات
 app.get('/api/posts', async (req, res) => {
+    const { userId } = req.query; // يمكن تمرير userId لجلب موضع التشغيل
     try {
-        const result = await pool.query(`
+        let queryText = `
             SELECT p.*,
+                   u.is_verified, u.user_role,
                    (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
                     FROM comments c WHERE c.post_id = p.id) AS comments,
                    (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
-            FROM posts p
-            ORDER BY p.timestamp DESC
-        `);
+        `;
+        
+        let joinClause = `FROM posts p JOIN users u ON p.author_id = u.uid`;
+        let orderClause = `ORDER BY p.is_pinned DESC, p.timestamp DESC`; // المنشورات المثبتة أولاً
+
+        if (userId) {
+            queryText += `, vpp.position_seconds AS playback_position `;
+            joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = '${userId}'`;
+        }
+
+        queryText += joinClause + orderClause;
+
+        const result = await pool.query(queryText);
 
         const postsWithComments = result.rows.map(row => ({
             id: row.id,
@@ -442,7 +499,11 @@ app.get('/api/posts', async (req, res) => {
             mediaUrl: row.media_url,
             mediaType: row.media_type,
             authorProfileBg: row.author_profile_bg,
-            authorFollowersCount: parseInt(row.author_followers_count)
+            authorFollowersCount: parseInt(row.author_followers_count),
+            isPinned: row.is_pinned, // New field
+            playbackPosition: row.playback_position || 0, // New field
+            authorIsVerified: row.is_verified, // New field
+            authorUserRole: row.user_role // New field
         }));
         console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithComments.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithComments);
@@ -468,13 +529,17 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
 
         const result = await pool.query(`
             SELECT p.*,
+                   u.is_verified, u.user_role,
                    (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
                     FROM comments c WHERE c.post_id = p.id) AS comments,
-                   (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
+                   (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count,
+                   vpp.position_seconds AS playback_position
             FROM posts p
-            WHERE p.author_id = ANY($1::VARCHAR[])
-            ORDER BY p.timestamp DESC
-        `, [followedUsersIds]);
+            JOIN users u ON p.author_id = u.uid
+            LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $1
+            WHERE p.author_id = ANY($2::VARCHAR[])
+            ORDER BY p.is_pinned DESC, p.timestamp DESC
+        `, [userId, followedUsersIds]);
 
         const postsWithComments = result.rows.map(row => ({
             id: row.id,
@@ -488,7 +553,11 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
             mediaUrl: row.media_url,
             mediaType: row.media_type,
             authorProfileBg: row.author_profile_bg,
-            authorFollowersCount: parseInt(row.author_followers_count)
+            authorFollowersCount: parseInt(row.author_followers_count),
+            isPinned: row.is_pinned, // New field
+            playbackPosition: row.playback_position || 0, // New field
+            authorIsVerified: row.is_verified, // New field
+            authorUserRole: row.user_role // New field
         }));
         console.log('DEBUG: Followed posts data being sent (first post):', JSON.stringify(postsWithComments.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithComments);
@@ -505,13 +574,15 @@ app.get('/api/posts/search', async (req, res) => {
 
     let queryText = `
         SELECT p.*,
+               u.is_verified, u.user_role,
                (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
                     FROM comments c WHERE c.post_id = p.id) AS comments,
                (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
-        FROM posts p
     `;
+    let joinClause = `FROM posts p JOIN users u ON p.author_id = u.uid`;
     const queryParams = [];
     let whereClause = [];
+    let paramIndex = 1;
 
     if (filter === 'followed' && userId) {
         try {
@@ -520,7 +591,7 @@ app.get('/api/posts/search', async (req, res) => {
             followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
             if (followedUsersIds.length > 0) {
                 queryParams.push(followedUsersIds);
-                whereClause.push(`p.author_id = ANY($${queryParams.length}::VARCHAR[])`);
+                whereClause.push(`p.author_id = ANY($${paramIndex++}::VARCHAR[])`);
             } else {
                 return res.status(200).json([]); // لا يوجد متابعون ولا منشورات للمستخدم نفسه
             }
@@ -532,14 +603,19 @@ app.get('/api/posts/search', async (req, res) => {
 
     if (searchTerm) {
         queryParams.push(searchTerm);
-        whereClause.push(`(LOWER(p.text) LIKE $${queryParams.length} OR LOWER(p.author_name) LIKE $${queryParams.length})`);
+        whereClause.push(`(LOWER(p.text) LIKE $${paramIndex} OR LOWER(p.author_name) LIKE $${paramIndex++})`);
+    }
+
+    if (userId) {
+        queryText += `, vpp.position_seconds AS playback_position `;
+        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = '${userId}'`;
     }
 
     if (whereClause.length > 0) {
         queryText += ` WHERE ${whereClause.join(' AND ')}`;
     }
 
-    queryText += ` ORDER BY p.timestamp DESC`;
+    queryText += joinClause + ` ORDER BY p.is_pinned DESC, p.timestamp DESC`; // المنشورات المثبتة أولاً
 
     try {
         const result = await pool.query(queryText, queryParams);
@@ -555,7 +631,11 @@ app.get('/api/posts/search', async (req, res) => {
             mediaUrl: row.media_url,
             mediaType: row.media_type,
             authorProfileBg: row.author_profile_bg,
-            authorFollowersCount: parseInt(row.author_followers_count)
+            authorFollowersCount: parseInt(row.author_followers_count),
+            isPinned: row.is_pinned, // New field
+            playbackPosition: row.playback_position || 0, // New field
+            authorIsVerified: row.is_verified, // New field
+            authorUserRole: row.user_role // New field
         }));
         console.log('DEBUG: Search results data being sent (first post):', JSON.stringify(filteredPosts.slice(0, 1))); // Log first post for brevity
         res.status(200).json(filteredPosts);
@@ -699,11 +779,68 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
     }
 });
 
+// نقطة نهاية لتعديل تعليق
+app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
+    const { postId, commentId } = req.params;
+    const { userId, newText } = req.body;
+
+    if (!newText) {
+        return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
+    }
+
+    try {
+        const commentResult = await pool.query('SELECT user_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
+        const comment = commentResult.rows[0];
+
+        if (!comment) {
+            return res.status(404).json({ error: 'التعليق غير موجود.' });
+        }
+        if (comment.user_id !== userId) {
+            return res.status(403).json({ error: 'لا تملك صلاحية تعديل هذا التعليق.' });
+        }
+
+        await pool.query('UPDATE comments SET text = $1 WHERE id = $2', [newText, commentId]);
+        res.status(200).json({ message: 'تم تعديل التعليق بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to update comment:', error);
+        res.status(500).json({ error: 'فشل تعديل التعليق.' });
+    }
+});
+
+// نقطة نهاية لحذف تعليق
+app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
+    const { postId, commentId } = req.params;
+    const { userId } = req.body; // userId of the caller to check permissions
+
+    try {
+        const commentResult = await pool.query('SELECT user_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
+        const comment = commentResult.rows[0];
+
+        if (!comment) {
+            return res.status(404).json({ error: 'التعليق غير موجود.' });
+        }
+
+        // Check if the caller is the comment owner OR an admin
+        const userResult = await pool.query('SELECT user_role FROM users WHERE uid = $1', [userId]);
+        const userRole = userResult.rows[0] ? userResult.rows[0].user_role : 'normal';
+
+        if (comment.user_id !== userId && userRole !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية حذف هذا التعليق.' });
+        }
+
+        await pool.query('DELETE FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
+        res.status(200).json({ message: 'تم حذف التعليق بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to delete comment:', error);
+        res.status(500).json({ error: 'فشل حذف التعليق.' });
+    }
+});
+
+
 // نقطة نهاية للحصول على تعليقات منشور
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     try {
-        // **التعديل هنا: تغيير اسم المفتاح من 'الإعجابات' إلى 'likes'**
         const result = await pool.query(`
             SELECT id, user_id, username, text, timestamp, user_profile_bg, likes
             FROM comments
@@ -799,6 +936,64 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
     }
 });
 
+// نقطة نهاية لتثبيت/إلغاء تثبيت منشور (للمدير فقط)
+app.put('/api/posts/:postId/pin', async (req, res) => {
+    const { postId } = req.params;
+    const { isPinned, callerUid } = req.body; // isPinned (boolean), callerUid (for permission check)
+
+    if (typeof isPinned !== 'boolean') {
+        return res.status(400).json({ error: 'حالة التثبيت غير صالحة.' });
+    }
+
+    try {
+        // التحقق من صلاحيات المدير
+        const userResult = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
+        const user = userResult.rows[0];
+
+        if (!user || user.user_role !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية تثبيت/إلغاء تثبيت المنشورات.' });
+        }
+
+        const postResult = await pool.query('SELECT 1 FROM posts WHERE id = $1', [postId]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المنشور غير موجود.' });
+        }
+
+        await pool.query('UPDATE posts SET is_pinned = $1 WHERE id = $2', [isPinned, postId]);
+        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح.` });
+    } catch (error) {
+        console.error('ERROR: Failed to pin/unpin post:', error);
+        res.status(500).json({ error: 'فشل تثبيت/إلغاء تثبيت المنشور.' });
+    }
+});
+
+// نقطة نهاية لحفظ موضع تشغيل الفيديو للمنشورات
+app.post('/api/video/:postId/playback-position', async (req, res) => {
+    const { postId } = req.params;
+    const { userId, positionSeconds } = req.body;
+
+    if (!userId || typeof positionSeconds !== 'number') {
+        return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
+    }
+
+    try {
+        const timestamp = Date.now();
+        // UPSERT: Insert if not exists, update if exists
+        await pool.query(`
+            INSERT INTO video_playback_progress (user_id, post_id, position_seconds, last_updated)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, post_id) DO UPDATE
+            SET position_seconds = EXCLUDED.position_seconds, last_updated = EXCLUDED.last_updated;
+        `, [userId, postId, positionSeconds, timestamp]);
+
+        res.status(200).json({ message: 'تم حفظ موضع تشغيل الفيديو بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to save video playback position:', error);
+        res.status(500).json({ error: 'فشل حفظ موضع تشغيل الفيديو.' });
+    }
+});
+
+
 // ----------------------------------------------------------------------------------------------------
 // وظائف الدردشة (Chat Functions) - تم تعديلها للعمل مع PostgreSQL
 // ----------------------------------------------------------------------------------------------------
@@ -834,8 +1029,8 @@ app.post('/api/chats/private', async (req, res) => {
         };
 
         await pool.query(
-            `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
+            `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names, send_permission)
+             VALUES ($1, $2, $3, $4, $5, $6, 'all')`, // send_permission defaults to 'all'
             [newChatId, 'private', JSON.stringify(participantsArray), null, timestamp, JSON.stringify(contactNamesObject)]
         );
 
@@ -877,10 +1072,12 @@ app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
     try {
         const result = await pool.query(`
-            SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants
-            FROM chats
-            WHERE participants @> to_jsonb(ARRAY[$1]::VARCHAR[])
-            ORDER BY timestamp DESC
+            SELECT c.id, c.type, c.name, c.last_message, c.timestamp, c.profile_bg_url, c.admin_id, c.contact_names, c.participants, c.send_permission,
+                   u.is_verified AS admin_is_verified, u.user_role AS admin_user_role -- معلومات المدير
+            FROM chats c
+            LEFT JOIN users u ON c.admin_id = u.uid -- ربط للحصول على معلومات المدير
+            WHERE c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[])
+            ORDER BY c.timestamp DESC
         `, [userId]);
 
         const userChats = [];
@@ -889,12 +1086,14 @@ app.get('/api/user/:userId/chats', async (req, res) => {
             let chatCustomId = null;
             let chatProfileBg = null;
             let chatAdminId = null;
+            let chatSendPermission = row.send_permission;
+            let adminInfo = null; // New field for admin info
 
             if (row.type === 'private') {
                 chatName = row.contact_names ? row.contact_names[userId] : 'Unknown Contact';
                 const otherParticipantId = row.participants.find(pId => pId !== userId);
                 if (otherParticipantId) {
-                    const otherUserResult = await pool.query('SELECT custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipantId]);
+                    const otherUserResult = await pool.query('SELECT custom_id, profile_bg_url, is_verified, user_role FROM users WHERE uid = $1', [otherParticipantId]);
                     const otherUser = otherUserResult.rows[0];
                     if (otherUser) {
                         chatCustomId = otherUser.custom_id;
@@ -905,6 +1104,13 @@ app.get('/api/user/:userId/chats', async (req, res) => {
                 chatName = row.name;
                 chatProfileBg = row.profile_bg_url;
                 chatAdminId = row.admin_id;
+                if (row.admin_id && row.admin_is_verified !== undefined && row.admin_user_role !== undefined) {
+                    adminInfo = {
+                        uid: row.admin_id,
+                        isVerified: row.admin_is_verified,
+                        userRole: row.admin_user_role
+                    };
+                }
             }
 
             userChats.push({
@@ -915,7 +1121,9 @@ app.get('/api/user/:userId/chats', async (req, res) => {
                 timestamp: parseInt(row.timestamp),
                 customId: chatCustomId,
                 profileBg: chatProfileBg,
-                adminId: chatAdminId
+                adminId: chatAdminId,
+                sendPermission: chatSendPermission, // New field
+                adminInfo: adminInfo // New field
             });
         }
         console.log('DEBUG: User chats data being sent (first chat):', JSON.stringify(userChats.slice(0, 1))); // Log first chat for brevity
@@ -936,7 +1144,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     let messageMediaType = mediaType || 'text';
 
     try {
-        const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1', [chatId]);
+        const chatResult = await pool.query('SELECT participants, type, member_roles, send_permission FROM chats WHERE id = $1', [chatId]);
         const chat = chatResult.rows[0];
 
         if (!chat) {
@@ -944,6 +1152,14 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         }
         if (!chat.participants.includes(senderId)) {
             return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
+        }
+
+        // التحقق من صلاحيات الإرسال للمجموعات
+        if (chat.type === 'group' && chat.send_permission === 'admins_only') {
+            const senderRole = chat.member_roles ? chat.member_roles[senderId] : 'member';
+            if (senderRole !== 'admin') {
+                return res.status(403).json({ error: 'يسمح للمشرفين فقط بإرسال الرسائل في هذه المجموعة.' });
+            }
         }
 
         if (mediaFile) {
@@ -967,6 +1183,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                     messageMediaType = 'image';
                 } else if (mediaFile.mimetype.startsWith('video/')) {
                     messageMediaType = 'video';
+                } else if (mediaFile.mimetype.startsWith('audio/')) { // دعم الملفات الصوتية
+                    messageMediaType = 'audio';
                 }
             }
         }
@@ -980,7 +1198,13 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
         );
 
-        const lastMessageText = messageMediaUrl ? (messageMediaType === 'image' ? 'صورة' : 'فيديو') : (text || '');
+        let lastMessageText = text || '';
+        if (messageMediaUrl) {
+            if (messageMediaType === 'image') lastMessageText = 'صورة';
+            else if (messageMediaType === 'video') lastMessageText = 'فيديو';
+            else if (messageMediaType === 'audio') lastMessageText = 'رسالة صوتية'; // تحديث لآخر رسالة
+        }
+
         await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
 
         const newMessage = {
@@ -1009,7 +1233,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
 
     try {
         const result = await pool.query(
-            'SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC',
+            'SELECT m.*, u.is_verified AS sender_is_verified, u.user_role AS sender_user_role FROM messages m JOIN users u ON m.sender_id = u.uid WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC',
             [chatId, sinceTimestamp]
         );
 
@@ -1021,7 +1245,9 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             timestamp: parseInt(row.timestamp),
             mediaUrl: row.media_url,
             mediaType: row.media_type,
-            senderProfileBg: row.sender_profile_bg
+            senderProfileBg: row.sender_profile_bg,
+            senderIsVerified: row.sender_is_verified, // New field
+            senderUserRole: row.sender_user_role // New field
         }));
         console.log('DEBUG: Chat messages data being sent (first message):', JSON.stringify(messages.slice(0, 1))); // Log first message for brevity
         res.status(200).json(messages);
@@ -1119,8 +1345,8 @@ app.post('/api/groups', async (req, res) => {
         const participantsArray = Object.keys(members);
 
         await pool.query(
-            `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'all')`, // send_permission defaults to 'all'
             [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null]
         );
 
@@ -1158,11 +1384,87 @@ app.put('/api/groups/:groupId/name', async (req, res) => {
     }
 });
 
+// نقطة نهاية لتغيير خلفية المجموعة (تتطلب صلاحيات المشرف/المالك)
+app.post('/api/groups/:groupId/background', upload.single('file'), async (req, res) => {
+    const { groupId } = req.params;
+    const { callerUid } = req.body;
+    const uploadedFile = req.file;
+
+    if (!callerUid || !uploadedFile) {
+        return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
+    }
+
+    try {
+        const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية تغيير خلفية المجموعة.' });
+        }
+
+        const fileExtension = path.extname(uploadedFile.originalname);
+        const fileName = `${uuidv4()}${fileExtension}`;
+        const filePath = `group_bg/${fileName}`; // مسار التخزين في الباكت
+
+        const params = {
+            Bucket: bucketName,
+            Key: filePath,
+            Body: uploadedFile.buffer,
+            ContentType: uploadedFile.mimetype,
+        };
+
+        await s3Client.send(new PutObjectCommand(params));
+        const mediaUrl = `/api/media/${callerUid}/${filePath}`; // رابط الوكالة (proxy URL)
+
+        await pool.query('UPDATE chats SET profile_bg_url = $1 WHERE id = $2', [mediaUrl, groupId]);
+
+        console.log(`تم تحميل خلفية المجموعة ${groupId}: ${mediaUrl}`);
+        res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: mediaUrl });
+    } catch (error) {
+        console.error('ERROR: Failed to upload group background to Storj DCS or update DB:', error);
+        res.status(500).json({ error: 'فشل تحميل الخلفية.' });
+    }
+});
+
+// نقطة نهاية لتغيير إعدادات إرسال الرسائل في المجموعة (تتطلب صلاحيات المشرف/المالك)
+app.put('/api/groups/:groupId/send-permission', async (req, res) => {
+    const { groupId } = req.params;
+    const { newPermission, callerUid } = req.body; // newPermission: 'all' or 'admins_only'
+
+    if (!['all', 'admins_only'].includes(newPermission)) {
+        return res.status(400).json({ error: 'إعدادات إرسال غير صالحة. يجب أن تكون "all" أو "admins_only".' });
+    }
+
+    try {
+        const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const group = groupResult.rows[0];
+
+        if (!group) {
+            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        }
+
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية تغيير إعدادات إرسال الرسائل في المجموعة.' });
+        }
+
+        await pool.query('UPDATE chats SET send_permission = $1 WHERE id = $2', [newPermission, groupId]);
+        res.status(200).json({ message: 'تم تغيير إعدادات إرسال الرسائل بنجاح.' });
+    } catch (error) {
+        console.error('ERROR: Failed to change group send permission:', error);
+        res.status(500).json({ error: 'فشل تغيير إعدادات إرسال الرسائل.' });
+    }
+});
+
+
 // نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
 app.get('/api/group/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
     try {
-        const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
+        const groupResult = await pool.query('SELECT participants, member_roles, admin_id FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
 
         if (!group) {
@@ -1171,8 +1473,9 @@ app.get('/api/group/:groupId/members', async (req, res) => {
 
         const memberUids = group.participants;
         const memberRoles = group.member_roles;
+        const groupOwnerId = group.admin_id; // المالك
 
-        const usersResult = await pool.query('SELECT uid, username, custom_id FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
+        const usersResult = await pool.query('SELECT uid, username, custom_id, is_verified, user_role FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
         const usersMap = new Map(usersResult.rows.map(u => [u.uid, u]));
 
         const membersInfo = memberUids.map(pId => {
@@ -1182,7 +1485,10 @@ app.get('/api/group/:groupId/members', async (req, res) => {
                     uid: user.uid,
                     username: user.username,
                     customId: user.custom_id,
-                    role: memberRoles[pId] || 'member'
+                    role: memberRoles[pId] || 'member',
+                    isVerified: user.is_verified, // New field
+                    userRole: user.user_role, // New field (global role, not group role)
+                    isOwner: pId === groupOwnerId // New field to identify owner
                 };
             }
             return null;
@@ -1271,16 +1577,13 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية تغيير أدوار الأعضاء.' });
+        // Only owner can change roles
+        if (group.admin_id !== callerUid) {
+            return res.status(403).json({ error: 'المالك فقط يمكنه تغيير أدوار الأعضاء.' });
         }
 
-        if (memberUid === group.admin_id && callerUid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا تملك صلاحية تغيير دور مالك المجموعة.' });
-        }
-
-        if (group.member_roles[memberUid] === 'admin' && newRole === 'member' && callerUid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر من الإشراف.' });
+        if (memberUid === group.admin_id && newRole === 'member') {
+            return res.status(403).json({ error: 'لا يمكنك إزالة صلاحية الإشراف عن مالك المجموعة.' });
         }
 
         if (!group.participants.includes(memberUid)) {
@@ -1311,6 +1614,7 @@ app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
+        // Only admin can remove members
         if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
             return res.status(403).json({ error: 'لا تملك صلاحية إزالة أعضاء من هذه المجموعة.' });
         }
@@ -1319,6 +1623,7 @@ app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
             return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
         }
 
+        // An admin cannot remove another admin unless they are the owner
         if (group.member_roles[memberUid] === 'admin' && callerUid !== group.admin_id) {
             return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر.' });
         }
@@ -1362,6 +1667,7 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
             if (group.participants.length > 1) {
                  return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
             } else {
+                // إذا كان المالك هو العضو الوحيد، يتم حذف المجموعة
                 await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
                 console.log(`تم حذف المجموعة ${groupId} لأن المالك غادر وكان العضو الوحيد.`);
                 return res.status(200).json({ message: 'تم حذف المجموعة بنجاح بعد مغادرتك.' });
@@ -1377,6 +1683,88 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
     } catch (error) {
         console.error('ERROR: Failed to leave group:', error);
         res.status(500).json({ error: 'فشل مغادرة المجموعة.' });
+    }
+});
+
+// ----------------------------------------------------------------------------------------------------
+// نقاط نهاية المدير (Admin Endpoints)
+// ----------------------------------------------------------------------------------------------------
+
+// نقطة نهاية لتوثيق المستخدمين (للمدير فقط)
+app.put('/api/admin/verify-user/:customId', async (req, res) => {
+    const { customId } = req.params;
+    const { isVerified, callerUid } = req.body; // isVerified (boolean), callerUid (for permission check)
+
+    if (typeof isVerified !== 'boolean') {
+        return res.status(400).json({ error: 'حالة التوثيق غير صالحة.' });
+    }
+
+    try {
+        // التحقق من صلاحيات المدير
+        const userResult = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
+        const callerUser = userResult.rows[0];
+
+        if (!callerUser || callerUser.user_role !== 'admin') {
+            return res.status(403).json({ error: 'لا تملك صلاحية توثيق المستخدمين.' });
+        }
+
+        const targetUserResult = await pool.query('SELECT 1 FROM users WHERE custom_id = $1', [customId]);
+        if (targetUserResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المستخدم غير موجود.' });
+        }
+
+        await pool.query('UPDATE users SET is_verified = $1 WHERE custom_id = $2', [isVerified, customId]);
+        res.status(200).json({ message: `تم ${isVerified ? 'توثيق' : 'إلغاء توثيق'} المستخدم ${customId} بنجاح.` });
+    } catch (error) {
+        console.error('ERROR: Failed to verify user:', error);
+        res.status(500).json({ error: 'فشل توثيق المستخدم.' });
+    }
+});
+
+// ----------------------------------------------------------------------------------------------------
+// نقطة نهاية وكيل Gemini API (Backend Proxy for Gemini API)
+// ----------------------------------------------------------------------------------------------------
+app.post('/api/gemini-proxy', async (req, res) => {
+    const { prompt } = req.body;
+
+    // يجب أن يكون مفتاح API في متغيرات البيئة في بيئة الإنتاج لضمان الأمان
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyDjGiO3cySsrbFhIzifWIbTQue2YmdZKgY"; // استخدم مفتاحك الخاص هنا
+
+    if (!GEMINI_API_KEY) {
+        return res.status(500).json({ error: 'Gemini API Key is not configured.' });
+    }
+
+    try {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+        
+        const payload = {
+            contents: [{ role: "user", parts: [{ text: prompt }] }]
+        };
+
+        const geminiResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const geminiData = await geminiResponse.json();
+
+        if (!geminiResponse.ok) {
+            console.error('ERROR: Gemini API returned an error:', geminiData);
+            return res.status(geminiResponse.status).json({ error: geminiData.error ? geminiData.error.message : 'Gemini API error' });
+        }
+
+        if (geminiData.candidates && geminiData.candidates.length > 0 &&
+            geminiData.candidates[0].content && geminiData.candidates[0].content.parts &&
+            geminiData.candidates[0].content.parts.length > 0) {
+            res.status(200).json({ text: geminiData.candidates[0].content.parts[0].text });
+        } else {
+            res.status(500).json({ error: 'Gemini API returned an unexpected response structure or no content.' });
+        }
+
+    } catch (error) {
+        console.error('ERROR: Failed to proxy Gemini API request:', error);
+        res.status(500).json({ error: 'فشل الاتصال بخدمة Gemini AI.' });
     }
 });
 
