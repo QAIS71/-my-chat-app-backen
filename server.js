@@ -40,7 +40,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ----------------------------------------------------------------------------------------------------
 // تهيئة PostgreSQL Pool
 // ----------------------------------------------------------------------------------------------------
-const connectionString = "postgresql://watsaligram_new_db_user:4eANGsVHChH1xByG9LRMBP8N4FGytaK0@dpg-d1gjijnfte5s738npfr0-a.singapore-postgres.render.com/watsaligram_new_db";
+const connectionString = "postgresql://watsaligram_user_1d9h_user:FQRoKZlwEJo2oR6PpATnlycGu9fd9utC@dpg-d1jc7tali9vc739mugvg-a.oregon-postgres.render.com/watsaligram_user_1d9h";
 const pool = new Pool({
     connectionString: connectionString,
     ssl: {
