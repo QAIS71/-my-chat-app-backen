@@ -9,7 +9,6 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner'); // لإنشا
 const path = require('path'); // للتعامل مع مسارات الملفات
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
-هههههههههههه
 // تهيئة تطبيق Express
 const app = express();
 const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
