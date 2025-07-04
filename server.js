@@ -215,46 +215,52 @@ async function generateCustomId() {
 }
 
 // وظيفة مساعدة لجلب المنشورات مع التفاصيل (بما في ذلك تقدم التشغيل للفيديوهات)
-async function getPostsWithDetails(baseQuery, queryParams, userIdForPlayback = null) {
+async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayback = null) {
     let selectClause = `
         p.*,
-        u.username AS authorName, -- إضافة اسم المؤلف مباشرة
-        u.is_verified AS authorIsVerified, -- جديد: حالة توثيق المؤلف
-        u.user_role AS authorUserRole, -- جديد: دور مؤلف المنشور
+        u.username AS authorName,
+        u.is_verified AS authorIsVerified,
+        u.user_role AS authorUserRole,
+        u.profile_bg_url AS authorProfileBg,
         (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified))
          FROM comments c JOIN users cu ON c.user_id = cu.uid WHERE c.post_id = p.id) AS comments,
         (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
     `;
 
-    let joinClause = `JOIN users u ON p.author_id = u.uid`; // انضمام لجدول المستخدمين لجلب معلومات المؤلف
+    let joinClause = `JOIN users u ON p.author_id = u.uid`;
+    let finalQueryParams = [...initialQueryParams]; // نسخ المعاملات الأولية
+    let paramIndex = initialQueryParams.length + 1; // بدء فهرس المعاملات بعد المعاملات الأولية
 
     // إذا تم توفير userIdForPlayback، قم بعمل JOIN لجلب موضع التشغيل المحفوظ
     if (userIdForPlayback) {
         selectClause += `, COALESCE(vpp.position_seconds, 0) AS playbackPosition`;
-        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${queryParams.length + 1}`; // تم التغيير من video_id إلى post_id
-        // أضف userIdForPlayback إلى queryParams إذا لم يكن موجوداً بالفعل
-        if (!queryParams.includes(userIdForPlayback)) {
-             // This logic needs to be careful about parameter indexing.
-             // It's safer to pass userIdForPlayback as a direct parameter to the function
-             // and ensure its index is correct in the query.
-             // For simplicity, let's assume it's always the last parameter if present.
-        }
+        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${paramIndex++}`;
+        finalQueryParams.push(userIdForPlayback); // إضافة userIdForPlayback كمعامل
     }
+
+    // إعادة بناء baseQuery لضمان أن فهارس المعاملات صحيحة
+    // هذا الجزء يتطلب معالجة دقيقة إذا كان baseQuery يحتوي على معاملات ديناميكية
+    // ولكن بما أن baseQuery يتم بناؤه خارج هذه الدالة، يجب أن تكون فهارسه صحيحة بالفعل
+    // أو يجب إعادة بناء baseQuery هنا أيضاً.
+    // للحفاظ على البساطة، سنفترض أن baseQuery لا يحتوي على فهارس $ مباشرة
+    // أو أن الفهارس في baseQuery تبدأ من 1 وتتم إضافتها إلى finalQueryParams.
+    // سنقوم بتعديل نقاط النهاية التي تستدعي هذه الدالة لتمرير المعاملات بشكل صحيح.
+
 
     const fullQuery = `
         SELECT ${selectClause}
         FROM posts p
         ${joinClause}
         ${baseQuery}
-        ORDER BY p.is_pinned DESC, p.timestamp DESC -- جديد: ترتيب حسب التثبيت أولاً
+        ORDER BY p.is_pinned DESC, p.timestamp DESC
     `;
 
-    const result = await pool.query(fullQuery, queryParams);
+    const result = await pool.query(fullQuery, finalQueryParams); // استخدام finalQueryParams هنا
 
     return result.rows.map(row => ({
         id: row.id,
         authorId: row.author_id,
-        authorName: row.authorname, // تأكد من استخدام authorName هنا
+        authorName: row.authorname,
         text: row.text,
         timestamp: parseInt(row.timestamp),
         likes: row.likes,
@@ -265,9 +271,9 @@ async function getPostsWithDetails(baseQuery, queryParams, userIdForPlayback = n
         authorProfileBg: row.author_profile_bg,
         authorFollowersCount: parseInt(row.authorfollowerscount),
         playbackPosition: row.playbackposition || 0,
-        isPinned: row.is_pinned, // جديد
-        authorIsVerified: row.authorisverified, // جديد
-        authorUserRole: row.authoruserrole // جديد
+        isPinned: row.is_pinned,
+        authorIsVerified: row.authorisverified,
+        authorUserRole: row.authoruserrole
     }));
 }
 
@@ -583,8 +589,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 app.get('/api/posts', async (req, res) => {
     const { userId } = req.query; // Optional userId for playback position
     try {
-        const baseQuery = ``; // لا يوجد WHERE clause مبدئي
-        const postsWithDetails = await getPostsWithDetails(baseQuery, [], userId);
+        const postsWithDetails = await getPostsWithDetails('', [], userId); // تمرير userId هنا
         console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -606,7 +611,7 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
         }
 
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
-        const postsWithDetails = await getPostsWithDetails(baseQuery, [followedUsersIds], userId);
+        const postsWithDetails = await getPostsWithDetails(baseQuery, [followedUsersIds], userId); // تمرير userId هنا
         console.log('DEBUG: Followed posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -621,8 +626,8 @@ app.get('/api/posts/search', async (req, res) => {
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
 
     let baseQuery = ``;
-    const queryParams = [];
-    let whereClause = [];
+    let queryParams = []; // استخدام let للسماح بتعديلها
+    let paramIndex = 1; // بدء فهرس المعاملات
 
     if (filter === 'followed' && userId) {
         try {
@@ -631,7 +636,7 @@ app.get('/api/posts/search', async (req, res) => {
             followedUsersIds.push(userId);
             if (followedUsersIds.length > 0) {
                 queryParams.push(followedUsersIds);
-                whereClause.push(`p.author_id = ANY($${queryParams.length}::VARCHAR[])`);
+                baseQuery += ` WHERE p.author_id = ANY($${paramIndex++}::VARCHAR[])`;
             } else {
                 return res.status(200).json([]);
             }
@@ -643,15 +648,17 @@ app.get('/api/posts/search', async (req, res) => {
 
     if (searchTerm) {
         queryParams.push(searchTerm);
-        whereClause.push(`(LOWER(p.text) LIKE $${queryParams.length} OR LOWER(p.author_name) LIKE $${queryParams.length})`);
-    }
-
-    if (whereClause.length > 0) {
-        baseQuery += ` WHERE ${whereClause.join(' AND ')}`;
+        if (baseQuery) {
+            baseQuery += ` AND (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
+            queryParams.push(searchTerm); // إضافة searchTerm مرة أخرى للمعامل الثاني
+        } else {
+            baseQuery += ` WHERE (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
+            queryParams.push(searchTerm); // إضافة searchTerm مرة أخرى للمعامل الثاني
+        }
     }
 
     try {
-        const postsWithDetails = await getPostsWithDetails(baseQuery, queryParams, userId);
+        const postsWithDetails = await getPostsWithDetails(baseQuery, queryParams, userId); // تمرير userId هنا
         console.log('DEBUG: Search results data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -982,8 +989,6 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
         res.setHeader('Cache-Control', 'public, max-age=31536000'); // التخزين المؤقت لمدة عام
 
         data.Body.pipe(res);
-
-        console.log(`DEBUG: تم خدمة الملف بنجاح: ${filePathInBucket}`);
 
     } catch (error) {
         console.error(`ERROR: فشل خدمة ملف الوسائط ${filePathInBucket} من Storj DCS:`, error);
@@ -1432,7 +1437,7 @@ app.post('/api/groups', async (req, res) => {
 
         await pool.query(
             `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null, 'all'] // send_permission افتراضي 'all'
         );
 
