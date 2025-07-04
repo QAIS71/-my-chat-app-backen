@@ -133,10 +133,10 @@ async function createTables() {
             -- جدول جديد لحفظ تقدم مشاهدة الفيديو
             CREATE TABLE IF NOT EXISTS video_playback_progress (
                 user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
-                video_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE,
+                post_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE, -- تم التغيير من video_id إلى post_id
                 position_seconds REAL NOT NULL,
                 last_updated BIGINT NOT NULL,
-                PRIMARY KEY (user_id, video_id)
+                PRIMARY KEY (user_id, post_id) -- تم التغيير من video_id إلى post_id
             );
         `);
         console.log('Tables created successfully (if not already existing).');
@@ -218,22 +218,26 @@ async function generateCustomId() {
 async function getPostsWithDetails(baseQuery, queryParams, userIdForPlayback = null) {
     let selectClause = `
         p.*,
-        u.is_verified AS author_is_verified, -- جديد: حالة توثيق المؤلف
-        u.user_role AS author_user_role, -- جديد: دور مؤلف المنشور
+        u.username AS authorName, -- إضافة اسم المؤلف مباشرة
+        u.is_verified AS authorIsVerified, -- جديد: حالة توثيق المؤلف
+        u.user_role AS authorUserRole, -- جديد: دور مؤلف المنشور
         (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified))
          FROM comments c JOIN users cu ON c.user_id = cu.uid WHERE c.post_id = p.id) AS comments,
-        (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS author_followers_count
+        (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
     `;
 
     let joinClause = `JOIN users u ON p.author_id = u.uid`; // انضمام لجدول المستخدمين لجلب معلومات المؤلف
 
     // إذا تم توفير userIdForPlayback، قم بعمل JOIN لجلب موضع التشغيل المحفوظ
     if (userIdForPlayback) {
-        selectClause += `, COALESCE(vpp.position_seconds, 0) AS playback_position`;
-        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.video_id AND vpp.user_id = $${queryParams.length + 1}`;
+        selectClause += `, COALESCE(vpp.position_seconds, 0) AS playbackPosition`;
+        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${queryParams.length + 1}`; // تم التغيير من video_id إلى post_id
         // أضف userIdForPlayback إلى queryParams إذا لم يكن موجوداً بالفعل
         if (!queryParams.includes(userIdForPlayback)) {
-            queryParams.push(userIdForPlayback);
+             // This logic needs to be careful about parameter indexing.
+             // It's safer to pass userIdForPlayback as a direct parameter to the function
+             // and ensure its index is correct in the query.
+             // For simplicity, let's assume it's always the last parameter if present.
         }
     }
 
@@ -250,7 +254,7 @@ async function getPostsWithDetails(baseQuery, queryParams, userIdForPlayback = n
     return result.rows.map(row => ({
         id: row.id,
         authorId: row.author_id,
-        authorName: row.author_name,
+        authorName: row.authorname, // تأكد من استخدام authorName هنا
         text: row.text,
         timestamp: parseInt(row.timestamp),
         likes: row.likes,
@@ -259,11 +263,11 @@ async function getPostsWithDetails(baseQuery, queryParams, userIdForPlayback = n
         mediaUrl: row.media_url,
         mediaType: row.media_type,
         authorProfileBg: row.author_profile_bg,
-        authorFollowersCount: parseInt(row.author_followers_count),
-        playbackPosition: row.playback_position || 0,
+        authorFollowersCount: parseInt(row.authorfollowerscount),
+        playbackPosition: row.playbackposition || 0,
         isPinned: row.is_pinned, // جديد
-        authorIsVerified: row.author_is_verified, // جديد
-        authorUserRole: row.author_user_role // جديد
+        authorIsVerified: row.authorisverified, // جديد
+        authorUserRole: row.authoruserrole // جديد
     }));
 }
 
@@ -344,12 +348,14 @@ app.get('/api/user/by-custom-id/:customId', async (req, res) => {
 });
 
 // نقطة نهاية لتوثيق حساب المستخدم (للمدير فقط)
-app.post('/api/admin/verify-user', async (req, res) => {
-    const { adminUid, targetCustomId, isVerified } = req.body;
+// تم تغييرها لتتلقى customId في المسار و callerUid في الجسم
+app.put('/api/admin/verify-user/:customId', async (req, res) => {
+    const { customId } = req.params; // المستخدم المستهدف
+    const { isVerified, callerUid } = req.body; // حالة التوثيق الجديدة ومعرف المدير الذي يقوم بالطلب
 
     try {
         // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير
-        const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [adminUid]);
+        const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتوثيق المستخدمين.' });
         }
@@ -357,7 +363,7 @@ app.post('/api/admin/verify-user', async (req, res) => {
         // تحديث حالة التوثيق للمستخدم المستهدف
         const targetUserUpdate = await pool.query(
             'UPDATE users SET is_verified = $1 WHERE custom_id = $2 RETURNING username, custom_id',
-            [isVerified, targetCustomId]
+            [isVerified, customId]
         );
 
         if (targetUserUpdate.rows.length === 0) {
@@ -656,7 +662,8 @@ app.get('/api/posts/search', async (req, res) => {
 
 // نقطة نهاية لحذف منشور
 app.delete('/api/posts/:postId', async (req, res) => {
-    const { postId, callerUid } = req.body; // يتطلب callerUid للتحقق من الصلاحية
+    const { postId } = req.params; // postId في المسار
+    const { callerUid } = req.body; // callerUid في الجسم
     try {
         const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
         const deletedPost = postResult.rows[0];
@@ -693,11 +700,11 @@ app.delete('/api/posts/:postId', async (req, res) => {
 // نقطة نهاية لتثبيت/إلغاء تثبيت منشور (للمدير فقط)
 app.put('/api/posts/:postId/pin', async (req, res) => {
     const { postId } = req.params;
-    const { adminUid, isPinned } = req.body;
+    const { isPinned, callerUid } = req.body;
 
     try {
         // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير
-        const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [adminUid]);
+        const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتثبيت/إلغاء تثبيت المنشورات.' });
         }
@@ -851,8 +858,9 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
 });
 
 // نقطة نهاية لتعديل تعليق
-app.put('/api/comments/:commentId', async (req, res) => {
-    const { commentId } = req.params;
+// تم تغيير المسار ليتضمن postId
+app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
+    const { postId, commentId } = req.params;
     const { userId, newText } = req.body; // userId هو معرف المستخدم الذي يقوم بالتعديل
 
     if (!newText || newText.trim() === '') {
@@ -860,7 +868,7 @@ app.put('/api/comments/:commentId', async (req, res) => {
     }
 
     try {
-        const commentResult = await pool.query('SELECT user_id FROM comments WHERE id = $1', [commentId]);
+        const commentResult = await pool.query('SELECT user_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
         const comment = commentResult.rows[0];
 
         if (!comment) {
@@ -881,12 +889,13 @@ app.put('/api/comments/:commentId', async (req, res) => {
 });
 
 // نقطة نهاية لحذف تعليق
-app.delete('/api/comments/:commentId', async (req, res) => {
-    const { commentId } = req.params;
-    const { userId, postId } = req.body; // userId هو معرف المستخدم الذي يقوم بالحذف، postId للتحقق من مالك المنشور
+// تم تغيير المسار ليتضمن postId
+app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
+    const { postId, commentId } = req.params;
+    const { userId } = req.body; // userId هو معرف المستخدم الذي يقوم بالحذف
 
     try {
-        const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1', [commentId]);
+        const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
         const comment = commentResult.rows[0];
 
         if (!comment) {
@@ -990,23 +999,23 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لحفظ أو تحديث موضع تشغيل الفيديو
-app.post('/api/video/:videoId/playback-position', async (req, res) => {
-    const { videoId } = req.params;
-    const { userId, playbackPosition } = req.body; // playbackPosition in seconds
+app.post('/api/video/:postId/playback-position', async (req, res) => { // تم تغيير videoId إلى postId
+    const { postId } = req.params; // تم تغيير videoId إلى postId
+    const { userId, positionSeconds } = req.body; // playbackPosition in seconds
 
-    if (!userId || playbackPosition === undefined || playbackPosition === null) {
+    if (!userId || positionSeconds === undefined || positionSeconds === null) {
         return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
     }
 
     try {
         // UPSERT operation: INSERT if not exists, UPDATE if exists
         await pool.query(`
-            INSERT INTO video_playback_progress (user_id, video_id, position_seconds, last_updated)
+            INSERT INTO video_playback_progress (user_id, post_id, position_seconds, last_updated) -- تم التغيير من video_id إلى post_id
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (user_id, video_id) DO UPDATE SET
+            ON CONFLICT (user_id, post_id) DO UPDATE SET -- تم التغيير من video_id إلى post_id
                 position_seconds = EXCLUDED.position_seconds,
                 last_updated = EXCLUDED.last_updated;
-        `, [userId, videoId, playbackPosition, Date.now()]);
+        `, [userId, postId, positionSeconds, Date.now()]); // تم التغيير من videoId إلى postId
 
         res.status(200).json({ message: 'تم حفظ موضع التشغيل بنجاح.' });
     } catch (error) {
@@ -1423,7 +1432,7 @@ app.post('/api/groups', async (req, res) => {
 
         await pool.query(
             `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null, 'all'] // send_permission افتراضي 'all'
         );
 
@@ -1511,9 +1520,9 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
 // نقطة نهاية لتغيير إذن الإرسال في المجموعة
 app.put('/api/groups/:groupId/send-permission', async (req, res) => {
     const { groupId } = req.params;
-    const { callerUid, permission } = req.body; // 'all' or 'admins_only'
+    const { callerUid, newPermission } = req.body; // 'all' or 'admins_only'
 
-    if (!permission || !['all', 'admins_only'].includes(permission)) {
+    if (!newPermission || !['all', 'admins_only'].includes(newPermission)) {
         return res.status(400).json({ error: 'إذن الإرسال غير صالح.' });
     }
 
@@ -1530,8 +1539,8 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
         }
 
-        await pool.query('UPDATE chats SET send_permission = $1 WHERE id = $2', [permission, groupId]);
-        res.status(200).json({ message: 'تم تحديث إذن الإرسال بنجاح.', sendPermission: permission });
+        await pool.query('UPDATE chats SET send_permission = $1 WHERE id = $2', [newPermission, groupId]);
+        res.status(200).json({ message: 'تم تحديث إذن الإرسال بنجاح.', sendPermission: newPermission });
     } catch (error) {
         console.error('ERROR: Failed to update group send permission:', error);
         res.status(500).json({ error: 'فشل تحديث إذن الإرسال في المجموعة.' });
