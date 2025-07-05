@@ -222,7 +222,7 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
         u.is_verified AS authorIsVerified,
         u.user_role AS authorUserRole,
         u.profile_bg_url AS authorProfileBg,
-        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified))
+        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified, 'userRole', cu.user_role))
          FROM comments c JOIN users cu ON c.user_id = cu.uid WHERE c.post_id = p.id) AS comments,
         (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
     `;
@@ -237,15 +237,6 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
         joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${paramIndex++}`;
         finalQueryParams.push(userIdForPlayback); // إضافة userIdForPlayback كمعامل
     }
-
-    // إعادة بناء baseQuery لضمان أن فهارس المعاملات صحيحة
-    // هذا الجزء يتطلب معالجة دقيقة إذا كان baseQuery يحتوي على معاملات ديناميكية
-    // ولكن بما أن baseQuery يتم بناؤه خارج هذه الدالة، يجب أن تكون فهارسه صحيحة بالفعل
-    // أو يجب إعادة بناء baseQuery هنا أيضاً.
-    // للحفاظ على البساطة، سنفترض أن baseQuery لا يحتوي على فهارس $ مباشرة
-    // أو أن الفهارس في baseQuery تبدأ من 1 وتتم إضافتها إلى finalQueryParams.
-    // سنقوم بتعديل نقاط النهاية التي تستدعي هذه الدالة لتمرير المعاملات بشكل صحيح.
-
 
     const fullQuery = `
         SELECT ${selectClause}
@@ -492,12 +483,14 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
 app.get('/api/user/:userId/contacts', async (req, res) => {
     const { userId } = req.params;
     try {
+        // تحسين الاستعلام لجلب جهات الاتصال بشكل أسرع
         const result = await pool.query(`
             SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url, u.is_verified, u.user_role
             FROM users u
             JOIN chats c ON (
-                (c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]) AND u.uid != $1)
+                (c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]))
             )
+            WHERE u.uid != $1
         `, [userId]);
 
         const userContacts = result.rows.map(row => ({
@@ -804,9 +797,10 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             return res.status(404).json({ error: 'المنشور غير موجود.' });
         }
 
-        const userResult = await pool.query('SELECT profile_bg_url, is_verified FROM users WHERE uid = $1', [userId]);
+        const userResult = await pool.query('SELECT profile_bg_url, is_verified, user_role FROM users WHERE uid = $1', [userId]);
         const userProfileBg = userResult.rows[0] ? userResult.rows[0].profile_bg_url : null;
         const isVerified = userResult.rows[0] ? userResult.rows[0].is_verified : false;
+        const userRole = userResult.rows[0] ? userResult.rows[0].user_role : 'normal';
 
         const commentId = uuidv4();
         const timestamp = Date.now();
@@ -825,7 +819,8 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             timestamp,
             likes: [],
             userProfileBg: userProfileBg,
-            isVerified: isVerified // جديد
+            isVerified: isVerified, // جديد
+            userRole: userRole // جديد
         };
         console.log('DEBUG: New comment created and sent:', newComment); // تأكيد إرسال التعليق
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
@@ -840,7 +835,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     try {
         const result = await pool.query(`
-            SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified
+            SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified, u.user_role
             FROM comments c
             JOIN users u ON c.user_id = u.uid
             WHERE c.post_id = $1
@@ -854,7 +849,8 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
             timestamp: parseInt(row.timestamp),
             userProfileBg: row.user_profile_bg,
             likes: row.likes, // JSONB is already an array in Node.js
-            isVerified: row.is_verified // جديد
+            isVerified: row.is_verified, // جديد
+            userRole: row.user_role // جديد
         }));
         console.log('DEBUG: Comments data being sent (first comment):', JSON.stringify(comments.slice(0, 1))); // Log first comment for brevity
         res.status(200).json(comments);
@@ -1163,38 +1159,49 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
     try {
+        // تحسين الاستعلام لجلب بيانات المستخدمين المشاركين في المحادثات
         const result = await pool.query(`
-            SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants, send_permission
-            FROM chats
-            WHERE participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) OR (type = 'private' AND name = 'المساعدة') -- لضمان جلب محادثة المساعدة
-            ORDER BY CASE WHEN name = 'المساعدة' THEN 0 ELSE 1 END, timestamp DESC -- جديد: تثبيت محادثة المساعدة
+            SELECT
+                c.id, c.type, c.name, c.last_message, c.timestamp, c.profile_bg_url,
+                c.admin_id, c.contact_names, c.participants, c.send_permission,
+                u_other.custom_id AS other_user_custom_id,
+                u_other.profile_bg_url AS other_user_profile_bg_url,
+                u_other.is_verified AS other_user_is_verified,
+                u_other.user_role AS other_user_user_role
+            FROM chats c
+            LEFT JOIN users u_other ON (
+                c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND u_other.uid = (
+                    SELECT p_id FROM jsonb_array_elements_text(c.participants) AS p_id WHERE p_id != $1 LIMIT 1
+                )
+            )
+            WHERE c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) OR (c.type = 'private' AND c.name = 'المساعدة')
+            ORDER BY CASE WHEN c.name = 'المساعدة' THEN 0 ELSE 1 END, c.timestamp DESC
         `, [userId]);
 
         const userChats = [];
         for (const row of result.rows) {
             let chatName = '';
             let chatCustomId = null;
-            let chatProfileBg = row.profile_bg_url; // استخدم profile_bg_url مباشرة من جدول chats
+            let chatProfileBg = row.profile_bg_url;
             let chatAdminId = null;
             let chatSendPermission = row.send_permission;
+            let chatIsVerified = false;
+            let chatUserRole = 'normal';
 
             if (row.type === 'private') {
                 if (row.name === 'المساعدة') {
                     chatName = 'المساعدة';
                     const botUserResult = await pool.query('SELECT custom_id FROM users WHERE username = $1 AND user_role = $2', ['المساعدة', 'bot']);
                     chatCustomId = botUserResult.rows[0] ? botUserResult.rows[0].custom_id : null;
+                    chatIsVerified = true; // البوت موثق
+                    chatUserRole = 'bot'; // دور البوت
                 } else {
                     chatName = row.contact_names ? row.contact_names[userId] : 'Unknown Contact';
-                    const otherParticipantId = row.participants.find(pId => pId !== userId);
-                    if (otherParticipantId) {
-                        const otherUserResult = await pool.query('SELECT custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipantId]);
-                        const otherUser = otherUserResult.rows[0];
-                        if (otherUser) {
-                            chatCustomId = otherUser.custom_id;
-                            // إذا كانت محادثة فردية، خلفية المحادثة هي خلفية الملف الشخصي للطرف الآخر
-                            chatProfileBg = otherUser.profile_bg_url;
-                        }
-                    }
+                    // بيانات المستخدم الآخر تم جلبها بالفعل بواسطة JOIN
+                    chatCustomId = row.other_user_custom_id;
+                    chatProfileBg = row.other_user_profile_bg_url;
+                    chatIsVerified = row.other_user_is_verified;
+                    chatUserRole = row.other_user_user_role;
                 }
             } else if (row.type === 'group') {
                 chatName = row.name;
@@ -1210,7 +1217,9 @@ app.get('/api/user/:userId/chats', async (req, res) => {
                 customId: chatCustomId,
                 profileBg: chatProfileBg,
                 adminId: chatAdminId,
-                sendPermission: chatSendPermission // جديد
+                sendPermission: chatSendPermission,
+                isVerified: chatIsVerified, // جديد
+                userRole: chatUserRole // جديد
             });
         }
         console.log('DEBUG: User chats data being sent (first chat):', JSON.stringify(userChats.slice(0, 1))); // Log first chat for brevity
@@ -1389,8 +1398,9 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { callerUid } = req.body;
 
     try {
-        const chatResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
-        const messagesMediaUrls = chatResult.rows.map(row => row.media_url).filter(Boolean);
+        // جلب جميع ملفات الوسائط المرتبطة بالرسائل في هذه المحادثة
+        const messagesMediaUrlsResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1 AND media_url IS NOT NULL', [chatId]);
+        const messagesMediaUrls = messagesMediaUrlsResult.rows.map(row => row.media_url);
 
         // حذف ملفات الوسائط المرتبطة بالرسائل في هذه المحادثة من Storj DCS
         for (const mediaUrl of messagesMediaUrls) {
@@ -1437,7 +1447,7 @@ app.post('/api/groups', async (req, res) => {
 
         await pool.query(
             `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null, 'all'] // send_permission افتراضي 'all'
         );
 
@@ -1567,6 +1577,7 @@ app.get('/api/group/:groupId/members', async (req, res) => {
         const memberUids = group.participants;
         const memberRoles = group.member_roles;
 
+        // تحسين جلب بيانات المستخدمين مرة واحدة
         const usersResult = await pool.query('SELECT uid, username, custom_id, is_verified, user_role FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
         const usersMap = new Map(usersResult.rows.map(u => [u.uid, u]));
 
@@ -1630,10 +1641,13 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => {
         let currentMemberRoles = group.member_roles;
         const addedMembers = [];
 
+        // جلب أسماء المستخدمين المضافين مرة واحدة لتحسين الأداء
+        const usersToAddResult = await pool.query('SELECT uid, username FROM users WHERE uid = ANY($1::VARCHAR[])', [newMemberUids]);
+        const usersToAddMap = new Map(usersToAddResult.rows.map(u => [u.uid, u]));
+
         for (const uid of newMemberUids) {
             if (!currentParticipants.includes(uid)) {
-                const userResult = await pool.query('SELECT username FROM users WHERE uid = $1', [uid]);
-                const user = userResult.rows[0];
+                const user = usersToAddMap.get(uid);
                 if (user) {
                     currentParticipants.push(uid);
                     currentMemberRoles[uid] = 'member';
