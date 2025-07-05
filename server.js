@@ -216,6 +216,8 @@ async function generateCustomId() {
 
 // وظيفة مساعدة لجلب المنشورات مع التفاصيل (بما في ذلك تقدم التشغيل للفيديوهات)
 async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayback = null) {
+    console.time('getPostsWithDetails_query_execution'); // Start timer for query execution
+
     let selectClause = `
         p.*,
         u.username AS authorName,
@@ -247,6 +249,13 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
     `;
 
     const result = await pool.query(fullQuery, finalQueryParams); // استخدام finalQueryParams هنا
+    console.timeEnd('getPostsWithDetails_query_execution'); // End timer for query execution
+
+    // Add logging here to check timestamps and pinned status before mapping
+    console.log('DEBUG: Raw posts fetched from DB for sorting check (first 10):');
+    result.rows.slice(0, 10).forEach(row => {
+        console.log(`  Post ID: ${row.id}, Timestamp: ${row.timestamp}, Is Pinned: ${row.is_pinned}`);
+    });
 
     return result.rows.map(row => ({
         id: row.id,
@@ -580,27 +589,32 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
 // نقطة نهاية للحصول على جميع المنشورات
 app.get('/api/posts', async (req, res) => {
+    console.time('api_posts_all'); // Start timer for overall request
     const { userId } = req.query; // Optional userId for playback position
     try {
         const postsWithDetails = await getPostsWithDetails('', [], userId); // تمرير userId هنا
-        console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
+        // console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('ERROR: Failed to get all posts:', error);
         res.status(500).json({ error: 'فشل جلب المنشورات.' });
+    } finally {
+        console.timeEnd('api_posts_all'); // End timer for overall request
     }
 });
 
 // نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
 app.get('/api/posts/followed/:userId', async (req, res) => {
+    console.time('api_posts_followed'); // Start timer for overall request
     const { userId } = req.params;
     try {
         const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-        followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
+        // REMOVED: followedUsersIds.push(userId); // تم إزالة هذا السطر لعدم تضمين منشورات المستخدم نفسه في فلتر المتابعين
 
         if (followedUsersIds.length === 0) {
-            return res.status(200).json([]); // لا يوجد متابعون ولا منشورات للمستخدم نفسه
+            console.timeEnd('api_posts_followed'); // End timer even if no followed users
+            return res.status(200).json([]); // لا يوجد متابعون
         }
 
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
@@ -610,11 +624,14 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
     } catch (error) {
         console.error('ERROR: Failed to get followed posts:', error);
         res.status(500).json({ error: 'فشل جلب منشورات المتابعين.' });
+    } finally {
+        console.timeEnd('api_posts_followed'); // End timer for overall request
     }
 });
 
 // نقطة نهاية للبحث في المنشورات
 app.get('/api/posts/search', async (req, res) => {
+    console.time('api_posts_search'); // Start timer for overall request
     const { q, filter, userId } = req.query;
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
 
@@ -626,15 +643,18 @@ app.get('/api/posts/search', async (req, res) => {
         try {
             const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
             const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-            followedUsersIds.push(userId);
+            // REMOVED: followedUsersIds.push(userId); // تم إزالة هذا السطر لعدم تضمين منشورات المستخدم نفسه
+
             if (followedUsersIds.length > 0) {
                 queryParams.push(followedUsersIds);
                 baseQuery += ` WHERE p.author_id = ANY($${paramIndex++}::VARCHAR[])`;
             } else {
+                console.timeEnd('api_posts_search'); // End timer if no followed users
                 return res.status(200).json([]);
             }
         } catch (error) {
             console.error('ERROR: Failed to get followed users for search:', error);
+            console.timeEnd('api_posts_search'); // End timer on error
             return res.status(500).json({ error: 'فشل في البحث عن منشورات المتابعين.' });
         }
     }
@@ -657,6 +677,8 @@ app.get('/api/posts/search', async (req, res) => {
     } catch (error) {
         console.error('ERROR: Failed to search posts:', error);
         res.status(500).json({ error: 'فشل البحث في المنشورات.' });
+    } finally {
+        console.timeEnd('api_posts_search'); // End timer for overall request
     }
 });
 
@@ -1157,6 +1179,7 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
 
 // نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
 app.get('/api/user/:userId/chats', async (req, res) => {
+    console.time('api_user_chats'); // Start timer for overall request
     const { userId } = req.params;
     try {
         // تحسين الاستعلام لجلب بيانات المستخدمين المشاركين في المحادثات
@@ -1227,6 +1250,8 @@ app.get('/api/user/:userId/chats', async (req, res) => {
     } catch (error) {
         console.error('ERROR: Failed to get user chats:', error);
         res.status(500).json({ error: 'فشل جلب المحادثات.' });
+    } finally {
+        console.timeEnd('api_user_chats'); // End timer for overall request
     }
 });
 
@@ -1328,6 +1353,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
 // نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
 app.get('/api/chats/:chatId/messages', async (req, res) => {
+    console.time('api_chats_messages'); // Start timer for overall request
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
 
@@ -1349,14 +1375,16 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             mediaUrl: row.media_url,
             mediaType: row.media_type,
             senderProfileBg: row.sender_profile_bg,
-            senderIsVerified: row.sender_is_verified, // جديد
-            senderUserRole: row.sender_user_role // جديد
+            senderIsVerified: row.is_verified, // جديد
+            senderUserRole: row.user_role // جديد
         }));
         console.log('DEBUG: Chat messages data being sent (first message):', JSON.stringify(messages.slice(0, 1))); // Log first message for brevity
         res.status(200).json(messages);
     } catch (error) {
         console.error('ERROR: Failed to get chat messages:', error);
         res.status(500).json({ error: 'فشل جلب الرسائل.' });
+    } finally {
+        console.timeEnd('api_chats_messages'); // End timer for overall request
     }
 });
 
