@@ -219,6 +219,7 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
     console.time('getPostsWithDetails_query_execution'); // Start timer for query execution
 
     // Added DISTINCT p.id to prevent duplicate posts from the database
+    // Explicitly cast json_agg result to jsonb to resolve equality operator issue
     let selectClause = `
         DISTINCT p.id,
         p.author_id,
@@ -233,7 +234,7 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
         u.is_verified AS authorIsVerified,
         u.user_role AS authorUserRole,
         u.profile_bg_url AS authorProfileBg,
-        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified, 'userRole', cu.user_role))
+        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified, 'userRole', cu.user_role))::jsonb
          FROM comments c JOIN users cu ON c.user_id = cu.uid WHERE c.post_id = p.id) AS comments,
         (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
     `;
