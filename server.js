@@ -248,12 +248,6 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
 
     const result = await pool.query(fullQuery, finalQueryParams); // استخدام finalQueryParams هنا
 
-    // Add logging here to check timestamps and pinned status before mapping
-    console.log('DEBUG: Raw posts fetched from DB for sorting check (first 5):');
-    result.rows.slice(0, 5).forEach(row => {
-        console.log(`  Post ID: ${row.id}, Timestamp: ${row.timestamp}, Is Pinned: ${row.is_pinned}`);
-    });
-
     return result.rows.map(row => ({
         id: row.id,
         authorId: row.author_id,
@@ -589,7 +583,7 @@ app.get('/api/posts', async (req, res) => {
     const { userId } = req.query; // Optional userId for playback position
     try {
         const postsWithDetails = await getPostsWithDetails('', [], userId); // تمرير userId هنا
-        // console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
+        console.log('DEBUG: Posts data being sent (first post):', JSON.stringify(postsWithDetails.slice(0, 1))); // Log first post for brevity
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('ERROR: Failed to get all posts:', error);
@@ -1790,7 +1784,7 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
         delete updatedMemberRoles[memberUid];
 
         await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(updatedParticipants), JSON.stringify(updatedMemberRoles), groupId]);
-        res.status(200).json({ mes sage: 'تمت مغادرة المجموعة بنجاح.' });
+        res.status(200).json({ message: 'تمت مغادرة المجموعة بنجاح.' });
     } catch (error) {
         console.error('ERROR: Failed to leave group:', error);
         res.status(500).json({ error: 'فشل مغادرة المجموعة.' });
