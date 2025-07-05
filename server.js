@@ -218,8 +218,17 @@ async function generateCustomId() {
 async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayback = null) {
     console.time('getPostsWithDetails_query_execution'); // Start timer for query execution
 
+    // Added DISTINCT p.id to prevent duplicate posts from the database
     let selectClause = `
-        p.*,
+        DISTINCT p.id,
+        p.author_id,
+        p.text,
+        p.timestamp,
+        p.media_url,
+        p.media_type,
+        p.likes,
+        p.views,
+        p.is_pinned,
         u.username AS authorName,
         u.is_verified AS authorIsVerified,
         u.user_role AS authorUserRole,
@@ -252,9 +261,14 @@ async function getPostsWithDetails(baseQuery, initialQueryParams, userIdForPlayb
     console.timeEnd('getPostsWithDetails_query_execution'); // End timer for query execution
 
     // Add logging here to check timestamps and pinned status before mapping
-    console.log('DEBUG: Raw posts fetched from DB for sorting check (first 10):');
+    console.log('DEBUG: Raw posts fetched from DB for sorting and duplication check (first 10):');
+    const fetchedPostIds = new Set();
     result.rows.slice(0, 10).forEach(row => {
         console.log(`  Post ID: ${row.id}, Timestamp: ${row.timestamp}, Is Pinned: ${row.is_pinned}`);
+        if (fetchedPostIds.has(row.id)) {
+            console.warn(`  WARNING: Duplicate Post ID "${row.id}" detected in raw fetched data!`);
+        }
+        fetchedPostIds.add(row.id);
     });
 
     return result.rows.map(row => ({
@@ -610,7 +624,11 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
     try {
         const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-        // REMOVED: followedUsersIds.push(userId); // تم إزالة هذا السطر لعدم تضمين منشورات المستخدم نفسه في فلتر المتابعين
+        // Include user's own posts in the followed feed as requested
+        followedUsersIds.push(userId); // تم إعادة هذا السطر لتضمين منشورات المستخدم نفسه في فلتر المتابعين
+
+        console.log('DEBUG: User ID requesting followed posts:', userId); // Log the user ID making the request
+        console.log('DEBUG: followedUsersIds for /api/posts/followed:', followedUsersIds); // Log the UIDs being used for filtering
 
         if (followedUsersIds.length === 0) {
             console.timeEnd('api_posts_followed'); // End timer even if no followed users
@@ -643,7 +661,11 @@ app.get('/api/posts/search', async (req, res) => {
         try {
             const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
             const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-            // REMOVED: followedUsersIds.push(userId); // تم إزالة هذا السطر لعدم تضمين منشورات المستخدم نفسه
+            // Include user's own posts in the followed search filter as requested
+            followedUsersIds.push(userId); // تم إعادة هذا السطر لتضمين منشورات المستخدم نفسه
+
+            console.log('DEBUG: User ID requesting search (followed filter):', userId); // Log the user ID making the request
+            console.log('DEBUG: followedUsersIds for /api/posts/search (followed filter):', followedUsersIds); // Log the UIDs being used for filtering
 
             if (followedUsersIds.length > 0) {
                 queryParams.push(followedUsersIds);
@@ -987,6 +1009,7 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
     const filePathInBucket = `${folder}/${fileName}`;
 
     console.log(`DEBUG: طلب ملف وسائط: ${filePathInBucket} للمستخدم: ${userId}`);
+    console.time(`media_fetch_${filePathInBucket}`); // Start timer for media fetch
 
     const params = {
         Bucket: bucketName,
@@ -995,6 +1018,8 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
 
     try {
         const data = await s3Client.send(new GetObjectCommand(params));
+        console.timeEnd(`media_fetch_${filePathInBucket}`); // End timer for media fetch
+
         if (!data.Body) {
             console.error(`ERROR: لا يوجد جسم للبيانات للملف: ${filePathInBucket}`);
             return res.status(404).send('الملف غير موجود أو فارغ.');
@@ -1010,6 +1035,7 @@ app.get('/api/media/:userId/:folder/:fileName', async (req, res) => {
 
     } catch (error) {
         console.error(`ERROR: فشل خدمة ملف الوسائط ${filePathInBucket} من Storj DCS:`, error);
+        console.timeEnd(`media_fetch_${filePathInBucket}`); // End timer on error
         if (error.Code === 'NoSuchKey') {
             return res.status(404).send('الملف غير موجود.');
         }
@@ -1642,7 +1668,8 @@ app.get('/api/group/:groupId/members/count', async (req, res) => {
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
         res.status(200).json({ count: group.participants.length });
-    } catch (error) {
+    }
+    catch (error) {
         console.error('ERROR: Failed to get group members count:', error);
         res.status(500).json({ error: 'فشل جلب عدد أعضاء المجموعة.' });
     }
