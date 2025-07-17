@@ -1341,7 +1341,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             mediaType: row.media_type,
             senderProfileBg: row.sender_profile_bg,
             senderIsVerified: row.sender_is_verified, // جديد
-            senderUserRole: row.sender_user_role // جديد
+            senderUserRole: row.user_role // جديد
         }));
         console.log('DEBUG: Chat messages data being sent (first message):', JSON.stringify(messages.slice(0, 1))); // Log first message for brevity
         res.status(200).json(messages);
@@ -1421,7 +1421,7 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
 
 // نقطة نهاية لإنشاء مجموعة جديدة
 app.post('/api/groups', async (req, res) => {
-    const { name, description, adminId, members } = req.body; // members هو كائن {uid: role}
+    const { name, description, adminId, members, profileBgUrl } = req.body; // أضفنا profileBgUrl هنا
 
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
         return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
@@ -1437,8 +1437,8 @@ app.post('/api/groups', async (req, res) => {
 
         await pool.query(
             `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, null, 'all'] // send_permission افتراضي 'all'
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, profileBgUrl || null, 'all'] // استخدام profileBgUrl هنا
         );
 
         console.log('تم إنشاء مجموعة جديدة:', newGroupId);
