@@ -348,9 +348,9 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية تسجيل المستخدم
-app.post('/api/register', async (req, res) => { // تم إزالة :projectId
+app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     if (!username || !password) {
         return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان.' });
@@ -362,12 +362,11 @@ app.post('/api/register', async (req, res) => { // تم إزالة :projectId
             return res.status(409).json({ error: 'اسم المستخدم موجود بالفعل.' });
         }
 
-        const uid = uuidv4(); // إنشاء معرف فريد للمستخدم
-        const customId = await generateCustomId(pool); // إنشاء معرف مخصص من 8 أرقام
+        const uid = uuidv4();
+        const customId = await generateCustomId(pool);
 
-        // تحديد ما إذا كان المستخدم المسجل هو المدير الافتراضي
         const userRole = (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) ? 'admin' : 'normal';
-        const isVerified = (userRole === 'admin'); // المدير موثق تلقائياً
+        const isVerified = (userRole === 'admin');
 
         await pool.query(
             'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -383,15 +382,15 @@ app.post('/api/register', async (req, res) => { // تم إزالة :projectId
 });
 
 // نقطة نهاية تسجيل الدخول
-app.post('/api/login', async (req, res) => { // تم إزالة :projectId
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password, is_verified, user_role FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
 
-        if (!user || user.password !== password) { // في تطبيق حقيقي، تحقق من كلمة المرور المشفرة
+        if (!user || user.password !== password) {
             return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
         }
 
@@ -404,9 +403,9 @@ app.post('/api/login', async (req, res) => { // تم إزالة :projectId
 });
 
 // نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
-app.get('/api/user/by-custom-id/:customId', async (req, res) => { // تم إزالة :projectId
+app.get('/api/user/by-custom-id/:customId', async (req, res) => {
     const { customId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role FROM users WHERE custom_id = $1', [customId]);
         const user = result.rows[0];
@@ -422,19 +421,17 @@ app.get('/api/user/by-custom-id/:customId', async (req, res) => { // تم إزا
 });
 
 // نقطة نهاية لتوثيق حساب المستخدم (للمدير فقط)
-app.put('/api/admin/verify-user/:customId', async (req, res) => { // تم إزالة :projectId
-    const { customId } = req.params; // المستخدم المستهدف
-    const { isVerified, callerUid } = req.body; // حالة التوثيق الجديدة ومعرف المدير الذي يقوم بالطلب
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+app.put('/api/admin/verify-user/:customId', async (req, res) => {
+    const { customId } = req.params;
+    const { isVerified, callerUid } = req.body;
+    const pool = req.dbPool;
 
     try {
-        // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير
         const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتوثيق المستخدمين.' });
         }
 
-        // تحديث حالة التوثيق للمستخدم المستهدف
         const targetUserUpdate = await pool.query(
             'UPDATE users SET is_verified = $1 WHERE custom_id = $2 RETURNING username, custom_id',
             [isVerified, customId]
@@ -453,12 +450,12 @@ app.put('/api/admin/verify-user/:customId', async (req, res) => { // تم إزا
 });
 
 // نقطة نهاية لرفع خلفية الملف الشخصي
-app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => { // تم إزالة :projectId
+app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'profile_backgrounds'; // اسم Bucket مخصص لخلفيات الملفات الشخصية في Supabase Storage
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'profile-backgrounds'; // **تم التعديل: استخدام الواصلة**
 
     if (!userId || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
@@ -472,14 +469,13 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 
         const fileExtension = uploadedFile.originalname.split('.').pop();
         const fileName = `${uuidv4()}.${fileExtension}`;
-        const filePath = `${userId}/${fileName}`; // مسار التخزين في Bucket (مثال: userId/fileName.jpg)
+        const filePath = `${userId}/${fileName}`;
 
-        // رفع الملف إلى Supabase Storage
         const { data, error: uploadError } = await supabase.storage
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
                 contentType: uploadedFile.mimetype,
-                upsert: false // لا تقم بالتحديث إذا كان الملف موجودًا بالفعل
+                upsert: false
             });
 
         if (uploadError) {
@@ -487,7 +483,6 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
-        // الحصول على الرابط العام للملف
         const { data: publicUrlData } = supabase.storage
             .from(bucketName)
             .getPublicUrl(filePath);
@@ -510,9 +505,9 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 });
 
 // نقطة نهاية للحصول على عدد متابعي مستخدم معين
-app.get('/api/user/:userId/followers/count', async (req, res) => { // تم إزالة :projectId
+app.get('/api/user/:userId/followers/count', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query('SELECT COUNT(*) FROM followers WHERE followed_id = $1', [userId]);
         const followerCount = parseInt(result.rows[0].count);
@@ -524,9 +519,9 @@ app.get('/api/user/:userId/followers/count', async (req, res) => { // تم إز�
 });
 
 // نقطة نهاية للحصول على حالة المتابعة بين مستخدمين
-app.get('/api/user/:followerId/following/:followedId', async (req, res) => { // تم إزالة :projectId
+app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
         const isFollowing = result.rows.length > 0;
@@ -538,9 +533,9 @@ app.get('/api/user/:followerId/following/:followedId', async (req, res) => { // 
 });
 
 // نقطة نهاية للمتابعة/إلغاء المتابعة
-app.post('/api/user/:followerId/follow/:followedId', async (req, res) => { // تم إزالة :projectId
+app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     if (followerId === followedId) {
         return res.status(400).json({ error: 'لا يمكنك متابعة نفسك.' });
@@ -559,12 +554,10 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => { // ت
         let message;
         let isFollowing;
         if (existingFollow.rows.length > 0) {
-            // إلغاء المتابعة
             await pool.query('DELETE FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
             message = 'تم إلغاء المتابعة بنجاح.';
             isFollowing = false;
         } else {
-            // متابعة
             await pool.query('INSERT INTO followers (follower_id, followed_id) VALUES ($1, $2)', [followerId, followedId]);
             message = 'تمت المتابعة بنجاح.';
             isFollowing = true;
@@ -578,9 +571,9 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => { // ت
 });
 
 // نقطة نهاية للحصول على جهات الاتصال (المستخدمين الذين أجرى معهم المستخدم الحالي محادثات فردية)
-app.get('/api/user/:userId/contacts', async (req, res) => { // تم إزالة :projectId
+app.get('/api/user/:userId/contacts', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query(`
             SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url, u.is_verified, u.user_role
@@ -607,12 +600,12 @@ app.get('/api/user/:userId/contacts', async (req, res) => { // تم إزالة :
 });
 
 // نقطة نهاية لنشر منشور جديد
-app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم إزالة :projectId
+app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'post_media'; // اسم Bucket مخصص لوسائط المنشورات
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'post-media'; // **تم التعديل: استخدام الواصلة**
 
     let postMediaUrl = null;
     let postMediaType = mediaType || 'text';
@@ -625,9 +618,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم
         if (mediaFile) {
             const fileExtension = mediaFile.originalname.split('.').pop();
             const fileName = `${uuidv4()}.${fileExtension}`;
-            const filePath = `${authorId}/${fileName}`; // مسار التخزين في Bucket
+            const filePath = `${authorId}/${fileName}`;
 
-            // رفع الملف إلى Supabase Storage
             const { data, error: uploadError } = await supabase.storage
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
@@ -640,7 +632,6 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
-            // الحصول على الرابط العام للملف
             const { data: publicUrlData } = supabase.storage
                 .from(bucketName)
                 .getPublicUrl(filePath);
@@ -678,7 +669,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم
             text: text || '',
             timestamp,
             likes: [],
-            comments: [], // التعليقات لا تُحفظ هنا، بل في جدول comments
+            comments: [],
             views: [],
             mediaUrl: postMediaUrl,
             mediaType: postMediaType,
@@ -694,11 +685,11 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم
 });
 
 // نقطة نهاية للحصول على جميع المنشورات
-app.get('/api/posts', async (req, res) => { // تم إزالة :projectId
-    const { userId } = req.query; // معرف المستخدم اختياري لموضع التشغيل
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+app.get('/api/posts', async (req, res) => {
+    const { userId } = req.query;
+    const pool = req.dbPool;
     try {
-        const postsWithDetails = await getPostsWithDetails(pool, '', [], userId); // تمرير userId هنا
+        const postsWithDetails = await getPostsWithDetails(pool, '', [], userId);
         console.log('DEBUG: بيانات المنشورات التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -708,20 +699,20 @@ app.get('/api/posts', async (req, res) => { // تم إزالة :projectId
 });
 
 // نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
-app.get('/api/posts/followed/:userId', async (req, res) => { // تم إزالة :projectId
+app.get('/api/posts/followed/:userId', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-        followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
+        followedUsersIds.push(userId);
 
         if (followedUsersIds.length === 0) {
-            return res.status(200).json([]); // لا يوجد متابعون ولا منشورات للمستخدم نفسه
+            return res.status(200).json([]);
         }
 
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
-        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, [followedUsersIds], userId); // تمرير userId هنا
+        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, [followedUsersIds], userId);
         console.log('DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -731,9 +722,9 @@ app.get('/api/posts/followed/:userId', async (req, res) => { // تم إزالة 
 });
 
 // نقطة نهاية للبحث في المنشورات
-app.get('/api/posts/search', async (req, res) => { // تم إزالة :projectId
+app.get('/api/posts/search', async (req, res) => {
     const { q, filter, userId } = req.query;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
 
     let baseQuery = ``;
@@ -761,15 +752,15 @@ app.get('/api/posts/search', async (req, res) => { // تم إزالة :projectId
         queryParams.push(searchTerm);
         if (baseQuery) {
             baseQuery += ` AND (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
-            queryParams.push(searchTerm); // إضافة searchTerm مرة أخرى للمعامل الثاني
+            queryParams.push(searchTerm);
         } else {
             baseQuery += ` WHERE (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
-            queryParams.push(searchTerm); // إضافة searchTerm مرة أخرى للمعامل الثاني
+            queryParams.push(searchTerm);
         }
     }
 
     try {
-        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, queryParams, userId); // تمرير userId هنا
+        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, queryParams, userId);
         console.log('DEBUG: بيانات نتائج البحث التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
@@ -779,12 +770,12 @@ app.get('/api/posts/search', async (req, res) => { // تم إزالة :projectId
 });
 
 // نقطة نهاية لحذف منشور
-app.delete('/api/posts/:postId', async (req, res) => { // تم إزالة :projectId
-    const { postId } = req.params; // postId في المسار
-    const { callerUid } = req.body; // callerUid في الجسم
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'post_media'; // اسم Bucket لوسائط المنشورات
+app.delete('/api/posts/:postId', async (req, res) => {
+    const { postId } = req.params;
+    const { callerUid } = req.body;
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'post-media'; // **تم التعديل: استخدام الواصلة**
 
     try {
         const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
@@ -794,20 +785,14 @@ app.delete('/api/posts/:postId', async (req, res) => { // تم إزالة :proje
             return res.status(404).json({ error: 'المنشور غير موجود.' });
         }
 
-        // التحقق من أن المستخدم هو صاحب المنشور أو مدير
         const callerUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (deletedPost.author_id !== callerUid && (!callerUser.rows[0] || callerUser.rows[0].user_role !== 'admin')) {
             return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
         }
 
-        // إذا كان المنشور يحتوي على وسائط، احذفها من Supabase Storage
         if (deletedPost.media_url) {
-            // استخراج المسار من الرابط العام
             const url = new URL(deletedPost.media_url);
             const pathSegments = url.pathname.split('/');
-            // المسار في Supabase Storage يبدأ بعد اسم الـ bucket
-            // مثال: /storage/v1/object/public/post_media/authorId/fileName.ext
-            // نحتاج authorId/fileName.ext
             const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
 
             const { error: deleteError } = await supabase.storage
@@ -816,7 +801,6 @@ app.delete('/api/posts/:postId', async (req, res) => { // تم إزالة :proje
 
             if (deleteError) {
                 console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
-                // لا نرجع خطأ هنا لأننا نريد حذف المنشور من قاعدة البيانات حتى لو فشل حذف الملف
             } else {
                 console.log(`تم حذف الملف من Supabase Storage: ${filePathInBucket}`);
             }
@@ -832,13 +816,12 @@ app.delete('/api/posts/:postId', async (req, res) => { // تم إزالة :proje
 });
 
 // نقطة نهاية لتثبيت/إلغاء تثبيت منشور (للمدير فقط)
-app.put('/api/posts/:postId/pin', async (req, res) => { // تم إزالة :projectId
+app.put('/api/posts/:postId/pin', async (req, res) => {
     const { postId } = req.params;
     const { isPinned, callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
-        // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير
         const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتثبيت/إلغاء تثبيت المنشورات.' });
@@ -858,10 +841,10 @@ app.put('/api/posts/:postId/pin', async (req, res) => { // تم إزالة :proj
 });
 
 // نقطة نهاية للإعجاب بمنشور
-app.post('/api/posts/:postId/like', async (req, res) => { // تم إزالة :projectId
+app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const postResult = await pool.query('SELECT likes FROM posts WHERE id = $1', [postId]);
@@ -876,10 +859,10 @@ app.post('/api/posts/:postId/like', async (req, res) => { // تم إزالة :pr
         let isLiked;
 
         if (userIndex === -1) {
-            currentLikes.push(userId); // إضافة إعجاب
+            currentLikes.push(userId);
             isLiked = true;
         } else {
-            currentLikes.splice(userIndex, 1); // إزالة إعجاب
+            currentLikes.splice(userIndex, 1);
             isLiked = false;
         }
 
@@ -892,10 +875,10 @@ app.post('/api/posts/:postId/like', async (req, res) => { // تم إزالة :pr
 });
 
 // نقطة نهاية لزيادة عدد المشاهدات
-app.post('/api/posts/:postId/view', async (req, res) => { // تم إزالة :projectId
+app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const postResult = await pool.query('SELECT views FROM posts WHERE id = $1', [postId]);
@@ -907,7 +890,6 @@ app.post('/api/posts/:postId/view', async (req, res) => { // تم إزالة :pr
 
         let currentViews = post.views || [];
 
-        // إضافة المشاهدة فقط إذا لم يشاهدها المستخدم من قبل
         if (!currentViews.includes(userId)) {
             currentViews.push(userId);
             await pool.query('UPDATE posts SET views = $1 WHERE id = $2', [JSON.stringify(currentViews), postId]);
@@ -920,10 +902,10 @@ app.post('/api/posts/:postId/view', async (req, res) => { // تم إزالة :pr
 });
 
 // نقطة نهاية لإضافة تعليق على منشور
-app.post('/api/posts/:postId/comments', async (req, res) => { // تم إزالة :projectId
+app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     if (!text) {
         return res.status(400).json({ error: 'نص التعليق مطلوب.' });
@@ -967,9 +949,9 @@ app.post('/api/posts/:postId/comments', async (req, res) => { // تم إزالة
 });
 
 // نقطة نهاية للحصول على تعليقات منشور
-app.get('/api/posts/:postId/comments', async (req, res) => { // تم إزالة :projectId
+app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query(`
             SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified
@@ -985,7 +967,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => { // تم إزالة 
             text: row.text,
             timestamp: parseInt(row.timestamp),
             userProfileBg: row.user_profile_bg,
-            likes: row.likes, // JSONB is already an array in Node.js
+            likes: row.likes,
             isVerified: row.is_verified
         }));
         console.log('DEBUG: بيانات التعليقات التي يتم إرسالها (أول تعليق):', JSON.stringify(comments.slice(0, 1)));
@@ -997,10 +979,10 @@ app.get('/api/posts/:postId/comments', async (req, res) => { // تم إزالة 
 });
 
 // نقطة نهاية لتعديل تعليق
-app.put('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم إزالة :projectId
+app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
-    const { userId, newText } = req.body; // userId هو معرف المستخدم الذي يقوم بالتعديل
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const { userId, newText } = req.body;
+    const pool = req.dbPool;
 
     if (!newText || newText.trim() === '') {
         return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
@@ -1014,7 +996,6 @@ app.put('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم 
             return res.status(404).json({ error: 'التعليق غير موجود.' });
         }
 
-        // التحقق من أن المستخدم هو صاحب التعليق
         if (comment.user_id !== userId) {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذا التعليق.' });
         }
@@ -1028,10 +1009,10 @@ app.put('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم 
 });
 
 // نقطة نهاية لحذف تعليق
-app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم إزالة :projectId
+app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
-    const { userId } = req.body; // userId هو معرف المستخدم الذي يقوم بالحذف
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const { userId } = req.body;
+    const pool = req.dbPool;
 
     try {
         const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1041,7 +1022,6 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => { // ت
             return res.status(404).json({ error: 'التعليق غير موجود.' });
         }
 
-        // التحقق من أن المستخدم هو صاحب التعليق أو مالك المنشور أو مدير
         const postOwnerResult = await pool.query('SELECT author_id FROM posts WHERE id = $1', [comment.post_id]);
         const postOwnerId = postOwnerResult.rows[0] ? postOwnerResult.rows[0].author_id : null;
 
@@ -1062,10 +1042,10 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => { // ت
 
 
 // نقطة نهاية للإعجاب بتعليق
-app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => { // تم إزالة :projectId
+app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const commentResult = await pool.query('SELECT likes FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1080,10 +1060,10 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => { //
         let isLiked;
 
         if (userIndex === -1) {
-            currentLikes.push(userId); // إضافة إعجاب
+            currentLikes.push(userId);
             isLiked = true;
         } else {
-            currentLikes.splice(userIndex, 1); // إزالة إعجاب
+            currentLikes.splice(userIndex, 1);
             isLiked = false;
         }
 
@@ -1097,14 +1077,10 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => { //
 });
 
 // نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات والرسائل الصوتية)
-// ملاحظة: هذا المسار لا يستخدم projectId في URL لأنه يُفترض أن الواجهة الأمامية ستحصل على الرابط العام مباشرة من Supabase Storage.
-// إذا كنت تريد توجيه طلبات الوسائط عبر الخادم الخلفي، فستحتاج إلى تعديل هذه النقطة لتتلقى projectId
-// وتستخدم عميل Supabase الخاص بالمشروع المحدد.
-app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => { // تم إزالة :projectId
+app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     const { bucketName, folder, fileName } = req.params;
-    // لم نعد نتوقع projectId في المسار، لذا سنستخدم معرف المشروع الافتراضي للخادم
-    const projectId = BACKEND_DEFAULT_PROJECT_ID; 
-    const supabase = projectSupabaseClients[projectId]; // استخدام عميل Supabase الخاص بالمشروع المحدد
+    const projectId = req.currentProjectId; // استخدام معرف المشروع من البرمجية الوسيطة
+    const supabase = req.supabase;
 
     if (!supabase) {
         return res.status(400).send('معرف المشروع غير صالح أو غير مهيأ لخدمة الوسائط.');
@@ -1115,17 +1091,15 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => { // ت�
     console.log(`DEBUG: طلب ملف وسائط: ${filePathInBucket} من Bucket: ${bucketName} للمشروع: ${projectId}`);
 
     try {
-        // إنشاء رابط موقّع للوصول إلى الملف (لضمان الأمان والتحكم في الوصول)
         const { data, error } = await supabase.storage
             .from(bucketName)
-            .createSignedUrl(filePathInBucket, 60); // رابط صالح لمدة 60 ثانية
+            .createSignedUrl(filePathInBucket, 60);
 
         if (error || !data || !data.signedUrl) {
             console.error(`خطأ: فشل إنشاء رابط موقّع للملف ${filePathInBucket}:`, error);
             return res.status(500).send('فشل في خدمة الملف.');
         }
 
-        // إعادة توجيه الطلب إلى الرابط الموقّع
         res.redirect(data.signedUrl);
 
     } catch (error) {
@@ -1140,17 +1114,16 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => { // ت�
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لحفظ أو تحديث موضع تشغيل الفيديو
-app.post('/api/video/:postId/playback-position', async (req, res) => { // تم إزالة :projectId
+app.post('/api/video/:postId/playback-position', async (req, res) => {
     const { postId } = req.params;
-    const { userId, positionSeconds } = req.body; // موضع التشغيل بالثواني
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const { userId, positionSeconds } = req.body;
+    const pool = req.dbPool;
 
     if (!userId || positionSeconds === undefined || positionSeconds === null) {
         return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
     }
 
     try {
-        // عملية UPSERT: INSERT إذا لم يكن موجودًا، UPDATE إذا كان موجودًا
         await pool.query(`
             INSERT INTO video_playback_progress (user_id, post_id, position_seconds, last_updated)
             VALUES ($1, $2, $3, $4)
@@ -1170,7 +1143,7 @@ app.post('/api/video/:postId/playback-position', async (req, res) => { // تم �
 // ----------------------------------------------------------------------------------------------------
 // نقاط نهاية وكيل Gemini API
 // ----------------------------------------------------------------------------------------------------
-app.post('/api/gemini-proxy', async (req, res) => { // تم إزالة :projectId
+app.post('/api/gemini-proxy', async (req, res) => {
     const { prompt, chatHistory = [] } = req.body;
 
     if (!GEMINI_API_KEY) {
@@ -1181,8 +1154,6 @@ app.post('/api/gemini-proxy', async (req, res) => { // تم إزالة :projectI
     const payload = {
         contents: [...chatHistory, { role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-            // يمكنك إضافة إعدادات إضافية هنا مثل temperature, topP, topK
-            // على سبيل المثال: temperature: 0.7
         }
     };
 
@@ -1223,16 +1194,15 @@ app.post('/api/gemini-proxy', async (req, res) => { // تم إزالة :projectI
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لإنشاء محادثة فردية
-app.post('/api/chats/private', async (req, res) => { // تم إزالة :projectId
+app.post('/api/chats/private', async (req, res) => {
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
         return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
     }
 
     try {
-        // تحقق مما إذا كانت المحادثة موجودة بالفعل
         const existingChatResult = await pool.query(`
             SELECT id FROM chats
             WHERE type = 'private'
@@ -1253,7 +1223,6 @@ app.post('/api/chats/private', async (req, res) => { // تم إزالة :project
             [user2Id]: user1Name
         };
 
-        // جلب خلفية الملف الشخصي للمستخدم الآخر لتعيينها كخلفية للمحادثة الفردية
         const user2Profile = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user2Id]);
         const chatProfileBg = user2Profile.rows[0] ? user2Profile.rows[0].profile_bg_url : null;
 
@@ -1273,10 +1242,10 @@ app.post('/api/chats/private', async (req, res) => { // تم إزالة :project
 });
 
 // نقطة نهاية لتعديل اسم جهة الاتصال في محادثة فردية
-app.put('/api/chats/private/:chatId/contact-name', async (req, res) => { // تم إزالة :projectId
+app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     const { chatId } = req.params;
     const { userId, newContactName } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
@@ -1299,9 +1268,9 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => { // تم
 });
 
 // نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
-app.get('/api/user/:userId/chats', async (req, res) => { // تم إزالة :projectId
+app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const result = await pool.query(`
             SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants, send_permission
@@ -1314,7 +1283,7 @@ app.get('/api/user/:userId/chats', async (req, res) => { // تم إزالة :pro
         for (const row of result.rows) {
             let chatName = '';
             let chatCustomId = null;
-            let chatProfileBg = row.profile_bg_url; // استخدم profile_bg_url مباشرة من جدول chats
+            let chatProfileBg = row.profile_bg_url;
             let chatAdminId = null;
             let chatSendPermission = row.send_permission;
 
@@ -1331,7 +1300,6 @@ app.get('/api/user/:userId/chats', async (req, res) => { // تم إزالة :pro
                         const otherUser = otherUserResult.rows[0];
                         if (otherUser) {
                             chatCustomId = otherUser.custom_id;
-                            // إذا كانت محادثة فردية، خلفية المحادثة هي خلفية الملف الشخصي للطرف الآخر
                             chatProfileBg = otherUser.profile_bg_url;
                         }
                     }
@@ -1362,13 +1330,13 @@ app.get('/api/user/:userId/chats', async (req, res) => { // تم إزالة :pro
 });
 
 // نقطة نهاية لإرسال رسالة في محادثة
-app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => { // تم إزالة :projectId
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'chat_media'; // اسم Bucket لوسائط الدردشة
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'chat-media'; // **تم التعديل: استخدام الواصلة**
 
     let messageMediaUrl = null;
     let messageMediaType = mediaType || 'text';
@@ -1384,7 +1352,6 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
         }
 
-        // التحقق من صلاحية الإرسال في المجموعات
         if (chat.type === 'group' && chat.send_permission === 'admins_only') {
             const senderRole = chat.member_roles[senderId];
             if (senderRole !== 'admin') {
@@ -1395,9 +1362,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         if (mediaFile) {
             const fileExtension = mediaFile.originalname.split('.').pop();
             const fileName = `${uuidv4()}.${fileExtension}`;
-            const filePath = `${senderId}/${fileName}`; // مسار التخزين في Bucket
+            const filePath = `${senderId}/${fileName}`;
 
-            // رفع الملف إلى Supabase Storage
             const { data, error: uploadError } = await supabase.storage
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
@@ -1410,7 +1376,6 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
-            // الحصول على الرابط العام للملف
             const { data: publicUrlData } = supabase.storage
                 .from(bucketName)
                 .getPublicUrl(filePath);
@@ -1428,7 +1393,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                     messageMediaType = 'image';
                 } else if (mediaFile.mimetype.startsWith('video/')) {
                     messageMediaType = 'video';
-                } else if (mediaFile.mimetype.startsWith('audio/')) { // جديد: دعم الصوت
+                } else if (mediaFile.mimetype.startsWith('audio/')) {
                     messageMediaType = 'audio';
                 }
             }
@@ -1476,10 +1441,10 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 });
 
 // نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
-app.get('/api/chats/:chatId/messages', async (req, res) => { // تم إزالة :projectId
+app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const result = await pool.query(
@@ -1511,10 +1476,10 @@ app.get('/api/chats/:chatId/messages', async (req, res) => { // تم إزالة 
 });
 
 // نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
-app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => { // تم إزالة :projectId
+app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
     const { chatId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
@@ -1527,12 +1492,10 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => { // تم �
         let updatedParticipants = chat.participants.filter(p => p !== userId);
 
         if (updatedParticipants.length === 0) {
-            // إذا لم يتبق أي مشاركين، احذف المحادثة بالكامل
             await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
             console.log(`تم حذف المحادثة ${chatId} بالكامل لأن المستخدم ${userId} كان آخر مشارك.`);
             res.status(200).json({ message: 'تم حذف المحادثة بالكامل بنجاح.' });
         } else {
-            // تحديث قائمة المشاركين
             await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatId]);
             console.log(`تم حذف المحادثة ${chatId} للمستخدم ${userId} فقط.`);
             res.status(200).json({ message: 'تم حذف المحادثة من عندك بنجاح.' });
@@ -1544,18 +1507,17 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => { // تم �
 });
 
 // نقطة نهاية لحذف محادثة فردية من الطرفين
-app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => { // تم إزالة :projectId
+app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { chatId } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'chat_media'; // اسم Bucket لوسائط الدردشة
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'chat-media'; // **تم التعديل: استخدام الواصلة**
 
     try {
         const messagesResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
         const messagesMediaUrls = messagesResult.rows.map(row => row.media_url).filter(Boolean);
 
-        // حذف ملفات الوسائط المرتبطة بالرسائل في هذه المحادثة من Supabase Storage
         if (messagesMediaUrls.length > 0) {
             const filePathsToDelete = messagesMediaUrls.map(url => {
                 const urlObj = new URL(url);
@@ -1574,9 +1536,7 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => { /
             }
         }
 
-        // حذف جميع الرسائل المتعلقة بالمحادثة
         await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-        // حذف المحادثة نفسها
         await pool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, callerUid]);
 
         console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
@@ -1592,9 +1552,9 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => { /
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لإنشاء مجموعة جديدة
-app.post('/api/groups', async (req, res) => { // تم إزالة :projectId
+app.post('/api/groups', async (req, res) => {
     const { name, description, adminId, members, profileBgUrl } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
         return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
@@ -1623,10 +1583,10 @@ app.post('/api/groups', async (req, res) => { // تم إزالة :projectId
 });
 
 // نقطة نهاية لتغيير اسم المجموعة
-app.put('/api/groups/:groupId/name', async (req, res) => { // تم إزالة :projectId
+app.put('/api/groups/:groupId/name', async (req, res) => {
     const { groupId } = req.params;
     const { newName, callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1650,13 +1610,13 @@ app.put('/api/groups/:groupId/name', async (req, res) => { // تم إزالة :p
 });
 
 // نقطة نهاية لتغيير خلفية المجموعة
-app.post('/api/groups/:groupId/background', upload.single('file'), async (req, res) => { // تم إزالة :projectId
+app.post('/api/groups/:groupId/background', upload.single('file'), async (req, res) => {
     const { groupId } = req.params;
     const { callerUid } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
-    const supabase = req.supabase; // استخدام عميل Supabase الخاص بالمشروع المحدد
-    const bucketName = 'group_backgrounds'; // اسم Bucket مخصص لخلفيات المجموعات
+    const pool = req.dbPool;
+    const supabase = req.supabase;
+    const bucketName = 'group-backgrounds'; // **تم التعديل: استخدام الواصلة**
 
     if (!callerUid || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
@@ -1670,16 +1630,14 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        // التحقق من أن المستخدم لديه صلاحية المشرف
         if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير خلفية المجموعة.' });
         }
 
         const fileExtension = uploadedFile.originalname.split('.').pop();
         const fileName = `${uuidv4()}.${fileExtension}`;
-        const filePath = `${groupId}/${fileName}`; // مسار التخزين في Bucket
+        const filePath = `${groupId}/${fileName}`;
 
-        // رفع الملف إلى Supabase Storage
         const { data, error: uploadError } = await supabase.storage
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
@@ -1692,7 +1650,6 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
-        // الحصول على الرابط العام للملف
         const { data: publicUrlData } = supabase.storage
                 .from(bucketName)
                 .getPublicUrl(filePath);
@@ -1710,15 +1667,15 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
         res.status(200).json({ message: 'تم تحميل خلفية المجموعة بنجاح.', url: mediaUrl });
     } catch (error) {
         console.error('خطأ: فشل تحميل خلفية المجموعة أو تحديث قاعدة البيانات:', error);
-        res.status(500).json({ error: 'فشل تحميل خلفية المجموعة.' });
+        res.status(500).json({ error: 'فشل تحميل الخلفية.' });
     }
 });
 
 // نقطة نهاية لتغيير إذن الإرسال في المجموعة
-app.put('/api/groups/:groupId/send-permission', async (req, res) => { // تم إزالة :projectId
+app.put('/api/groups/:groupId/send-permission', async (req, res) => {
     const { groupId } = req.params;
-    const { callerUid, newPermission } = req.body; // 'all' أو 'admins_only'
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const { callerUid, newPermission } = req.body;
+    const pool = req.dbPool;
 
     if (!newPermission || !['all', 'admins_only'].includes(newPermission)) {
         return res.status(400).json({ error: 'إذن الإرسال غير صالح.' });
@@ -1732,7 +1689,6 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => { // تم إ
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
-        // التحقق من أن المستخدم لديه صلاحية المشرف
         if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
         }
@@ -1747,9 +1703,9 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => { // تم إ
 
 
 // نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
-app.get('/api/group/:groupId/members', async (req, res) => { // تم إزالة :projectId
+app.get('/api/group/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
@@ -1787,9 +1743,9 @@ app.get('/api/group/:groupId/members', async (req, res) => { // تم إزالة 
 });
 
 // نقطة نهاية للحصول على عدد أعضاء المجموعة
-app.get('/api/group/:groupId/members/count', async (req, res) => { // تم إزالة :projectId
+app.get('/api/group/:groupId/members/count', async (req, res) => {
     const { groupId } = req.params;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
     try {
         const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
@@ -1805,10 +1761,10 @@ app.get('/api/group/:groupId/members/count', async (req, res) => { // تم إز�
 });
 
 // نقطة نهاية لإضافة أعضاء إلى مجموعة موجودة
-app.post('/api/groups/:groupId/add-members', async (req, res) => { // تم إزالة :projectId
+app.post('/api/groups/:groupId/add-members', async (req, res) => {
     const { groupId } = req.params;
     const { newMemberUids, callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1852,10 +1808,10 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => { // تم إز�
 });
 
 // نقطة نهاية لتغيير دور عضو في المجموعة (مشرف/عضو)
-app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => { // تم إزالة :projectId
+app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { newRole, callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1893,10 +1849,10 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => { // 
 });
 
 // نقطة نهاية لإزالة عضو من المجموعة
-app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => { // تم إزالة :projectId
-    const { groupId } = req.params;
+app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
+    const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1936,10 +1892,10 @@ app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => { // ت
 });
 
 // نقطة نهاية لمغادرة المجموعة
-app.delete('/api/group/:groupId/leave', async (req, res) => { // تم إزالة :projectId
+app.delete('/api/group/:groupId/leave', async (req, res) => {
     const { groupId } = req.params;
     const { memberUid } = req.body;
-    const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
+    const pool = req.dbPool;
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1981,6 +1937,5 @@ app.delete('/api/group/:groupId/leave', async (req, res) => { // تم إزالة
 app.listen(port, async () => {
     console.log(`الخادم يعمل على المنفذ ${port}`);
     console.log(`رابط الواجهة الخلفية (Backend URL): http://localhost:${port}`);
-    await initializeSupabaseClients(); // استدعاء لتهيئة عملاء Supabase وقواعد البيانات
+    await initializeSupabaseClients();
 });
-
