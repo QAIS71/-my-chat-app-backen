@@ -56,6 +56,11 @@ const SUPABASE_PROJECT_CONFIGS = {
     // },
 };
 
+// **معرف المشروع الافتراضي للخادم الخلفي**
+// هذا هو معرف المشروع الذي سيستخدمه الخادم الخلفي لجميع عمليات قاعدة البيانات والتخزين.
+// تأكد من أن هذا المعرف موجود في كائن SUPABASE_PROJECT_CONFIGS أعلاه.
+const BACKEND_DEFAULT_PROJECT_ID = "kdbtusugpqboxsaosaci"; // <-- قم بتغيير هذا إلى معرف مشروعك الأساسي
+
 // كائنات لتخزين مجمعات اتصال قاعدة البيانات وعملاء Supabase لكل مشروع
 const projectDbPools = {};
 const projectSupabaseClients = {};
@@ -252,15 +257,18 @@ app.use(cors());
 // تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
 
-// برمجية وسيطة للتحقق من معرف المشروع وتوفير Pool وعميل Supabase
-app.use('/api/:projectId/*', (req, res, next) => {
-    const { projectId } = req.params;
-    if (!projectDbPools[projectId] || !projectSupabaseClients[projectId]) {
-        return res.status(400).json({ error: 'معرف المشروع غير صالح أو غير مهيأ.' });
+// برمجية وسيطة لتعيين Pool وعميل Supabase بناءً على معرف المشروع الافتراضي
+app.use('/api/*', (req, res, next) => {
+    // استخدم معرف المشروع الافتراضي لجميع استدعاءات API
+    const projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
+
+    if (!projectDbPools[projectIdToUse] || !projectSupabaseClients[projectIdToUse]) {
+        console.error(`خطأ: معرف المشروع الافتراضي ${projectIdToUse} غير صالح أو غير مهيأ.`);
+        return res.status(500).json({ error: 'خطأ في تهيئة الخادم: معرف المشروع الافتراضي غير صالح.' });
     }
-    req.dbPool = projectDbPools[projectId];
-    req.supabase = projectSupabaseClients[projectId];
-    req.currentProjectId = projectId; // لتمرير معرف المشروع إلى الدوال
+    req.dbPool = projectDbPools[projectIdToUse];
+    req.supabase = projectSupabaseClients[projectIdToUse];
+    req.currentProjectId = projectIdToUse; // لا يزال يمررها داخلياً للدوال التي قد تحتاجها
     next();
 });
 
@@ -336,11 +344,11 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
 
 
 // ----------------------------------------------------------------------------------------------------
-// نقاط نهاية API - تم تعديلها للعمل مع PostgreSQL و Supabase متعددة المشاريع
+// نقاط نهاية API - تم تعديلها للعمل مع PostgreSQL و Supabase (بدون projectId في المسار)
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية تسجيل المستخدم
-app.post('/api/:projectId/register', async (req, res) => {
+app.post('/api/register', async (req, res) => { // تم إزالة :projectId
     const { username, password } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -375,7 +383,7 @@ app.post('/api/:projectId/register', async (req, res) => {
 });
 
 // نقطة نهاية تسجيل الدخول
-app.post('/api/:projectId/login', async (req, res) => {
+app.post('/api/login', async (req, res) => { // تم إزالة :projectId
     const { username, password } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -396,7 +404,7 @@ app.post('/api/:projectId/login', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
-app.get('/api/:projectId/user/by-custom-id/:customId', async (req, res) => {
+app.get('/api/user/by-custom-id/:customId', async (req, res) => { // تم إزالة :projectId
     const { customId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -414,7 +422,7 @@ app.get('/api/:projectId/user/by-custom-id/:customId', async (req, res) => {
 });
 
 // نقطة نهاية لتوثيق حساب المستخدم (للمدير فقط)
-app.put('/api/:projectId/admin/verify-user/:customId', async (req, res) => {
+app.put('/api/admin/verify-user/:customId', async (req, res) => { // تم إزالة :projectId
     const { customId } = req.params; // المستخدم المستهدف
     const { isVerified, callerUid } = req.body; // حالة التوثيق الجديدة ومعرف المدير الذي يقوم بالطلب
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -445,7 +453,7 @@ app.put('/api/:projectId/admin/verify-user/:customId', async (req, res) => {
 });
 
 // نقطة نهاية لرفع خلفية الملف الشخصي
-app.post('/api/:projectId/upload-profile-background', upload.single('file'), async (req, res) => {
+app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => { // تم إزالة :projectId
     const { userId } = req.body;
     const uploadedFile = req.file;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -502,7 +510,7 @@ app.post('/api/:projectId/upload-profile-background', upload.single('file'), asy
 });
 
 // نقطة نهاية للحصول على عدد متابعي مستخدم معين
-app.get('/api/:projectId/user/:userId/followers/count', async (req, res) => {
+app.get('/api/user/:userId/followers/count', async (req, res) => { // تم إزالة :projectId
     const { userId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -516,7 +524,7 @@ app.get('/api/:projectId/user/:userId/followers/count', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على حالة المتابعة بين مستخدمين
-app.get('/api/:projectId/user/:followerId/following/:followedId', async (req, res) => {
+app.get('/api/user/:followerId/following/:followedId', async (req, res) => { // تم إزالة :projectId
     const { followerId, followedId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -530,7 +538,7 @@ app.get('/api/:projectId/user/:followerId/following/:followedId', async (req, re
 });
 
 // نقطة نهاية للمتابعة/إلغاء المتابعة
-app.post('/api/:projectId/user/:followerId/follow/:followedId', async (req, res) => {
+app.post('/api/user/:followerId/follow/:followedId', async (req, res) => { // تم إزالة :projectId
     const { followerId, followedId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -570,7 +578,7 @@ app.post('/api/:projectId/user/:followerId/follow/:followedId', async (req, res)
 });
 
 // نقطة نهاية للحصول على جهات الاتصال (المستخدمين الذين أجرى معهم المستخدم الحالي محادثات فردية)
-app.get('/api/:projectId/user/:userId/contacts', async (req, res) => {
+app.get('/api/user/:userId/contacts', async (req, res) => { // تم إزالة :projectId
     const { userId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -599,7 +607,7 @@ app.get('/api/:projectId/user/:userId/contacts', async (req, res) => {
 });
 
 // نقطة نهاية لنشر منشور جديد
-app.post('/api/:projectId/posts', upload.single('mediaFile'), async (req, res) => {
+app.post('/api/posts', upload.single('mediaFile'), async (req, res) => { // تم إزالة :projectId
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -686,7 +694,7 @@ app.post('/api/:projectId/posts', upload.single('mediaFile'), async (req, res) =
 });
 
 // نقطة نهاية للحصول على جميع المنشورات
-app.get('/api/:projectId/posts', async (req, res) => {
+app.get('/api/posts', async (req, res) => { // تم إزالة :projectId
     const { userId } = req.query; // معرف المستخدم اختياري لموضع التشغيل
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -700,7 +708,7 @@ app.get('/api/:projectId/posts', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
-app.get('/api/:projectId/posts/followed/:userId', async (req, res) => {
+app.get('/api/posts/followed/:userId', async (req, res) => { // تم إزالة :projectId
     const { userId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -723,7 +731,7 @@ app.get('/api/:projectId/posts/followed/:userId', async (req, res) => {
 });
 
 // نقطة نهاية للبحث في المنشورات
-app.get('/api/:projectId/posts/search', async (req, res) => {
+app.get('/api/posts/search', async (req, res) => { // تم إزالة :projectId
     const { q, filter, userId } = req.query;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
@@ -771,7 +779,7 @@ app.get('/api/:projectId/posts/search', async (req, res) => {
 });
 
 // نقطة نهاية لحذف منشور
-app.delete('/api/:projectId/posts/:postId', async (req, res) => {
+app.delete('/api/posts/:postId', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params; // postId في المسار
     const { callerUid } = req.body; // callerUid في الجسم
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -824,7 +832,7 @@ app.delete('/api/:projectId/posts/:postId', async (req, res) => {
 });
 
 // نقطة نهاية لتثبيت/إلغاء تثبيت منشور (للمدير فقط)
-app.put('/api/:projectId/posts/:postId/pin', async (req, res) => {
+app.put('/api/posts/:postId/pin', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const { isPinned, callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -850,7 +858,7 @@ app.put('/api/:projectId/posts/:postId/pin', async (req, res) => {
 });
 
 // نقطة نهاية للإعجاب بمنشور
-app.post('/api/:projectId/posts/:postId/like', async (req, res) => {
+app.post('/api/posts/:postId/like', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const { userId } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -884,7 +892,7 @@ app.post('/api/:projectId/posts/:postId/like', async (req, res) => {
 });
 
 // نقطة نهاية لزيادة عدد المشاهدات
-app.post('/api/:projectId/posts/:postId/view', async (req, res) => {
+app.post('/api/posts/:postId/view', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const { userId } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -912,7 +920,7 @@ app.post('/api/:projectId/posts/:postId/view', async (req, res) => {
 });
 
 // نقطة نهاية لإضافة تعليق على منشور
-app.post('/api/:projectId/posts/:postId/comments', async (req, res) => {
+app.post('/api/posts/:postId/comments', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const { userId, username, text } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -959,7 +967,7 @@ app.post('/api/:projectId/posts/:postId/comments', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على تعليقات منشور
-app.get('/api/:projectId/posts/:postId/comments', async (req, res) => {
+app.get('/api/posts/:postId/comments', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -989,7 +997,7 @@ app.get('/api/:projectId/posts/:postId/comments', async (req, res) => {
 });
 
 // نقطة نهاية لتعديل تعليق
-app.put('/api/:projectId/posts/:postId/comments/:commentId', async (req, res) => {
+app.put('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم إزالة :projectId
     const { postId, commentId } = req.params;
     const { userId, newText } = req.body; // userId هو معرف المستخدم الذي يقوم بالتعديل
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1020,7 +1028,7 @@ app.put('/api/:projectId/posts/:postId/comments/:commentId', async (req, res) =>
 });
 
 // نقطة نهاية لحذف تعليق
-app.delete('/api/:projectId/posts/:postId/comments/:commentId', async (req, res) => {
+app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => { // تم إزالة :projectId
     const { postId, commentId } = req.params;
     const { userId } = req.body; // userId هو معرف المستخدم الذي يقوم بالحذف
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1054,7 +1062,7 @@ app.delete('/api/:projectId/posts/:postId/comments/:commentId', async (req, res)
 
 
 // نقطة نهاية للإعجاب بتعليق
-app.post('/api/:projectId/posts/:postId/comments/:commentId/like', async (req, res) => {
+app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => { // تم إزالة :projectId
     const { postId, commentId } = req.params;
     const { userId } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1092,9 +1100,10 @@ app.post('/api/:projectId/posts/:postId/comments/:commentId/like', async (req, r
 // ملاحظة: هذا المسار لا يستخدم projectId في URL لأنه يُفترض أن الواجهة الأمامية ستحصل على الرابط العام مباشرة من Supabase Storage.
 // إذا كنت تريد توجيه طلبات الوسائط عبر الخادم الخلفي، فستحتاج إلى تعديل هذه النقطة لتتلقى projectId
 // وتستخدم عميل Supabase الخاص بالمشروع المحدد.
-app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
+app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => { // تم إزالة :projectId
     const { bucketName, folder, fileName } = req.params;
-    const projectId = req.query.projectId; // projectId يمكن أن يمرر كـ query parameter
+    // لم نعد نتوقع projectId في المسار، لذا سنستخدم معرف المشروع الافتراضي للخادم
+    const projectId = BACKEND_DEFAULT_PROJECT_ID; 
     const supabase = projectSupabaseClients[projectId]; // استخدام عميل Supabase الخاص بالمشروع المحدد
 
     if (!supabase) {
@@ -1131,7 +1140,7 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لحفظ أو تحديث موضع تشغيل الفيديو
-app.post('/api/:projectId/video/:postId/playback-position', async (req, res) => {
+app.post('/api/video/:postId/playback-position', async (req, res) => { // تم إزالة :projectId
     const { postId } = req.params;
     const { userId, positionSeconds } = req.body; // موضع التشغيل بالثواني
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1161,7 +1170,7 @@ app.post('/api/:projectId/video/:postId/playback-position', async (req, res) => 
 // ----------------------------------------------------------------------------------------------------
 // نقاط نهاية وكيل Gemini API
 // ----------------------------------------------------------------------------------------------------
-app.post('/api/:projectId/gemini-proxy', async (req, res) => {
+app.post('/api/gemini-proxy', async (req, res) => { // تم إزالة :projectId
     const { prompt, chatHistory = [] } = req.body;
 
     if (!GEMINI_API_KEY) {
@@ -1214,7 +1223,7 @@ app.post('/api/:projectId/gemini-proxy', async (req, res) => {
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لإنشاء محادثة فردية
-app.post('/api/:projectId/chats/private', async (req, res) => {
+app.post('/api/chats/private', async (req, res) => { // تم إزالة :projectId
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -1264,7 +1273,7 @@ app.post('/api/:projectId/chats/private', async (req, res) => {
 });
 
 // نقطة نهاية لتعديل اسم جهة الاتصال في محادثة فردية
-app.put('/api/:projectId/chats/private/:chatId/contact-name', async (req, res) => {
+app.put('/api/chats/private/:chatId/contact-name', async (req, res) => { // تم إزالة :projectId
     const { chatId } = req.params;
     const { userId, newContactName } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1290,7 +1299,7 @@ app.put('/api/:projectId/chats/private/:chatId/contact-name', async (req, res) =
 });
 
 // نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
-app.get('/api/:projectId/user/:userId/chats', async (req, res) => {
+app.get('/api/user/:userId/chats', async (req, res) => { // تم إزالة :projectId
     const { userId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -1353,7 +1362,7 @@ app.get('/api/:projectId/user/:userId/chats', async (req, res) => {
 });
 
 // نقطة نهاية لإرسال رسالة في محادثة
-app.post('/api/:projectId/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => { // تم إزالة :projectId
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
@@ -1467,7 +1476,7 @@ app.post('/api/:projectId/chats/:chatId/messages', upload.single('mediaFile'), a
 });
 
 // نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
-app.get('/api/:projectId/chats/:chatId/messages', async (req, res) => {
+app.get('/api/chats/:chatId/messages', async (req, res) => { // تم إزالة :projectId
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1502,7 +1511,7 @@ app.get('/api/:projectId/chats/:chatId/messages', async (req, res) => {
 });
 
 // نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
-app.delete('/api/:projectId/chats/:chatId/delete-for-user', async (req, res) => {
+app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => { // تم إزالة :projectId
     const { chatId } = req.params;
     const { userId } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1535,7 +1544,7 @@ app.delete('/api/:projectId/chats/:chatId/delete-for-user', async (req, res) => 
 });
 
 // نقطة نهاية لحذف محادثة فردية من الطرفين
-app.delete('/api/:projectId/chats/private/:chatId/delete-for-both', async (req, res) => {
+app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => { // تم إزالة :projectId
     const { chatId } = req.params;
     const { callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1583,7 +1592,7 @@ app.delete('/api/:projectId/chats/private/:chatId/delete-for-both', async (req, 
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لإنشاء مجموعة جديدة
-app.post('/api/:projectId/groups', async (req, res) => {
+app.post('/api/groups', async (req, res) => { // تم إزالة :projectId
     const { name, description, adminId, members, profileBgUrl } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -1614,7 +1623,7 @@ app.post('/api/:projectId/groups', async (req, res) => {
 });
 
 // نقطة نهاية لتغيير اسم المجموعة
-app.put('/api/:projectId/groups/:groupId/name', async (req, res) => {
+app.put('/api/groups/:groupId/name', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const { newName, callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1641,7 +1650,7 @@ app.put('/api/:projectId/groups/:groupId/name', async (req, res) => {
 });
 
 // نقطة نهاية لتغيير خلفية المجموعة
-app.post('/api/:projectId/groups/:groupId/background', upload.single('file'), async (req, res) => {
+app.post('/api/groups/:groupId/background', upload.single('file'), async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const { callerUid } = req.body;
     const uploadedFile = req.file;
@@ -1706,7 +1715,7 @@ app.post('/api/:projectId/groups/:groupId/background', upload.single('file'), as
 });
 
 // نقطة نهاية لتغيير إذن الإرسال في المجموعة
-app.put('/api/:projectId/groups/:groupId/send-permission', async (req, res) => {
+app.put('/api/groups/:groupId/send-permission', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const { callerUid, newPermission } = req.body; // 'all' أو 'admins_only'
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1738,7 +1747,7 @@ app.put('/api/:projectId/groups/:groupId/send-permission', async (req, res) => {
 
 
 // نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
-app.get('/api/:projectId/group/:groupId/members', async (req, res) => {
+app.get('/api/group/:groupId/members', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -1778,7 +1787,7 @@ app.get('/api/:projectId/group/:groupId/members', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على عدد أعضاء المجموعة
-app.get('/api/:projectId/group/:groupId/members/count', async (req, res) => {
+app.get('/api/group/:groupId/members/count', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
     try {
@@ -1796,7 +1805,7 @@ app.get('/api/:projectId/group/:groupId/members/count', async (req, res) => {
 });
 
 // نقطة نهاية لإضافة أعضاء إلى مجموعة موجودة
-app.post('/api/:projectId/groups/:groupId/add-members', async (req, res) => {
+app.post('/api/groups/:groupId/add-members', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const { newMemberUids, callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1843,7 +1852,7 @@ app.post('/api/:projectId/groups/:groupId/add-members', async (req, res) => {
 });
 
 // نقطة نهاية لتغيير دور عضو في المجموعة (مشرف/عضو)
-app.put('/api/:projectId/group/:groupId/members/:memberUid/role', async (req, res) => {
+app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => { // تم إزالة :projectId
     const { groupId, memberUid } = req.params;
     const { newRole, callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1884,8 +1893,8 @@ app.put('/api/:projectId/group/:groupId/members/:memberUid/role', async (req, re
 });
 
 // نقطة نهاية لإزالة عضو من المجموعة
-app.delete('/api/:projectId/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
+app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => { // تم إزالة :projectId
+    const { groupId } = req.params;
     const { callerUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
 
@@ -1927,7 +1936,7 @@ app.delete('/api/:projectId/group/:groupId/members/:memberUid', async (req, res)
 });
 
 // نقطة نهاية لمغادرة المجموعة
-app.delete('/api/:projectId/group/:groupId/leave', async (req, res) => {
+app.delete('/api/group/:groupId/leave', async (req, res) => { // تم إزالة :projectId
     const { groupId } = req.params;
     const { memberUid } = req.body;
     const pool = req.dbPool; // استخدام Pool الخاص بالمشروع المحدد
@@ -1974,3 +1983,4 @@ app.listen(port, async () => {
     console.log(`رابط الواجهة الخلفية (Backend URL): http://localhost:${port}`);
     await initializeSupabaseClients(); // استدعاء لتهيئة عملاء Supabase وقواعد البيانات
 });
+
