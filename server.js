@@ -28,7 +28,7 @@ const SUPABASE_PROJECT_CONFIGS = {
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
         // ملاحظة: تم استخدام Anon Key هنا. يفضل استخدام Service Role Key في بيئة الإنتاج لتعزيز الأمان والصلاحيات.
         // يمكنك العثور على Service Role Key في إعدادات مشروع Supabase -> API Settings.
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTQ1NTQsImV4cCI6MjA2ODQzMDU1NH0.humKsBKLNpu3DNGwTGgEWXH7uLu0D0azUsG0q2BYOuA"
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // <--- تم تحديث هذا السطر!
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
