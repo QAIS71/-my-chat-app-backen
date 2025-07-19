@@ -96,7 +96,7 @@ async function initializeSupabaseClients() {
 
         } catch (error) {
             console.error(`خطأ: فشل تهيئة Supabase أو PostgreSQL للمشروع ${projectId}:`, error);
-            // يمكنك اختيار إيقاف الخادم هنا إذا كان المشروع ضروريًا للتشغيل
+            // يمكنك اختيار إيقاف الخادم هنا إذا كان المشروع ضروريًا للعمل
             // process.exit(1);
         }
     }
@@ -1089,12 +1089,12 @@ app.post('/api/:projectId/posts/:postId/comments/:commentId/like', async (req, r
 });
 
 // نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات والرسائل الصوتية)
-// ملاحظة: هذا المسار لا يستخدم projectId في URL لأنه يُفترض أن الواجهة الأمامية ستحصل على الرابط العام مباشرة من Supabase Storage
+// ملاحظة: هذا المسار لا يستخدم projectId في URL لأنه يُفترض أن الواجهة الأمامية ستحصل على الرابط العام مباشرة من Supabase Storage.
 // إذا كنت تريد توجيه طلبات الوسائط عبر الخادم الخلفي، فستحتاج إلى تعديل هذه النقطة لتتلقى projectId
 // وتستخدم عميل Supabase الخاص بالمشروع المحدد.
 app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     const { bucketName, folder, fileName } = req.params;
-    const projectId = req.query.projectId; // يمكن تمرير projectId كـ query parameter
+    const projectId = req.query.projectId; // projectId يمكن أن يمرر كـ query parameter
     const supabase = projectSupabaseClients[projectId]; // استخدام عميل Supabase الخاص بالمشروع المحدد
 
     if (!supabase) {
@@ -1685,8 +1685,8 @@ app.post('/api/:projectId/groups/:groupId/background', upload.single('file'), as
 
         // الحصول على الرابط العام للملف
         const { data: publicUrlData } = supabase.storage
-            .from(bucketName)
-            .getPublicUrl(filePath);
+                .from(bucketName)
+                .getPublicUrl(filePath);
 
         if (!publicUrlData || !publicUrlData.publicUrl) {
             console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
@@ -1974,4 +1974,3 @@ app.listen(port, async () => {
     console.log(`رابط الواجهة الخلفية (Backend URL): http://localhost:${port}`);
     await initializeSupabaseClients(); // استدعاء لتهيئة عملاء Supabase وقواعد البيانات
 });
-
