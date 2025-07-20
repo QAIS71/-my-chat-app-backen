@@ -24,7 +24,7 @@ const SUPABASE_PROJECT_CONFIGS = {
     'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        serviceRoleKey: "YOUR_PROJECT_1_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الأول هنا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **الصق المفتاح السري للمشروع الأول هنا**
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
