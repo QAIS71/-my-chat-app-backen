@@ -21,7 +21,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 // تأكد من استخدام Service Role Key لكل مشروع هنا!
 // ----------------------------------------------------------------------------------------------------
 const SUPABASE_PROJECT_CONFIGS = {
-    'kdbtusugpqboxsaosaci': { // معرف المشروع 1
+    'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
         serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8"
@@ -319,28 +319,36 @@ async function generateCustomId(pool) {
     return id;
 }
 
-// وظيفة مساعدة لجلب المنشورات مع التفاصيل (تأخذ Pool كمعامل)
-async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdForPlayback = null) {
+// وظيفة مساعدة لجلب تفاصيل المستخدم من المشروع الافتراضي (حيث يوجد جدول المستخدمين)
+async function getUserDetailsFromDefaultProject(userId) {
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    if (!defaultPool) {
+        console.error("Default project pool not initialized.");
+        return null;
+    }
+    try {
+        const userResult = await defaultPool.query(
+            'SELECT username, is_verified, user_role, profile_bg_url FROM users WHERE uid = $1',
+            [userId]
+        );
+        return userResult.rows[0] || null;
+    } catch (error) {
+        console.error(`خطأ في جلب تفاصيل المستخدم ${userId} من المشروع الافتراضي:`, error);
+        return null;
+    }
+}
+
+// وظيفة لجلب المنشورات من قاعدة بيانات واحدة (بدون JOIN لجدول المستخدمين)
+async function getPostsFromSinglePool(pool, baseQuery, initialQueryParams) {
     let selectClause = `
         p.*,
-        u.username AS authorName,
-        u.is_verified AS authorIsVerified,
-        u.user_role AS authorUserRole,
-        u.profile_bg_url AS authorProfileBg,
-        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes, 'isVerified', cu.is_verified))
-         FROM comments c JOIN users cu ON c.user_id = cu.uid WHERE c.post_id = p.id) AS comments,
+        (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
+         FROM comments c WHERE c.post_id = p.id) AS comments_raw,
         (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
     `;
 
-    let joinClause = `JOIN users u ON p.author_id = u.uid`;
+    let joinClause = ``; // لا يوجد JOIN لجدول المستخدمين هنا
     let finalQueryParams = [...initialQueryParams];
-    let paramIndex = initialQueryParams.length + 1;
-
-    if (userIdForPlayback) {
-        selectClause += `, COALESCE(vpp.position_seconds, 0) AS playbackPosition`;
-        joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${paramIndex++}`;
-        finalQueryParams.push(userIdForPlayback);
-    }
 
     const fullQuery = `
         SELECT ${selectClause}
@@ -351,25 +359,81 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
     `;
 
     const result = await pool.query(fullQuery, finalQueryParams);
+    return result.rows; // إرجاع الصفوف الخام، معالجة تفاصيل المستخدم عالمياً
+}
 
-    return result.rows.map(row => ({
-        id: row.id,
-        authorId: row.author_id,
-        authorName: row.authorname,
-        text: row.text,
-        timestamp: parseInt(row.timestamp),
-        likes: row.likes,
-        comments: row.comments || [],
-        views: row.views,
-        mediaUrl: row.media_url,
-        mediaType: row.media_type,
-        authorProfileBg: row.author_profile_bg,
-        authorFollowersCount: parseInt(row.authorfollowerscount),
-        playbackPosition: row.playbackposition || 0,
-        isPinned: row.is_pinned,
-        authorIsVerified: row.authorisverified,
-        authorUserRole: row.authoruserrole
+// وظيفة لجلب المنشورات من جميع المشاريع وإثرائها بتفاصيل المستخدم
+async function getPostsFromAllProjects(baseQuery, initialQueryParams, userIdForPlayback = null) {
+    let allRawPosts = [];
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const postsFromProject = await getPostsFromSinglePool(pool, baseQuery, initialQueryParams);
+            allRawPosts = allRawPosts.concat(postsFromProject);
+        } catch (error) {
+            console.error(`خطأ في جلب المنشورات الخام من المشروع ${projectId}:`, error);
+        }
+    }
+
+    // الآن قم بإثراء المنشورات بتفاصيل المستخدم وموضع التشغيل
+    const enrichedPosts = await Promise.all(allRawPosts.map(async row => {
+        const authorDetails = await getUserDetailsFromDefaultProject(row.author_id);
+        
+        // جلب موضع التشغيل إذا تم توفير userIdForPlayback
+        let playbackPosition = 0;
+        if (userIdForPlayback && row.media_type === 'video') {
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            try {
+                const playbackResult = await defaultPool.query(
+                    'SELECT position_seconds FROM video_playback_progress WHERE user_id = $1 AND post_id = $2',
+                    [userIdForPlayback, row.id]
+                );
+                if (playbackResult.rows.length > 0) {
+                    playbackPosition = playbackResult.rows[0].position_seconds;
+                }
+            } catch (error) {
+                console.error(`خطأ في جلب موضع التشغيل للمنشور ${row.id} والمستخدم ${userIdForPlayback}:`, error);
+            }
+        }
+
+        // إثراء التعليقات بتفاصيل المستخدم
+        const commentsWithUserDetails = await Promise.all((row.comments_raw || []).map(async comment => {
+            const commentUserDetails = await getUserDetailsFromDefaultProject(comment.userId);
+            return {
+                ...comment,
+                userProfileBg: commentUserDetails ? commentUserDetails.profile_bg_url : null,
+                isVerified: commentUserDetails ? commentUserDetails.is_verified : false
+            };
+        }));
+
+        return {
+            id: row.id,
+            authorId: row.author_id,
+            authorName: authorDetails ? authorDetails.username : 'Unknown User', // اسم احتياطي
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            likes: row.likes,
+            comments: commentsWithUserDetails,
+            views: row.views,
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            authorProfileBg: authorDetails ? authorDetails.profile_bg_url : null,
+            authorFollowersCount: parseInt(row.authorfollowerscount),
+            playbackPosition: playbackPosition,
+            isPinned: row.is_pinned,
+            authorIsVerified: authorDetails ? authorDetails.is_verified : false,
+            authorUserRole: authorDetails ? authorDetails.user_role : 'normal'
+        };
     }));
+
+    // الفرز النهائي بعد الدمج والإثراء
+    enrichedPosts.sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return b.timestamp - a.timestamp;
+    });
+
+    return enrichedPosts;
 }
 
 
@@ -736,15 +800,12 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على جميع المنشورات
-// ملاحظة: هذه النقطة ستجلب المنشورات من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
-// لجلب المنشورات من جميع المشاريع، سيتطلب ذلك منطقًا معقدًا لجلب البيانات ودمجها من قواعد بيانات متعددة.
+// نقطة نهاية للحصول على جميع المنشورات (الآن تجلب من جميع المشاريع)
 app.get('/api/posts', async (req, res) => {
-    const { userId } = req.query;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const { userId } = req.query; // معرف المستخدم اختياري لموضع التشغيل
     try {
-        const postsWithDetails = await getPostsWithDetails(pool, '', [], userId);
-        console.log(`DEBUG: بيانات المنشورات التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects('', [], userId); // تجلب من جميع المشاريع
+        console.log('DEBUG: بيانات المنشورات التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب جميع المنشورات:', error);
@@ -752,14 +813,12 @@ app.get('/api/posts', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
-// ملاحظة: هذه النقطة ستجلب المنشورات من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
+// نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي (الآن تجلب من جميع المشاريع)
 app.get('/api/posts/followed/:userId', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين (لأن جدول المتابعين موجود هنا)
+    const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
-        // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين (لأن جدول المتابعين موجود هنا)
-        const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const followedUsersResult = await followersPool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
         followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
@@ -769,8 +828,8 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
         }
 
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
-        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, [followedUsersIds], userId);
-        console.log(`DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects(baseQuery, [followedUsersIds], userId); // تجلب من جميع المشاريع
+        console.log('DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب منشورات المتابعين:', error);
@@ -778,11 +837,9 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
     }
 });
 
-// نقطة نهاية للبحث في المنشورات
-// ملاحظة: هذه النقطة ستجري البحث في المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
+// نقطة نهاية للبحث في المنشورات (الآن تجري البحث في جميع المشاريع)
 app.get('/api/posts/search', async (req, res) => {
     const { q, filter, userId } = req.query;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
 
     let baseQuery = ``;
@@ -811,17 +868,17 @@ app.get('/api/posts/search', async (req, res) => {
     if (searchTerm) {
         queryParams.push(searchTerm);
         if (baseQuery) {
-            baseQuery += ` AND (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
+            baseQuery += ` AND (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(p.author_name) LIKE $${paramIndex++})`; // تم تغيير u.username إلى p.author_name
             queryParams.push(searchTerm);
         } else {
-            baseQuery += ` WHERE (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(u.username) LIKE $${paramIndex++})`;
+            baseQuery += ` WHERE (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(p.author_name) LIKE $${paramIndex++})`; // تم تغيير u.username إلى p.author_name
             queryParams.push(searchTerm);
         }
     }
 
     try {
-        const postsWithDetails = await getPostsWithDetails(pool, baseQuery, queryParams, userId);
-        console.log(`DEBUG: بيانات نتائج البحث التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects(baseQuery, queryParams, userId); // تجلب من جميع المشاريع
+        console.log('DEBUG: بيانات نتائج البحث التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل البحث في المنشورات:', error);
@@ -1020,22 +1077,26 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
     const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
         const result = await pool.query(
-            `SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified
+            `SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes
              FROM comments c
-             JOIN users u ON c.user_id = u.uid
              WHERE c.post_id = $1
              ORDER BY c.timestamp ASC`,
             [postId]
         );
-        const comments = result.rows.map(row => ({
-            id: row.id,
-            userId: row.user_id,
-            username: row.username,
-            text: row.text,
-            timestamp: parseInt(row.timestamp),
-            userProfileBg: row.user_profile_bg,
-            likes: row.likes,
-            isVerified: row.is_verified
+
+        // إثراء التعليقات بتفاصيل المستخدم من المشروع الافتراضي
+        const comments = await Promise.all(result.rows.map(async row => {
+            const userDetails = await getUserDetailsFromDefaultProject(row.user_id);
+            return {
+                id: row.id,
+                userId: row.user_id,
+                username: userDetails ? userDetails.username : row.username,
+                text: row.text,
+                timestamp: parseInt(row.timestamp),
+                userProfileBg: userDetails ? userDetails.profile_bg_url : row.user_profile_bg,
+                likes: row.likes,
+                isVerified: userDetails ? userDetails.is_verified : false
+            };
         }));
         console.log(`DEBUG: بيانات التعليقات التي يتم إرسالها من المشروع ${req.currentProjectId} (أول تعليق):`, JSON.stringify(comments.slice(0, 1)));
         res.status(200).json(comments);
@@ -1402,6 +1463,43 @@ app.get('/api/user/:userId/chats', async (req, res) => {
     }
 });
 
+// وظيفة لجلب الرسائل من جميع المشاريع وإثرائها بتفاصيل المرسل
+async function getMessagesFromAllProjects(chatId, sinceTimestamp) {
+    let allRawMessages = [];
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const result = await pool.query(
+                `SELECT m.* FROM messages m WHERE m.chat_id = $1 AND m.timestamp > $2 ORDER BY m.timestamp ASC`,
+                [chatId, sinceTimestamp]
+            );
+            allRawMessages = allRawMessages.concat(result.rows);
+        } catch (error) {
+            console.error(`خطأ في جلب الرسائل الخام من المشروع ${projectId} للمحادثة ${chatId}:`, error);
+        }
+    }
+
+    // الآن قم بإثراء الرسائل بتفاصيل المرسل
+    const enrichedMessages = await Promise.all(allRawMessages.map(async row => {
+        const senderDetails = await getUserDetailsFromDefaultProject(row.sender_id);
+        return {
+            id: row.id,
+            senderId: row.sender_id,
+            senderName: senderDetails ? senderDetails.username : row.sender_name,
+            text: row.text,
+            timestamp: parseInt(row.timestamp),
+            mediaUrl: row.media_url,
+            mediaType: row.media_type,
+            senderProfileBg: senderDetails ? senderDetails.profile_bg_url : row.sender_profile_bg,
+            senderIsVerified: senderDetails ? senderDetails.is_verified : false,
+            senderUserRole: senderDetails ? senderDetails.user_role : 'normal'
+        };
+    }));
+
+    enrichedMessages.sort((a, b) => a.timestamp - b.timestamp);
+    return enrichedMessages;
+}
+
 // نقطة نهاية لإرسال رسالة في محادثة
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
@@ -1516,34 +1614,13 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     }
 });
 
-// نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
-// ملاحظة: هذه النقطة ستجلب الرسائل من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
+// نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني) - الآن تجلب من جميع المشاريع
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
-        const result = await pool.query(
-            `SELECT m.*, u.is_verified AS sender_is_verified, u.user_role AS sender_user_role
-             FROM messages m
-             JOIN users u ON m.sender_id = u.uid
-             WHERE m.chat_id = $1 AND m.timestamp > $2 ORDER BY m.timestamp ASC`,
-            [chatId, sinceTimestamp]
-        );
-
-        const messages = result.rows.map(row => ({
-            id: row.id,
-            senderId: row.sender_id,
-            senderName: row.sender_name,
-            text: row.text,
-            timestamp: parseInt(row.timestamp),
-            mediaUrl: row.media_url,
-            mediaType: row.media_type,
-            senderProfileBg: row.sender_profile_bg,
-            senderIsVerified: row.sender_is_verified,
-            senderUserRole: row.user_role
-        }));
-        console.log(`DEBUG: بيانات رسائل المحادثة التي يتم إرسالها من المشروع ${req.currentProjectId} (أول رسالة):`, JSON.stringify(messages.slice(0, 1)));
+        const messages = await getMessagesFromAllProjects(chatId, sinceTimestamp); // تجلب من جميع المشاريع
+        console.log('DEBUG: بيانات رسائل المحادثة التي يتم إرسالها (أول رسالة):', JSON.stringify(messages.slice(0, 1)));
         res.status(200).json(messages);
     } catch (error) {
         console.error('خطأ: فشل جلب رسائل المحادثة:', error);
@@ -1585,40 +1662,49 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
 
 // نقطة نهاية لحذف محادثة فردية من الطرفين
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
+// **تحذير: حذف الوسائط من جميع المشاريع يتطلب منطقًا إضافيًا لتحديد مكان وجود كل رسالة**
 app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { chatId } = req.params;
     const { callerUid } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID]; // يستخدم عميل Supabase للمشروع الافتراضي
-    const bucketName = 'chat-media'; // هذا Bucket موجود في المشروع المخصص للمستخدمين، وليس الافتراضي
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
-        // هذه النقطة معقدة لأن الرسائل قد تكون موزعة.
-        // حاليًا، سيحاول حذف الوسائط من Bucket المشروع الافتراضي.
-        // إذا كانت الوسائط في مشروع آخر، فلن يتم حذفها بهذه الطريقة.
-        const messagesResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
-        const messagesMediaUrls = messagesResult.rows.map(row => row.media_url).filter(Boolean);
+        // الخطوة 1: حذف الرسائل من جميع المشاريع
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            const supabase = projectSupabaseClients[projectId];
+            const bucketName = 'chat-media';
 
-        if (messagesMediaUrls.length > 0) {
-            const filePathsToDelete = messagesMediaUrls.map(url => {
-                const urlObj = new URL(url);
-                const pathSegments = urlObj.pathname.split('/');
-                return pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-            });
+            try {
+                const messagesResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
+                const messagesMediaUrls = messagesResult.rows.map(row => row.media_url).filter(Boolean);
 
-            const { error: deleteError } = await supabase.storage
-                .from(bucketName)
-                .remove(filePathsToDelete);
+                if (messagesMediaUrls.length > 0) {
+                    const filePathsToDelete = messagesMediaUrls.map(url => {
+                        const urlObj = new URL(url);
+                        const pathSegments = urlObj.pathname.split('/');
+                        return pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+                    });
 
-            if (deleteError) {
-                console.error('خطأ: فشل حذف وسائط الرسالة من Supabase Storage:', deleteError);
-            } else {
-                console.log(`تم حذف ملفات الوسائط من Supabase Storage للمحادثة ${chatId}.`);
+                    const { error: deleteError } = await supabase.storage
+                        .from(bucketName)
+                        .remove(filePathsToDelete);
+
+                    if (deleteError) {
+                        console.error(`خطأ: فشل حذف وسائط الرسالة من Supabase Storage في المشروع ${projectId}:`, deleteError);
+                    } else {
+                        console.log(`تم حذف ملفات الوسائط من Supabase Storage للمحادثة ${chatId} في المشروع ${projectId}.`);
+                    }
+                }
+                await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
+                console.log(`تم حذف الرسائل من قاعدة بيانات المشروع ${projectId} للمحادثة ${chatId}.`);
+            } catch (error) {
+                console.error(`خطأ: فشل حذف الرسائل أو وسائطها من المشروع ${projectId}:`, error);
             }
         }
 
-        await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-        await pool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, callerUid]);
+        // الخطوة 2: حذف المحادثة من المشروع الافتراضي
+        await defaultPool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, callerUid]);
 
         console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
         res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
