@@ -14,39 +14,32 @@ const port = process.env.PORT || 3000; // استخدام المنفذ المحد
 
 // ----------------------------------------------------------------------------------------------------
 // إعداد Multer لتخزين الملفات مؤقتاً في الذاكرة
-// هذا هو السطر الحاسم لخطأ 'upload is not defined'
-// ----------------------------------------------------------------------------------------------------
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ----------------------------------------------------------------------------------------------------
 // إعدادات مشاريع Supabase - قم بتحديث هذا الكائن بمعلومات مشاريعك
-// يمكنك إضافة ما يصل إلى 8 مشاريع هنا أو أكثر حسب حاجتك
+// تأكد من استخدام Service Role Key لكل مشروع هنا!
 // ----------------------------------------------------------------------------------------------------
 const SUPABASE_PROJECT_CONFIGS = {
-    'kdbtusugpqboxsaosaci': { // معرف المشروع
+    'kdbtusugpqboxsaosaci': { // معرف المشروع 1
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        // ملاحظة: تم استخدام Anon Key هنا. يفضل استخدام Service Role Key في بيئة الإنتاج لتعزيز الأمان والصلاحيات.
-        // يمكنك العثور على Service Role Key في إعدادات مشروع Supabase -> API Settings.
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // <--- تم تحديث هذا السطر!
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8"
     },
-    'ojuatwnwnvnzfyhicokc': { // معرف المشروع
+    'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://ojuatwnwnvnzfyhicokc.supabase.co",
-        // ملاحظة: تم استخدام Anon Key هنا. يفضل استخدام Service Role Key في بيئة الإنتاج لتعزيز الأمان والصلاحيات.
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTYyMTQsImV4cCI6MjA2ODQzMjIxNH0.pc1F1DzQJkqwYm4uiB6g1LCL2zsUR8L26OfQQoXWjLo"
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTYyMTQsImV4cCI6MjA2ODQzMjIxNH0.pc1F1DzQJkqwYm4uiB6g1LCL2zsUR8L26OfQQoXWjLo" // **تأكد من تحديث هذا المفتاح السري أيضًا**
     },
-    'fznbkubzddthnboehmvq': { // معرف المشروع
+    'fznbkubzddthnboehmvq': { // معرف المشروع 3
         databaseUrl: "postgresql://postgres.fznbkubzddthnboehmvq:j%23ZM%24q%40WjH%40dtU6@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://fznbkubzddthnboehmvq.supabase.co",
-        // ملاحظة: تم استخدام Anon Key هنا. يفضل استخدام Service Role Key في بيئة الإنتاج لتعزيز الأمان والصلاحيات.
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTcxNjAsImV4cCI6MjA2ODQzMzE2MH0.TXPBZZE2fMFCNgHVibQqVILFSndSp4sT_T2U6u_w6j8"
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTcxNjAsImV4cCI6MjA2ODQzMzE2MH0.TXPBZZE2fMFCNgHVibQqVILFSndSp4sT_T2U6u_w6j8" // **تأكد من تحديث هذا المفتاح السري أيضًا**
     },
-    'woxzcoerelijbsrbdnbk': { // معرف المشروع
+    'woxzcoerelijbsrbdnbk': { // معرف المشروع 4
         databaseUrl: "postgresql://postgres.woxzcoerelijbsrbdnbk:n%247j9tuvhRtQ!8y@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://woxzcoerelijbsrbdnbk.supabase.co",
-        // ملاحظة: تم استخدام Anon Key هنا. يفضل استخدام Service Role Key في بيئة الإنتاج لتعزيز الأمان والصلاحيات.
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTc0MTgsImV4cCI6MjA2ODQzMzQxOH0.tX6VqEdqvpQATY29KoNKmm7DLOxBY0RqJTYbAqeK3rs"
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTc0MTgsImV4cCI6MjA2ODQzMzQxOH0.tX6VqEdqvpQATY29KoNKmm7DLOxBY0RqJTYbAqeK3rs" // **تأكد من تحديث هذا المفتاح السري أيضًا**
     },
     // لإضافة مشاريع إضافية (حتى 8 أو أكثر)، أضفها هنا بنفس التنسيق:
     // 'new_project_id_5': {
@@ -57,13 +50,17 @@ const SUPABASE_PROJECT_CONFIGS = {
 };
 
 // **معرف المشروع الافتراضي للخادم الخلفي**
-// هذا هو معرف المشروع الذي سيستخدمه الخادم الخلفي لجميع عمليات قاعدة البيانات والتخزين.
-// تأكد من أن هذا المعرف موجود في كائن SUPABASE_PROJECT_CONFIGS أعلاه.
-const BACKEND_DEFAULT_PROJECT_ID = "kdbtusugpqboxsaosaci"; // <-- قم بتغيير هذا إلى معرف مشروعك الأساسي
+// هذا هو معرف المشروع الذي سيستخدمه الخادم الخلفي لعمليات مثل تسجيل المستخدمين الجدد
+// أو العمليات التي لا تتطلب تحديد مشروع مستخدم معين.
+const BACKEND_DEFAULT_PROJECT_ID = "kdbtusugpqboxsaosaci";
 
 // كائنات لتخزين مجمعات اتصال قاعدة البيانات وعملاء Supabase لكل مشروع
 const projectDbPools = {};
 const projectSupabaseClients = {};
+
+// متغير لتتبع المشروع الحالي لتسجيل المستخدمين الجدد بنظام الدورة
+let currentProjectIndex = 0;
+const projectIds = Object.keys(SUPABASE_PROJECT_CONFIGS);
 
 // ----------------------------------------------------------------------------------------------------
 // تهيئة PostgreSQL Pool وعميل Supabase لكل مشروع
@@ -129,7 +126,8 @@ async function createTables(pool) {
                 custom_id VARCHAR(8) UNIQUE NOT NULL,
                 profile_bg_url VARCHAR(255),
                 is_verified BOOLEAN DEFAULT FALSE,
-                user_role VARCHAR(50) DEFAULT 'normal'
+                user_role VARCHAR(50) DEFAULT 'normal',
+                user_project_id VARCHAR(255) -- **جديد: لتخزين معرف المشروع المخصص للمستخدم**
             );
 
             CREATE TABLE IF NOT EXISTS posts (
@@ -205,11 +203,12 @@ async function createTables(pool) {
         if (adminCheck.rows.length === 0) {
             const adminUid = uuidv4();
             const adminCustomId = await generateCustomId(pool); // تمرير pool
+            // تعيين معرف المشروع للمدير إلى المشروع الافتراضي
             await pool.query(
-                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role) VALUES ($1, $2, $3, $4, $5, $6)',
-                [adminUid, ADMIN_USERNAME, ADMIN_PASSWORD, adminCustomId, true, 'admin']
+                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                [adminUid, ADMIN_USERNAME, ADMIN_PASSWORD, adminCustomId, true, 'admin', BACKEND_DEFAULT_PROJECT_ID]
             );
-            console.log('تم إنشاء حساب المدير:', ADMIN_USERNAME, 'UID:', adminUid, 'معرف مخصص:', adminCustomId);
+            console.log('تم إنشاء حساب المدير:', ADMIN_USERNAME, 'UID:', adminUid, 'معرف مخصص:', adminCustomId, 'معرف المشروع:', BACKEND_DEFAULT_PROJECT_ID);
         } else {
             console.log('حساب المدير موجود بالفعل.');
         }
@@ -221,10 +220,10 @@ async function createTables(pool) {
             const botCustomId = 'BOT00001'; // معرف مخصص للبوت
             const botUsername = 'المساعدة';
 
-            // إنشاء حساب للبوت في جدول المستخدمين
+            // إنشاء حساب للبوت في جدول المستخدمين (في المشروع الافتراضي)
             await pool.query(
-                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role) VALUES ($1, $2, $3, $4, $5, $6)',
-                [botUid, botUsername, uuidv4(), botCustomId, true, 'bot'] // البوت موثق ودوره 'bot'
+                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                [botUid, botUsername, uuidv4(), botCustomId, true, 'bot', BACKEND_DEFAULT_PROJECT_ID] // البوت موثق ودوره 'bot'
             );
 
             const botChatId = uuidv4();
@@ -257,18 +256,50 @@ app.use(cors());
 // تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
 
-// برمجية وسيطة لتعيين Pool وعميل Supabase بناءً على معرف المشروع الافتراضي
-app.use('/api/*', (req, res, next) => {
-    // استخدم معرف المشروع الافتراضي لجميع استدعاءات API
-    const projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
+// برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
+app.use('/api/*', async (req, res, next) => {
+    let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
 
-    if (!projectDbPools[projectIdToUse] || !projectSupabaseClients[projectIdToUse]) {
-        console.error(`خطأ: معرف المشروع الافتراضي ${projectIdToUse} غير صالح أو غير مهيأ.`);
-        return res.status(500).json({ error: 'خطأ في تهيئة الخادم: معرف المشروع الافتراضي غير صالح.' });
+    // محاولة استخراج معرف المستخدم من الطلب
+    const userId = req.body.userId || req.query.userId || req.params.userId || req.headers['x-user-id'];
+
+    // إذا كان هناك معرف مستخدم، حاول جلب معرف المشروع المخصص له
+    if (userId) {
+        try {
+            // نستخدم Pool المشروع الافتراضي لجلب معلومات المستخدم
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            if (defaultPool) {
+                const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
+                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                    projectIdToUse = userResult.rows[0].user_project_id;
+                    console.log(`DEBUG: تم تحديد المشروع ${projectIdToUse} للمستخدم ${userId}.`);
+                } else {
+                    // إذا كان المستخدم موجودًا ولكن ليس لديه user_project_id (مستخدم قديم)، قم بتعيين واحد له
+                    // هذه الحالة تحدث للمستخدمين الذين تم إنشاؤهم قبل إضافة عمود user_project_id
+                    const assignedProjectId = projectIds[currentProjectIndex];
+                    currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
+                    await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
+                    projectIdToUse = assignedProjectId;
+                    console.log(`DEBUG: تم تعيين مشروع ${projectIdToUse} للمستخدم القديم ${userId}.`);
+                }
+            }
+        } catch (error) {
+            console.error("خطأ في جلب أو تعيين معرف مشروع المستخدم في البرمجية الوسيطة:", error);
+            // في حالة الخطأ، نعود إلى استخدام المشروع الافتراضي
+            projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
+        }
     }
+
+    // التحقق من أن Pool وعميل Supabase للمشروع المحدد مهيئان
+    if (!projectDbPools[projectIdToUse] || !projectSupabaseClients[projectIdToUse]) {
+        console.error(`خطأ: معرف المشروع ${projectIdToUse} غير صالح أو غير مهيأ.`);
+        return res.status(500).json({ error: 'خطأ في تهيئة الخادم: معرف المشروع غير صالح.' });
+    }
+
+    // تعيين Pool وعميل Supabase للطلب الحالي
     req.dbPool = projectDbPools[projectIdToUse];
     req.supabase = projectSupabaseClients[projectIdToUse];
-    req.currentProjectId = projectIdToUse; // لا يزال يمررها داخلياً للدوال التي قد تحتاجها
+    req.currentProjectId = projectIdToUse; // لتمرير معرف المشروع إلى نقاط النهاية إذا لزم الأمر
     next();
 });
 
@@ -302,14 +333,13 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
     `;
 
     let joinClause = `JOIN users u ON p.author_id = u.uid`;
-    let finalQueryParams = [...initialQueryParams]; // نسخ المعاملات الأولية
-    let paramIndex = initialQueryParams.length + 1; // بدء فهرس المعاملات بعد المعاملات الأولية
+    let finalQueryParams = [...initialQueryParams];
+    let paramIndex = initialQueryParams.length + 1;
 
-    // إذا تم توفير userIdForPlayback، قم بعمل JOIN لجلب موضع التشغيل المحفوظ
     if (userIdForPlayback) {
         selectClause += `, COALESCE(vpp.position_seconds, 0) AS playbackPosition`;
         joinClause += ` LEFT JOIN video_playback_progress vpp ON p.id = vpp.post_id AND vpp.user_id = $${paramIndex++}`;
-        finalQueryParams.push(userIdForPlayback); // إضافة userIdForPlayback كمعامل
+        finalQueryParams.push(userIdForPlayback);
     }
 
     const fullQuery = `
@@ -320,7 +350,7 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
         ORDER BY p.is_pinned DESC, p.timestamp DESC
     `;
 
-    const result = await pool.query(fullQuery, finalQueryParams); // استخدام finalQueryParams هنا
+    const result = await pool.query(fullQuery, finalQueryParams);
 
     return result.rows.map(row => ({
         id: row.id,
@@ -344,13 +374,14 @@ async function getPostsWithDetails(pool, baseQuery, initialQueryParams, userIdFo
 
 
 // ----------------------------------------------------------------------------------------------------
-// نقاط نهاية API - تم تعديلها للعمل مع PostgreSQL و Supabase (بدون projectId في المسار)
+// نقاط نهاية API - تم تعديلها للعمل مع PostgreSQL و Supabase
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية تسجيل المستخدم
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لتسجيل المستخدمين الجدد
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     if (!username || !password) {
         return res.status(400).json({ error: 'اسم المستخدم وكلمة المرور مطلوبان.' });
@@ -368,13 +399,17 @@ app.post('/api/register', async (req, res) => {
         const userRole = (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) ? 'admin' : 'normal';
         const isVerified = (userRole === 'admin');
 
+        // **جديد: تعيين معرف المشروع للمستخدم بنظام الدورة**
+        const assignedProjectId = projectIds[currentProjectIndex];
+        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length; // الانتقال للمشروع التالي
+
         await pool.query(
-            'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [uid, username, password, customId, null, isVerified, userRole]
+            'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [uid, username, password, customId, null, isVerified, userRole, assignedProjectId]
         );
 
-        console.log('تم تسجيل المستخدم:', username, 'UID:', uid, 'معرف مخصص:', customId, 'الدور:', userRole);
-        res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null, isVerified, userRole } });
+        console.log('تم تسجيل المستخدم:', username, 'UID:', uid, 'معرف مخصص:', customId, 'الدور:', userRole, 'معرف المشروع المخصص:', assignedProjectId);
+        res.status(201).json({ message: 'تم التسجيل بنجاح.', user: { uid, username, customId, profileBg: null, isVerified, userRole, userProjectId: assignedProjectId } });
     } catch (error) {
         console.error('خطأ: فشل تسجيل المستخدم:', error);
         res.status(500).json({ error: 'فشل التسجيل.' });
@@ -384,18 +419,19 @@ app.post('/api/register', async (req, res) => {
 // نقطة نهاية تسجيل الدخول
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب معلومات تسجيل الدخول (لأن المستخدمين موجودون هنا)
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password, is_verified, user_role FROM users WHERE username = $1', [username]);
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, password, is_verified, user_role, user_project_id FROM users WHERE username = $1', [username]);
         const user = result.rows[0];
 
         if (!user || user.password !== password) {
             return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
         }
 
-        console.log('تم تسجيل دخول المستخدم:', user.username, 'الدور:', user.user_role);
-        res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role } });
+        console.log('تم تسجيل دخول المستخدم:', user.username, 'الدور:', user.user_role, 'معرف المشروع المخصص:', user.user_project_id);
+        res.status(200).json({ message: 'تم تسجيل الدخول بنجاح.', user: { uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role, userProjectId: user.user_project_id } });
     } catch (error) {
         console.error('خطأ: فشل تسجيل دخول المستخدم:', error);
         res.status(500).json({ error: 'فشل تسجيل الدخول.' });
@@ -405,12 +441,13 @@ app.post('/api/login', async (req, res) => {
 // نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
 app.get('/api/user/by-custom-id/:customId', async (req, res) => {
     const { customId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب معلومات المستخدم (لأن المستخدمين موجودون هنا)
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role FROM users WHERE custom_id = $1', [customId]);
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role, user_project_id FROM users WHERE custom_id = $1', [customId]);
         const user = result.rows[0];
         if (user) {
-            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role });
+            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role, userProjectId: user.user_project_id });
         } else {
             res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
@@ -424,7 +461,8 @@ app.get('/api/user/by-custom-id/:customId', async (req, res) => {
 app.put('/api/admin/verify-user/:customId', async (req, res) => {
     const { customId } = req.params;
     const { isVerified, callerUid } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لأن معلومات المستخدمين موجودة هنا
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     try {
         const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
@@ -453,16 +491,18 @@ app.put('/api/admin/verify-user/:customId', async (req, res) => {
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'profile-backgrounds'; // **تم التعديل: استخدام الواصلة**
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    const bucketName = 'profile-backgrounds';
 
     if (!userId || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
 
     try {
-        const userResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [userId]);
+        // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
+        const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [userId]);
         if (userResult.rows.length === 0) {
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
@@ -494,9 +534,10 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 
         const mediaUrl = publicUrlData.publicUrl;
 
-        await pool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [mediaUrl, userId]);
+        // تحديث profile_bg_url في جدول users في المشروع الافتراضي
+        await userCheckPool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [mediaUrl, userId]);
 
-        console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId}: ${mediaUrl}`);
+        console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId} في المشروع ${req.currentProjectId}: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: mediaUrl });
     } catch (error) {
         console.error('خطأ: فشل تحميل خلفية الملف الشخصي أو تحديث قاعدة البيانات:', error);
@@ -507,7 +548,8 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 // نقطة نهاية للحصول على عدد متابعي مستخدم معين
 app.get('/api/user/:userId/followers/count', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب عدد المتابعين (لأن جدول المتابعين موجود هنا)
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query('SELECT COUNT(*) FROM followers WHERE followed_id = $1', [userId]);
         const followerCount = parseInt(result.rows[0].count);
@@ -521,7 +563,8 @@ app.get('/api/user/:userId/followers/count', async (req, res) => {
 // نقطة نهاية للحصول على حالة المتابعة بين مستخدمين
 app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب حالة المتابعة
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
         const isFollowing = result.rows.length > 0;
@@ -535,7 +578,8 @@ app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
 // نقطة نهاية للمتابعة/إلغاء المتابعة
 app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لعمليات المتابعة
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     if (followerId === followedId) {
         return res.status(400).json({ error: 'لا يمكنك متابعة نفسك.' });
@@ -573,7 +617,8 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
 // نقطة نهاية للحصول على جهات الاتصال (المستخدمين الذين أجرى معهم المستخدم الحالي محادثات فردية)
 app.get('/api/user/:userId/contacts', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب جهات الاتصال (لأن معلومات المستخدمين والمحادثات الأساسية موجودة هنا)
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query(`
             SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url, u.is_verified, u.user_role
@@ -603,9 +648,9 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'post-media'; // **تم التعديل: استخدام الواصلة**
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    const bucketName = 'post-media';
 
     let postMediaUrl = null;
     let postMediaType = mediaType || 'text';
@@ -615,6 +660,13 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     }
 
     try {
+        // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
+        const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [authorId]);
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'المستخدم غير موجود.' });
+        }
+
         if (mediaFile) {
             const fileExtension = mediaFile.originalname.split('.').pop();
             const fileName = `${uuidv4()}.${fileExtension}`;
@@ -642,7 +694,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             }
 
             postMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للمنشور: ${postMediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للمنشور في المشروع ${req.currentProjectId}: ${postMediaUrl}`);
 
             if (!mediaType || mediaType === 'text') {
                 if (mediaFile.mimetype.startsWith('image/')) {
@@ -676,7 +728,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             authorProfileBg: authorProfileBg || null,
             isPinned: false
         };
-        console.log('تم نشر منشور جديد:', newPost);
+        console.log(`تم نشر منشور جديد في المشروع ${req.currentProjectId}:`, newPost);
         res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
     } catch (error) {
         console.error('خطأ: فشل نشر المنشور:', error);
@@ -685,12 +737,14 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 });
 
 // نقطة نهاية للحصول على جميع المنشورات
+// ملاحظة: هذه النقطة ستجلب المنشورات من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
+// لجلب المنشورات من جميع المشاريع، سيتطلب ذلك منطقًا معقدًا لجلب البيانات ودمجها من قواعد بيانات متعددة.
 app.get('/api/posts', async (req, res) => {
     const { userId } = req.query;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
         const postsWithDetails = await getPostsWithDetails(pool, '', [], userId);
-        console.log('DEBUG: بيانات المنشورات التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        console.log(`DEBUG: بيانات المنشورات التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب جميع المنشورات:', error);
@@ -699,13 +753,16 @@ app.get('/api/posts', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي
+// ملاحظة: هذه النقطة ستجلب المنشورات من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
 app.get('/api/posts/followed/:userId', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
-        const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
+        // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين (لأن جدول المتابعين موجود هنا)
+        const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const followedUsersResult = await followersPool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-        followedUsersIds.push(userId);
+        followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
 
         if (followedUsersIds.length === 0) {
             return res.status(200).json([]);
@@ -713,7 +770,7 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
 
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
         const postsWithDetails = await getPostsWithDetails(pool, baseQuery, [followedUsersIds], userId);
-        console.log('DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        console.log(`DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب منشورات المتابعين:', error);
@@ -722,9 +779,10 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
 });
 
 // نقطة نهاية للبحث في المنشورات
+// ملاحظة: هذه النقطة ستجري البحث في المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
 app.get('/api/posts/search', async (req, res) => {
     const { q, filter, userId } = req.query;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
 
     let baseQuery = ``;
@@ -733,7 +791,9 @@ app.get('/api/posts/search', async (req, res) => {
 
     if (filter === 'followed' && userId) {
         try {
-            const followedUsersResult = await pool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
+            // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين للبحث
+            const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const followedUsersResult = await followersPool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
             const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
             followedUsersIds.push(userId);
             if (followedUsersIds.length > 0) {
@@ -761,7 +821,7 @@ app.get('/api/posts/search', async (req, res) => {
 
     try {
         const postsWithDetails = await getPostsWithDetails(pool, baseQuery, queryParams, userId);
-        console.log('DEBUG: بيانات نتائج البحث التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        console.log(`DEBUG: بيانات نتائج البحث التي يتم إرسالها من المشروع ${req.currentProjectId} (أول منشور):`, JSON.stringify(postsWithDetails.slice(0, 1)));
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل البحث في المنشورات:', error);
@@ -773,9 +833,9 @@ app.get('/api/posts/search', async (req, res) => {
 app.delete('/api/posts/:postId', async (req, res) => {
     const { postId } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'post-media'; // **تم التعديل: استخدام الواصلة**
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    const bucketName = 'post-media';
 
     try {
         const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
@@ -785,7 +845,9 @@ app.delete('/api/posts/:postId', async (req, res) => {
             return res.status(404).json({ error: 'المنشور غير موجود.' });
         }
 
-        const callerUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
+        // التحقق من أن المستخدم هو صاحب المنشور أو مدير (من المشروع الافتراضي)
+        const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const callerUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (deletedPost.author_id !== callerUid && (!callerUser.rows[0] || callerUser.rows[0].user_role !== 'admin')) {
             return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
         }
@@ -802,12 +864,12 @@ app.delete('/api/posts/:postId', async (req, res) => {
             if (deleteError) {
                 console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
             } else {
-                console.log(`تم حذف الملف من Supabase Storage: ${filePathInBucket}`);
+                console.log(`تم حذف الملف من Supabase Storage في المشروع ${req.currentProjectId}: ${filePathInBucket}`);
             }
         }
 
         await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
-        console.log('تم حذف المنشور:', postId);
+        console.log(`تم حذف المنشور ${postId} من المشروع ${req.currentProjectId}.`);
         res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل حذف المنشور:', error);
@@ -819,10 +881,12 @@ app.delete('/api/posts/:postId', async (req, res) => {
 app.put('/api/posts/:postId/pin', async (req, res) => {
     const { postId } = req.params;
     const { isPinned, callerUid } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     try {
-        const adminUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
+        // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير (من المشروع الافتراضي)
+        const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const adminUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتثبيت/إلغاء تثبيت المنشورات.' });
         }
@@ -833,7 +897,7 @@ app.put('/api/posts/:postId/pin', async (req, res) => {
         }
 
         await pool.query('UPDATE posts SET is_pinned = $1 WHERE id = $2', [isPinned, postId]);
-        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح.`, isPinned });
+        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح في المشروع ${req.currentProjectId}.`, isPinned });
     } catch (error) {
         console.error('خطأ: فشل تثبيت/إلغاء تثبيت المنشور:', error);
         res.status(500).json({ error: 'فشل تثبيت/إلغاء تثبيت المنشور.' });
@@ -844,7 +908,7 @@ app.put('/api/posts/:postId/pin', async (req, res) => {
 app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     try {
         const postResult = await pool.query('SELECT likes FROM posts WHERE id = $1', [postId]);
@@ -878,7 +942,7 @@ app.post('/api/posts/:postId/like', async (req, res) => {
 app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     try {
         const postResult = await pool.query('SELECT views FROM posts WHERE id = $1', [postId]);
@@ -905,7 +969,7 @@ app.post('/api/posts/:postId/view', async (req, res) => {
 app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     if (!text) {
         return res.status(400).json({ error: 'نص التعليق مطلوب.' });
@@ -917,7 +981,9 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             return res.status(404).json({ error: 'المنشور غير موجود.' });
         }
 
-        const userResult = await pool.query('SELECT profile_bg_url, is_verified FROM users WHERE uid = $1', [userId]);
+        // جلب معلومات المستخدم من المشروع الافتراضي
+        const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const userResult = await userCheckPool.query('SELECT profile_bg_url, is_verified FROM users WHERE uid = $1', [userId]);
         const userProfileBg = userResult.rows[0] ? userResult.rows[0].profile_bg_url : null;
         const isVerified = userResult.rows[0] ? userResult.rows[0].is_verified : false;
 
@@ -940,7 +1006,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             userProfileBg: userProfileBg,
             isVerified: isVerified
         };
-        console.log('DEBUG: تم إنشاء التعليق الجديد وإرساله:', newComment);
+        console.log(`DEBUG: تم إنشاء التعليق الجديد في المشروع ${req.currentProjectId} وإرساله:`, newComment);
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
     } catch (error) {
         console.error('خطأ: فشل إضافة التعليق:', error);
@@ -951,15 +1017,16 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
 // نقطة نهاية للحصول على تعليقات منشور
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
-        const result = await pool.query(`
-            SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified
-            FROM comments c
-            JOIN users u ON c.user_id = u.uid
-            WHERE c.post_id = $1
-            ORDER BY c.timestamp ASC
-        `, [postId]);
+        const result = await pool.query(
+            `SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes, u.is_verified
+             FROM comments c
+             JOIN users u ON c.user_id = u.uid
+             WHERE c.post_id = $1
+             ORDER BY c.timestamp ASC`,
+            [postId]
+        );
         const comments = result.rows.map(row => ({
             id: row.id,
             userId: row.user_id,
@@ -970,7 +1037,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
             likes: row.likes,
             isVerified: row.is_verified
         }));
-        console.log('DEBUG: بيانات التعليقات التي يتم إرسالها (أول تعليق):', JSON.stringify(comments.slice(0, 1)));
+        console.log(`DEBUG: بيانات التعليقات التي يتم إرسالها من المشروع ${req.currentProjectId} (أول تعليق):`, JSON.stringify(comments.slice(0, 1)));
         res.status(200).json(comments);
     } catch (error) {
         console.error('خطأ: فشل جلب التعليقات:', error);
@@ -982,7 +1049,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
 app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId, newText } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     if (!newText || newText.trim() === '') {
         return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
@@ -1012,7 +1079,7 @@ app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
 app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     try {
         const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1022,10 +1089,12 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
             return res.status(404).json({ error: 'التعليق غير موجود.' });
         }
 
-        const postOwnerResult = await pool.query('SELECT author_id FROM posts WHERE id = $1', [comment.post_id]);
+        // جلب معلومات مالك المنشور ودور المستخدم من المشروع الافتراضي
+        const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const postOwnerResult = await defaultPool.query('SELECT author_id FROM posts WHERE id = $1', [comment.post_id]);
         const postOwnerId = postOwnerResult.rows[0] ? postOwnerResult.rows[0].author_id : null;
 
-        const callerUser = await pool.query('SELECT user_role FROM users WHERE uid = $1', [userId]);
+        const callerUser = await defaultPool.query('SELECT user_role FROM users WHERE uid = $1', [userId]);
         const callerRole = callerUser.rows[0] ? callerUser.rows[0].user_role : 'normal';
 
         if (comment.user_id !== userId && postOwnerId !== userId && callerRole !== 'admin') {
@@ -1045,7 +1114,7 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
 app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     try {
         const commentResult = await pool.query('SELECT likes FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1068,7 +1137,7 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
         }
 
         await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
-        console.log('DEBUG: تم تحديث الإعجاب بالتعليق. الإعجابات:', currentLikes.length, 'هل أعجب:', isLiked);
+        console.log(`DEBUG: تم تحديث الإعجاب بالتعليق في المشروع ${req.currentProjectId}. الإعجابات:`, currentLikes.length, 'هل أعجب:', isLiked);
         res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
     } catch (error) {
         console.error('خطأ: فشل الإعجاب بالتعليق:', error);
@@ -1079,8 +1148,8 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
 // نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات والرسائل الصوتية)
 app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     const { bucketName, folder, fileName } = req.params;
-    const projectId = req.currentProjectId; // استخدام معرف المشروع من البرمجية الوسيطة
-    const supabase = req.supabase;
+    const projectId = req.currentProjectId; // سيستخدم معرف المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
 
     if (!supabase) {
         return res.status(400).send('معرف المشروع غير صالح أو غير مهيأ لخدمة الوسائط.');
@@ -1117,7 +1186,7 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
 app.post('/api/video/:postId/playback-position', async (req, res) => {
     const { postId } = req.params;
     const { userId, positionSeconds } = req.body;
-    const pool = req.dbPool;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
 
     if (!userId || positionSeconds === undefined || positionSeconds === null) {
         return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
@@ -1196,7 +1265,8 @@ app.post('/api/gemini-proxy', async (req, res) => {
 // نقطة نهاية لإنشاء محادثة فردية
 app.post('/api/chats/private', async (req, res) => {
     const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لإنشاء محادثة فردية (لأن معلومات المستخدمين موجودة هنا)
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
         return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
@@ -1245,7 +1315,8 @@ app.post('/api/chats/private', async (req, res) => {
 app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     const { chatId } = req.params;
     const { userId, newContactName } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لتعديل اسم جهة الاتصال
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     try {
         const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
@@ -1268,9 +1339,11 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
+// ملاحظة: هذه النقطة ستجلب المحادثات من المشروع الافتراضي فقط.
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لجلب المحادثات
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query(`
             SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants, send_permission
@@ -1334,15 +1407,17 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'chat-media'; // **تم التعديل: استخدام الواصلة**
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    const bucketName = 'chat-media';
 
     let messageMediaUrl = null;
     let messageMediaType = mediaType || 'text';
 
     try {
-        const chatResult = await pool.query('SELECT participants, type, admin_id, member_roles, send_permission FROM chats WHERE id = $1', [chatId]);
+        // نستخدم Pool المشروع الافتراضي للتحقق من معلومات المحادثة (لأن المحادثات موجودة هنا)
+        const chatCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const chatResult = await chatCheckPool.query('SELECT participants, type, admin_id, member_roles, send_permission FROM chats WHERE id = $1', [chatId]);
         const chat = chatResult.rows[0];
 
         if (!chat) {
@@ -1386,7 +1461,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             }
 
             messageMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للرسالة: ${messageMediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${req.currentProjectId}: ${messageMediaUrl}`);
 
             if (!mediaType || mediaType === 'text') {
                 if (mediaFile.mimetype.startsWith('image/')) {
@@ -1402,7 +1477,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         const messageId = uuidv4();
         const timestamp = Date.now();
 
-        await pool.query(
+        await pool.query( // سيتم حفظ الرسالة في مشروع المستخدم
             `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_url, media_type, sender_profile_bg)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
@@ -1419,7 +1494,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             lastMessageText = text || '';
         }
 
-        await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
+        // تحديث آخر رسالة في المحادثة في المشروع الافتراضي
+        await chatCheckPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
 
         const newMessage = {
             id: messageId,
@@ -1432,7 +1508,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             senderProfileBg: senderProfileBg || null
         };
 
-        console.log('DEBUG: تم إرسال رسالة جديدة في المحادثة:', chatId, newMessage);
+        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${req.currentProjectId}:`, newMessage);
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
@@ -1441,11 +1517,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 });
 
 // نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني)
+// ملاحظة: هذه النقطة ستجلب الرسائل من المشروع الذي تم تعيينه للمستخدم الذي يقوم بالطلب.
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
-    const pool = req.dbPool;
-
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
     try {
         const result = await pool.query(
             `SELECT m.*, u.is_verified AS sender_is_verified, u.user_role AS sender_user_role
@@ -1467,7 +1543,7 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
             senderIsVerified: row.sender_is_verified,
             senderUserRole: row.user_role
         }));
-        console.log('DEBUG: بيانات رسائل المحادثة التي يتم إرسالها (أول رسالة):', JSON.stringify(messages.slice(0, 1)));
+        console.log(`DEBUG: بيانات رسائل المحادثة التي يتم إرسالها من المشروع ${req.currentProjectId} (أول رسالة):`, JSON.stringify(messages.slice(0, 1)));
         res.status(200).json(messages);
     } catch (error) {
         console.error('خطأ: فشل جلب رسائل المحادثة:', error);
@@ -1476,10 +1552,11 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
 });
 
 // نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
 app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
     const { chatId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
         const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
@@ -1507,14 +1584,18 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
 });
 
 // نقطة نهاية لحذف محادثة فردية من الطرفين
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
 app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { chatId } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'chat-media'; // **تم التعديل: استخدام الواصلة**
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
+    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID]; // يستخدم عميل Supabase للمشروع الافتراضي
+    const bucketName = 'chat-media'; // هذا Bucket موجود في المشروع المخصص للمستخدمين، وليس الافتراضي
 
     try {
+        // هذه النقطة معقدة لأن الرسائل قد تكون موزعة.
+        // حاليًا، سيحاول حذف الوسائط من Bucket المشروع الافتراضي.
+        // إذا كانت الوسائط في مشروع آخر، فلن يتم حذفها بهذه الطريقة.
         const messagesResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
         const messagesMediaUrls = messagesResult.rows.map(row => row.media_url).filter(Boolean);
 
@@ -1554,7 +1635,8 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
 // نقطة نهاية لإنشاء مجموعة جديدة
 app.post('/api/groups', async (req, res) => {
     const { name, description, adminId, members, profileBgUrl } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لإنشاء المجموعات
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     if (!name || !adminId || !members || Object.keys(members).length < 2) {
         return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
@@ -1586,7 +1668,8 @@ app.post('/api/groups', async (req, res) => {
 app.put('/api/groups/:groupId/name', async (req, res) => {
     const { groupId } = req.params;
     const { newName, callerUid } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لتغيير اسم المجموعة
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     try {
         const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1614,9 +1697,10 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
     const { groupId } = req.params;
     const { callerUid } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool;
-    const supabase = req.supabase;
-    const bucketName = 'group-backgrounds'; // **تم التعديل: استخدام الواصلة**
+    // نستخدم Pool المشروع الافتراضي للتحقق من صلاحيات المجموعة
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID]; // يستخدم عميل Supabase للمشروع الافتراضي
+    const bucketName = 'group-backgrounds';
 
     if (!callerUid || !uploadedFile) {
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
@@ -1663,7 +1747,7 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
 
         await pool.query('UPDATE chats SET profile_bg_url = $1 WHERE id = $2', [mediaUrl, groupId]);
 
-        console.log(`تم تحميل خلفية المجموعة ${groupId}: ${mediaUrl}`);
+        console.log(`تم تحميل خلفية المجموعة ${groupId} في المشروع الافتراضي: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل خلفية المجموعة بنجاح.', url: mediaUrl });
     } catch (error) {
         console.error('خطأ: فشل تحميل خلفية المجموعة أو تحديث قاعدة البيانات:', error);
@@ -1675,7 +1759,8 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
 app.put('/api/groups/:groupId/send-permission', async (req, res) => {
     const { groupId } = req.params;
     const { callerUid, newPermission } = req.body;
-    const pool = req.dbPool;
+    // نستخدم Pool المشروع الافتراضي لتغيير إذن الإرسال
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
     if (!newPermission || !['all', 'admins_only'].includes(newPermission)) {
         return res.status(400).json({ error: 'إذن الإرسال غير صالح.' });
@@ -1703,9 +1788,10 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => {
 
 
 // نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
+// ملاحظة: هذه النقطة ستجلب الأعضاء من المشروع الافتراضي (حيث يتم تخزين معلومات المجموعات)
 app.get('/api/group/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
@@ -1717,6 +1803,7 @@ app.get('/api/group/:groupId/members', async (req, res) => {
         const memberUids = group.participants;
         const memberRoles = group.member_roles;
 
+        // جلب معلومات المستخدمين من المشروع الافتراضي
         const usersResult = await pool.query('SELECT uid, username, custom_id, is_verified, user_role FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
         const usersMap = new Map(usersResult.rows.map(u => [u.uid, u]));
 
@@ -1743,9 +1830,10 @@ app.get('/api/group/:groupId/members', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على عدد أعضاء المجموعة
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.get('/api/group/:groupId/members/count', async (req, res) => {
     const { groupId } = req.params;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
     try {
         const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
@@ -1761,10 +1849,11 @@ app.get('/api/group/:groupId/members/count', async (req, res) => {
 });
 
 // نقطة نهاية لإضافة أعضاء إلى مجموعة موجودة
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.post('/api/groups/:groupId/add-members', async (req, res) => {
     const { groupId } = req.params;
     const { newMemberUids, callerUid } = req.body;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1784,6 +1873,7 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => {
 
         for (const uid of newMemberUids) {
             if (!currentParticipants.includes(uid)) {
+                // جلب معلومات المستخدم من المشروع الافتراضي
                 const userResult = await pool.query('SELECT username FROM users WHERE uid = $1', [uid]);
                 const user = userResult.rows[0];
                 if (user) {
@@ -1808,10 +1898,11 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => {
 });
 
 // نقطة نهاية لتغيير دور عضو في المجموعة (مشرف/عضو)
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { newRole, callerUid } = req.body;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1849,10 +1940,11 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 });
 
 // نقطة نهاية لإزالة عضو من المجموعة
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
@@ -1892,10 +1984,11 @@ app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
 });
 
 // نقطة نهاية لمغادرة المجموعة
+// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/leave', async (req, res) => {
     const { groupId } = req.params;
     const { memberUid } = req.body;
-    const pool = req.dbPool;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
