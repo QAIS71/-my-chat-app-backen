@@ -24,22 +24,22 @@ const SUPABASE_PROJECT_CONFIGS = {
     'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8"
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NTMsImV4cCI6MjA2ODQzMDU1M30.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // **تأكد من تحديث هذا المفتاح السري**
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://ojuatwnwnvnzfyhicokc.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **تأكد من تحديث هذا المفتاح السري أيضًا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **تأكد من تحديث هذا المفتاح السري**
     },
     'fznbkubzddthnboehmvq': { // معرف المشروع 3
         databaseUrl: "postgresql://postgres.fznbkubzddthnboehmvq:j%23ZM%24q%40WjH%40dtU6@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://fznbkubzddthnboehmvq.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTcxNjAsImV4cCI6MjA2ODQzMzE2MH0.TXPBZZE2fMFCNgHVibQqVILFSndSp4sT_T2U6u_w6j8" // **تأكد من تحديث هذا المفتاح السري أيضًا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzE2MCwiZXhwIjoyMDY4NDMzMTYwfQ.TXPBZZE2fMFCNgHVibQqVILFSndSp4sT_T2U6u_w6j8" // **تأكد من تحديث هذا المفتاح السري**
     },
     'woxzcoerelijbsrbdnbk': { // معرف المشروع 4
         databaseUrl: "postgresql://postgres.woxzcoerelijbsrbdnbk:n%247j9tuvhRtQ!8y@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://woxzcoerelijbsrbdnbk.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4NTc0MTgsImV4cCI6MjA2ODQzMzQxOH0.tX6VqEdqvpQATY29KoNKmm7DLOxBY0RqJTYbAqeK3rs" // **تأكد من تحديث هذا المفتاح السري أيضًا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzQxOCwiZXhwIjoyMDY4NDMzNDE4fQ.tX6VqEdqvpQATY29KoNKmm7DLOxBY0RqJTYbAqeK3rs" // **تأكد من تحديث هذا المفتاح السري**
     },
     // لإضافة مشاريع إضافية (حتى 8 أو أكثر)، أضفها هنا بنفس التنسيق:
     // 'new_project_id_5': {
@@ -343,8 +343,7 @@ async function getPostsFromSinglePool(pool, baseQuery, initialQueryParams) {
     let selectClause = `
         p.*,
         (SELECT json_agg(json_build_object('id', c.id, 'userId', c.user_id, 'username', c.username, 'text', c.text, 'timestamp', c.timestamp, 'userProfileBg', c.user_profile_bg, 'likes', c.likes))
-         FROM comments c WHERE c.post_id = p.id) AS comments_raw,
-        (SELECT COUNT(*) FROM followers WHERE followed_id = p.author_id) AS authorFollowersCount
+         FROM comments c WHERE c.post_id = p.id) AS comments_raw
     `;
 
     let joinClause = ``; // لا يوجد JOIN لجدول المستخدمين هنا
@@ -406,6 +405,17 @@ async function getPostsFromAllProjects(baseQuery, initialQueryParams, userIdForP
             };
         }));
 
+        // جلب عدد المتابعين للمؤلف
+        let authorFollowersCount = 0;
+        const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        try {
+            const followersResult = await defaultPool.query('SELECT COUNT(*) FROM followers WHERE followed_id = $1', [row.author_id]);
+            authorFollowersCount = parseInt(followersResult.rows[0].count);
+        } catch (error) {
+            console.error(`خطأ في جلب عدد المتابعين للمؤلف ${row.author_id}:`, error);
+        }
+
+
         return {
             id: row.id,
             authorId: row.author_id,
@@ -418,7 +428,7 @@ async function getPostsFromAllProjects(baseQuery, initialQueryParams, userIdForP
             mediaUrl: row.media_url,
             mediaType: row.media_type,
             authorProfileBg: authorDetails ? authorDetails.profile_bg_url : null,
-            authorFollowersCount: parseInt(row.authorfollowerscount),
+            authorFollowersCount: authorFollowersCount,
             playbackPosition: playbackPosition,
             isPinned: row.is_pinned,
             authorIsVerified: authorDetails ? authorDetails.is_verified : false,
@@ -434,6 +444,35 @@ async function getPostsFromAllProjects(baseQuery, initialQueryParams, userIdForP
     });
 
     return enrichedPosts;
+}
+
+// وظيفة لجلب منشور واحد من أي مشروع
+async function getPostFromAnyProject(postId) {
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const result = await pool.query('SELECT * FROM posts WHERE id = $1', [postId]);
+            if (result.rows.length > 0) {
+                return { post: result.rows[0], pool: pool, projectId: projectId };
+            }
+        } catch (error) {
+            console.error(`خطأ في البحث عن المنشور ${postId} في المشروع ${projectId}:`, error);
+        }
+    }
+    return null; // المنشور غير موجود في أي مشروع
+}
+
+// وظيفة لجلب محادثة واحدة من المشروع الافتراضي
+async function getChatFromDefaultProject(chatId) {
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    if (!defaultPool) return null;
+    try {
+        const chatResult = await defaultPool.query('SELECT * FROM chats WHERE id = $1', [chatId]);
+        return chatResult.rows[0] || null;
+    } catch (error) {
+        console.error(`خطأ في جلب المحادثة ${chatId} من المشروع الافتراضي:`, error);
+        return null;
+    }
 }
 
 
@@ -890,18 +929,17 @@ app.get('/api/posts/search', async (req, res) => {
 app.delete('/api/posts/:postId', async (req, res) => {
     const { postId } = req.params;
     const { callerUid } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { post: deletedPost, pool, projectId } = postInfo;
+    const supabase = projectSupabaseClients[projectId]; // عميل Supabase للمشروع الذي يوجد به المنشور
     const bucketName = 'post-media';
 
     try {
-        const postResult = await pool.query('SELECT media_url, author_id FROM posts WHERE id = $1', [postId]);
-        const deletedPost = postResult.rows[0];
-
-        if (!deletedPost) {
-            return res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
-
         // التحقق من أن المستخدم هو صاحب المنشور أو مدير (من المشروع الافتراضي)
         const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const callerUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
@@ -921,12 +959,12 @@ app.delete('/api/posts/:postId', async (req, res) => {
             if (deleteError) {
                 console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
             } else {
-                console.log(`تم حذف الملف من Supabase Storage في المشروع ${req.currentProjectId}: ${filePathInBucket}`);
+                console.log(`تم حذف الملف من Supabase Storage في المشروع ${projectId}: ${filePathInBucket}`);
             }
         }
 
         await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
-        console.log(`تم حذف المنشور ${postId} من المشروع ${req.currentProjectId}.`);
+        console.log(`تم حذف المنشور ${postId} من المشروع ${projectId}.`);
         res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل حذف المنشور:', error);
@@ -938,7 +976,13 @@ app.delete('/api/posts/:postId', async (req, res) => {
 app.put('/api/posts/:postId/pin', async (req, res) => {
     const { postId } = req.params;
     const { isPinned, callerUid } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool, projectId } = postInfo;
 
     try {
         // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير (من المشروع الافتراضي)
@@ -948,13 +992,8 @@ app.put('/api/posts/:postId/pin', async (req, res) => {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتثبيت/إلغاء تثبيت المنشورات.' });
         }
 
-        const postCheck = await pool.query('SELECT 1 FROM posts WHERE id = $1', [postId]);
-        if (postCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
-
         await pool.query('UPDATE posts SET is_pinned = $1 WHERE id = $2', [isPinned, postId]);
-        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح في المشروع ${req.currentProjectId}.`, isPinned });
+        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح في المشروع ${projectId}.`, isPinned });
     } catch (error) {
         console.error('خطأ: فشل تثبيت/إلغاء تثبيت المنشور:', error);
         res.status(500).json({ error: 'فشل تثبيت/إلغاء تثبيت المنشور.' });
@@ -965,16 +1004,15 @@ app.put('/api/posts/:postId/pin', async (req, res) => {
 app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { post, pool } = postInfo;
 
     try {
-        const postResult = await pool.query('SELECT likes FROM posts WHERE id = $1', [postId]);
-        const post = postResult.rows[0];
-
-        if (!post) {
-            return res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
-
         let currentLikes = post.likes || [];
         const userIndex = currentLikes.indexOf(userId);
         let isLiked;
@@ -999,16 +1037,15 @@ app.post('/api/posts/:postId/like', async (req, res) => {
 app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { post, pool } = postInfo;
 
     try {
-        const postResult = await pool.query('SELECT views FROM posts WHERE id = $1', [postId]);
-        const post = postResult.rows[0];
-
-        if (!post) {
-            return res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
-
         let currentViews = post.views || [];
 
         if (!currentViews.includes(userId)) {
@@ -1026,23 +1063,23 @@ app.post('/api/posts/:postId/view', async (req, res) => {
 app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool, projectId } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
 
     if (!text) {
         return res.status(400).json({ error: 'نص التعليق مطلوب.' });
     }
 
     try {
-        const postResult = await pool.query('SELECT 1 FROM posts WHERE id = $1', [postId]);
-        if (postResult.rows.length === 0) {
-            return res.status(404).json({ error: 'المنشور غير موجود.' });
-        }
-
-        // جلب معلومات المستخدم من المشروع الافتراضي
-        const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-        const userResult = await userCheckPool.query('SELECT profile_bg_url, is_verified FROM users WHERE uid = $1', [userId]);
-        const userProfileBg = userResult.rows[0] ? userResult.rows[0].profile_bg_url : null;
-        const isVerified = userResult.rows[0] ? userResult.rows[0].is_verified : false;
+        // جلب معلومات المستخدم من المشروع الافتراضي (حيث يوجد جدول المستخدمين)
+        const userDetails = await getUserDetailsFromDefaultProject(userId);
+        const userProfileBg = userDetails ? userDetails.profile_bg_url : null;
+        const isVerified = userDetails ? userDetails.is_verified : false;
 
         const commentId = uuidv4();
         const timestamp = Date.now();
@@ -1063,7 +1100,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
             userProfileBg: userProfileBg,
             isVerified: isVerified
         };
-        console.log(`DEBUG: تم إنشاء التعليق الجديد في المشروع ${req.currentProjectId} وإرساله:`, newComment);
+        console.log(`DEBUG: تم إنشاء التعليق الجديد في المشروع ${projectId} وإرساله:`, newComment);
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
     } catch (error) {
         console.error('خطأ: فشل إضافة التعليق:', error);
@@ -1074,7 +1111,14 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
 // نقطة نهاية للحصول على تعليقات منشور
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool, projectId } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
+
     try {
         const result = await pool.query(
             `SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes
@@ -1098,7 +1142,7 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
                 isVerified: userDetails ? userDetails.is_verified : false
             };
         }));
-        console.log(`DEBUG: بيانات التعليقات التي يتم إرسالها من المشروع ${req.currentProjectId} (أول تعليق):`, JSON.stringify(comments.slice(0, 1)));
+        console.log(`DEBUG: بيانات التعليقات التي يتم إرسالها من المشروع ${projectId} (أول تعليق):`, JSON.stringify(comments.slice(0, 1)));
         res.status(200).json(comments);
     } catch (error) {
         console.error('خطأ: فشل جلب التعليقات:', error);
@@ -1110,7 +1154,13 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
 app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId, newText } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool } = postInfo;
 
     if (!newText || newText.trim() === '') {
         return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
@@ -1140,7 +1190,13 @@ app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
 app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool } = postInfo;
 
     try {
         const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1175,7 +1231,13 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
 app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool } = postInfo;
 
     try {
         const commentResult = await pool.query('SELECT likes FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
@@ -1198,7 +1260,7 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
         }
 
         await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
-        console.log(`DEBUG: تم تحديث الإعجاب بالتعليق في المشروع ${req.currentProjectId}. الإعجابات:`, currentLikes.length, 'هل أعجب:', isLiked);
+        console.log(`DEBUG: تم تحديث الإعجاب بالتعليق في المشروع ${postInfo.projectId}. الإعجابات:`, currentLikes.length, 'هل أعجب:', isLiked);
         res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
     } catch (error) {
         console.error('خطأ: فشل الإعجاب بالتعليق:', error);
@@ -1209,21 +1271,62 @@ app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
 // نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات والرسائل الصوتية)
 app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     const { bucketName, folder, fileName } = req.params;
-    const projectId = req.currentProjectId; // سيستخدم معرف المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    // هذه النقطة لا تستخدم req.currentProjectId لأن الملف قد يكون في أي مشروع
+    // يجب أن نحدد المشروع من خلال مسار الملف إذا أمكن
+    // أو نستخدم جميع عملاء Supabase للبحث عن الملف
 
-    if (!supabase) {
-        return res.status(400).send('معرف المشروع غير صالح أو غير مهيأ لخدمة الوسائط.');
+    let targetSupabaseClient = null;
+    let foundProjectId = null;
+
+    // محاولة تحديد المشروع من خلال معرف المستخدم في المسار
+    // هذا افتراض بأن folder هو userId
+    const potentialUserId = folder;
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    if (defaultPool) {
+        try {
+            const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [potentialUserId]);
+            if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                foundProjectId = userResult.rows[0].user_project_id;
+                targetSupabaseClient = projectSupabaseClients[foundProjectId];
+            }
+        } catch (error) {
+            console.error(`خطأ في تحديد المشروع لخدمة الوسائط للمستخدم ${potentialUserId}:`, error);
+        }
+    }
+
+    // إذا لم يتم تحديد مشروع، حاول البحث في جميع المشاريع
+    if (!targetSupabaseClient) {
+        console.warn(`لم يتم تحديد مشروع لخدمة الوسائط. سأبحث في جميع المشاريع عن الملف: ${folder}/${fileName} في ${bucketName}`);
+        for (const projectId in projectSupabaseClients) {
+            const supabaseClient = projectSupabaseClients[projectId];
+            try {
+                // محاولة الحصول على توقيع URL، إذا نجحت، فهذا هو المشروع الصحيح
+                const { data, error } = await supabaseClient.storage
+                    .from(bucketName)
+                    .createSignedUrl(`${folder}/${fileName}`, 1); // توقيع قصير جداً للاختبار فقط
+                if (!error && data && data.signedUrl) {
+                    targetSupabaseClient = supabaseClient;
+                    foundProjectId = projectId;
+                    break;
+                }
+            } catch (error) {
+                // تجاهل الأخطاء، فقط حاول في المشروع التالي
+            }
+        }
+    }
+
+    if (!targetSupabaseClient) {
+        return res.status(404).send('الملف غير موجود في أي من المشاريع المتاحة.');
     }
 
     const filePathInBucket = `${folder}/${fileName}`;
 
-    console.log(`DEBUG: طلب ملف وسائط: ${filePathInBucket} من Bucket: ${bucketName} للمشروع: ${projectId}`);
+    console.log(`DEBUG: طلب ملف وسائط: ${filePathInBucket} من Bucket: ${bucketName} للمشروع: ${foundProjectId}`);
 
     try {
-        const { data, error } = await supabase.storage
+        const { data, error } = await targetSupabaseClient.storage
             .from(bucketName)
-            .createSignedUrl(filePathInBucket, 60);
+            .createSignedUrl(filePathInBucket, 60); // رابط صالح لمدة 60 ثانية
 
         if (error || !data || !data.signedUrl) {
             console.error(`خطأ: فشل إنشاء رابط موقّع للملف ${filePathInBucket}:`, error);
@@ -1247,7 +1350,13 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
 app.post('/api/video/:postId/playback-position', async (req, res) => {
     const { postId } = req.params;
     const { userId, positionSeconds } = req.body;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    
+    // البحث عن المنشور لتحديد الـ pool الصحيح
+    const postInfo = await getPostFromAnyProject(postId);
+    if (!postInfo) {
+        return res.status(404).json({ error: 'المنشور غير موجود.' });
+    }
+    const { pool } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
 
     if (!userId || positionSeconds === undefined || positionSeconds === null) {
         return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
@@ -2028,7 +2137,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 // نقطة نهاية لإزالة عضو من المجموعة
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
+    const { groupId } = req.params;
     const { callerUid } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
