@@ -24,29 +24,23 @@ const SUPABASE_PROJECT_CONFIGS = {
     'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky" // **تأكد من تحديث هذا المفتاح السري**
+        serviceRoleKey: "YOUR_PROJECT_1_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الأول هنا**
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://ojuatwnwnvnzfyhicokc.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **تأكد من تحديث هذا المفتاح السري**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **الصق المفتاح السري للمشروع الثاني هنا (تأكد من صحته)**
     },
     'fznbkubzddthnboehmvq': { // معرف المشروع 3
         databaseUrl: "postgresql://postgres.fznbkubzddthnboehmvq:j%23ZM%24q%40WjH%40dtU6@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://fznbkubzddthnboehmvq.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzE2MCwiZXhwIjoyMDY4NDMzMTYwfQ.TXPBZZE2fMFCNgHVibQqVILFSndSp4sT_T2U6u_w6j8" // **تأكد من تحديث هذا المفتاح السري**
+        serviceRoleKey: "YOUR_PROJECT_3_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الثالث هنا**
     },
     'woxzcoerelijbsrbdnbk': { // معرف المشروع 4
         databaseUrl: "postgresql://postgres.woxzcoerelijbsrbdnbk:n%247j9tuvhRtQ!8y@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://woxzcoerelijbsrbdnbk.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzQxOCwiZXhwIjoyMDY4NDMzNDE4fQ.tX6VqEdqvpQATY29KoNKmm7DLOxBY0RqJTYbAqeK3rs" // **تأكد من تحديث هذا المفتاح السري**
+        serviceRoleKey: "YOUR_PROJECT_4_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الرابع هنا**
     },
-    // لإضافة مشاريع إضافية (حتى 8 أو أكثر)، أضفها هنا بنفس التنسيق:
-    // 'new_project_id_5': {
-    //     databaseUrl: "postgresql://postgres.new_ref_5:[YOUR_PASSWORD_5]@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
-    //     projectUrl: "https://new_ref_5.supabase.co",
-    //     serviceRoleKey: "your_service_role_key_5"
-    // },
 };
 
 // **معرف المشروع الافتراضي للخادم الخلفي**
@@ -118,6 +112,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""; // قم بتعيين ه
 // وظيفة لإنشاء الجداول إذا لم تكن موجودة (تأخذ Pool كمعامل)
 async function createTables(pool) {
     try {
+        // تحديث جدول users لإضافة user_project_id إذا لم يكن موجودًا
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 uid VARCHAR(255) PRIMARY KEY,
@@ -129,10 +124,27 @@ async function createTables(pool) {
                 user_role VARCHAR(50) DEFAULT 'normal',
                 user_project_id VARCHAR(255) -- **جديد: لتخزين معرف المشروع المخصص للمستخدم**
             );
+        `);
+        // تأكد من وجود العمود user_project_id في جدول users
+        // هذا ALTER TABLE سيضيف العمود إذا لم يكن موجودًا بالفعل
+        // يجب أن يتم هذا فقط للمشروع الافتراضي
+        if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
+            try {
+                await pool.query(`
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS user_project_id VARCHAR(255);
+                `);
+                console.log('تم التأكد من وجود العمود user_project_id في جدول users في المشروع الافتراضي.');
+            } catch (alterError) {
+                console.error('خطأ في إضافة العمود user_project_id:', alterError);
+            }
+        }
 
+
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS posts (
                 id VARCHAR(255) PRIMARY KEY,
-                author_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                author_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 author_name VARCHAR(255) NOT NULL,
                 text TEXT,
                 timestamp BIGINT NOT NULL,
@@ -146,8 +158,8 @@ async function createTables(pool) {
 
             CREATE TABLE IF NOT EXISTS comments (
                 id VARCHAR(255) PRIMARY KEY,
-                post_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE,
-                user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                post_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
+                user_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 username VARCHAR(255) NOT NULL,
                 text TEXT NOT NULL,
                 timestamp BIGINT NOT NULL,
@@ -160,7 +172,7 @@ async function createTables(pool) {
                 type VARCHAR(50) NOT NULL,
                 name VARCHAR(255),
                 description TEXT,
-                admin_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                admin_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 participants JSONB NOT NULL,
                 member_roles JSONB,
                 last_message TEXT,
@@ -172,8 +184,8 @@ async function createTables(pool) {
 
             CREATE TABLE IF NOT EXISTS messages (
                 id VARCHAR(255) PRIMARY KEY,
-                chat_id VARCHAR(255) REFERENCES chats(id) ON DELETE CASCADE,
-                sender_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                chat_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن chats في مشروع آخر
+                sender_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 sender_name VARCHAR(255) NOT NULL,
                 text TEXT,
                 timestamp BIGINT NOT NULL,
@@ -183,62 +195,64 @@ async function createTables(pool) {
             );
 
             CREATE TABLE IF NOT EXISTS followers (
-                follower_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
-                followed_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
+                follower_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                followed_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 PRIMARY KEY (follower_id, followed_id)
             );
 
             CREATE TABLE IF NOT EXISTS video_playback_progress (
-                user_id VARCHAR(255) REFERENCES users(uid) ON DELETE CASCADE,
-                post_id VARCHAR(255) REFERENCES posts(id) ON DELETE CASCADE,
+                user_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                post_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
                 position_seconds REAL NOT NULL,
                 last_updated BIGINT NOT NULL,
                 PRIMARY KEY (user_id, post_id)
             );
         `);
-        console.log('تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل).');
+        console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
-        // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً
-        const adminCheck = await pool.query('SELECT uid FROM users WHERE username = $1 AND user_role = $2', [ADMIN_USERNAME, 'admin']);
-        if (adminCheck.rows.length === 0) {
-            const adminUid = uuidv4();
-            const adminCustomId = await generateCustomId(pool); // تمرير pool
-            // تعيين معرف المشروع للمدير إلى المشروع الافتراضي
-            await pool.query(
-                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                [adminUid, ADMIN_USERNAME, ADMIN_PASSWORD, adminCustomId, true, 'admin', BACKEND_DEFAULT_PROJECT_ID]
-            );
-            console.log('تم إنشاء حساب المدير:', ADMIN_USERNAME, 'UID:', adminUid, 'معرف مخصص:', adminCustomId, 'معرف المشروع:', BACKEND_DEFAULT_PROJECT_ID);
-        } else {
-            console.log('حساب المدير موجود بالفعل.');
-        }
+        // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
+        if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
+            const adminCheck = await pool.query('SELECT uid FROM users WHERE username = $1 AND user_role = $2', [ADMIN_USERNAME, 'admin']);
+            if (adminCheck.rows.length === 0) {
+                const adminUid = uuidv4();
+                const adminCustomId = await generateCustomId(pool); // تمرير pool
+                // تعيين معرف المشروع للمدير إلى المشروع الافتراضي
+                await pool.query(
+                    'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                    [adminUid, ADMIN_USERNAME, ADMIN_PASSWORD, adminCustomId, true, 'admin', BACKEND_DEFAULT_PROJECT_ID]
+                );
+                console.log('تم إنشاء حساب المدير:', ADMIN_USERNAME, 'UID:', adminUid, 'معرف مخصص:', adminCustomId, 'معرف المشروع:', BACKEND_DEFAULT_PROJECT_ID);
+            } else {
+                console.log('حساب المدير موجود بالفعل.');
+            }
 
-        // التأكد من وجود محادثة "المساعدة" (البوت)
-        const botChatCheck = await pool.query('SELECT id FROM chats WHERE type = $1 AND name = $2', ['private', 'المساعدة']);
-        if (botChatCheck.rows.length === 0) {
-            const botUid = uuidv4(); // معرف فريد للبوت
-            const botCustomId = 'BOT00001'; // معرف مخصص للبوت
-            const botUsername = 'المساعدة';
+            // التأكد من وجود محادثة "المساعدة" (البوت)
+            const botChatCheck = await pool.query('SELECT id FROM chats WHERE type = $1 AND name = $2', ['private', 'المساعدة']);
+            if (botChatCheck.rows.length === 0) {
+                const botUid = uuidv4(); // معرف فريد للبوت
+                const botCustomId = 'BOT00001'; // معرف مخصص للبوت
+                const botUsername = 'المساعدة';
 
-            // إنشاء حساب للبوت في جدول المستخدمين (في المشروع الافتراضي)
-            await pool.query(
-                'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-                [botUid, botUsername, uuidv4(), botCustomId, true, 'bot', BACKEND_DEFAULT_PROJECT_ID] // البوت موثق ودوره 'bot'
-            );
+                // إنشاء حساب للبوت في جدول المستخدمين (في المشروع الافتراضي)
+                await pool.query(
+                    'INSERT INTO users (uid, username, password, custom_id, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                    [botUid, botUsername, uuidv4(), botCustomId, true, 'bot', BACKEND_DEFAULT_PROJECT_ID] // البوت موثق ودوره 'bot'
+                );
 
-            const botChatId = uuidv4();
-            const timestamp = Date.now();
-            const participantsArray = [botUid]; // البوت هو المشارك الوحيد في هذه المحادثة من جانب قاعدة البيانات
-            const contactNamesObject = { [botUid]: 'المساعدة' }; // اسم جهة الاتصال للبوت نفسه
+                const botChatId = uuidv4();
+                const timestamp = Date.now();
+                const participantsArray = [botUid]; // البوت هو المشارك الوحيد في هذه المحادثة من جانب قاعدة البيانات
+                const contactNamesObject = { [botUid]: 'المساعدة' }; // اسم جهة الاتصال للبوت نفسه
 
-            await pool.query(
-                `INSERT INTO chats (id, type, name, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, contact_names, send_permission)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-                [botChatId, 'private', 'المساعدة', null, JSON.stringify(participantsArray), JSON.stringify({}), null, timestamp, null, JSON.stringify(contactNamesObject), 'all']
-            );
-            console.log('تم إنشاء محادثة "المساعدة" (البوت) بمعرف UID:', botUid, 'معرف المحادثة:', botChatId);
-        } else {
-            console.log('محادثة "المساعدة" (البوت) موجودة بالفعل.');
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, contact_names, send_permission)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                    [botChatId, 'private', 'المساعدة', null, JSON.stringify(participantsArray), JSON.stringify({}), null, timestamp, null, JSON.stringify(contactNamesObject), 'all']
+                );
+                console.log('تم إنشاء محادثة "المساعدة" (البوت) بمعرف UID:', botUid, 'معرف المحادثة:', botChatId);
+            } else {
+                console.log('محادثة "المساعدة" (البوت) موجودة بالفعل.');
+            }
         }
 
     } catch (err) {
@@ -262,6 +276,10 @@ app.use('/api/*', async (req, res, next) => {
 
     // محاولة استخراج معرف المستخدم من الطلب
     const userId = req.body.userId || req.query.userId || req.params.userId || req.headers['x-user-id'];
+
+    if (!userId) {
+        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId. سيتم استخدام المشروع الافتراضي.`);
+    }
 
     // إذا كان هناك معرف مستخدم، حاول جلب معرف المشروع المخصص له
     if (userId) {
@@ -599,6 +617,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
     const bucketName = 'profile-backgrounds';
 
     if (!userId || !uploadedFile) {
+        console.error('خطأ: معرف المستخدم والملف مطلوبان لرفع خلفية الملف الشخصي.');
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
 
@@ -607,6 +626,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [userId]);
         if (userResult.rows.length === 0) {
+            console.error(`خطأ: المستخدم ${userId} غير موجود لرفع خلفية الملف الشخصي.`);
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
@@ -614,6 +634,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${userId}/${fileName}`;
 
+        console.log(`محاولة تحميل ملف خلفية الملف الشخصي إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
         const { data, error: uploadError } = await supabase.storage
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
@@ -759,6 +780,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     let postMediaType = mediaType || 'text';
 
     if (!authorId || !authorName || (!text && !mediaFile)) {
+        console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لنشر منشور جديد.');
         return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
     }
 
@@ -767,14 +789,16 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [authorId]);
         if (userResult.rows.length === 0) {
+            console.error(`خطأ: المستخدم ${authorId} غير موجود لنشر المنشور.`);
             return res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
 
         if (mediaFile) {
-            const fileExtension = mediaFile.originalname.split('.').pop();
+            const fileExtension = uploadedFile.originalname.split('.').pop();
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${authorId}/${fileName}`;
 
+            console.log(`محاولة تحميل ملف المنشور إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
             const { data, error: uploadError } = await supabase.storage
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
@@ -943,8 +967,11 @@ app.delete('/api/posts/:postId', async (req, res) => {
         // التحقق من أن المستخدم هو صاحب المنشور أو مدير (من المشروع الافتراضي)
         const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const callerUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
-        if (deletedPost.author_id !== callerUid && (!callerUser.rows[0] || callerUser.rows[0].user_role !== 'admin')) {
-            return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
+        if (!callerUser.rows[0] || callerUser.rows[0].user_role !== 'admin') {
+            // إذا لم يكن مديرًا، يجب أن يكون هو صاحب المنشور
+            if (deletedPost.author_id !== callerUid) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
+            }
         }
 
         if (deletedPost.media_url) {
@@ -1316,6 +1343,7 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     }
 
     if (!targetSupabaseClient) {
+        console.error(`خطأ: لم يتم العثور على الملف ${folder}/${fileName} في أي مشروع.`);
         return res.status(404).send('الملف غير موجود في أي من المشاريع المتاحة.');
     }
 
@@ -1326,14 +1354,14 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     try {
         const { data, error } = await targetSupabaseClient.storage
             .from(bucketName)
-            .createSignedUrl(filePathInBucket, 60); // رابط صالح لمدة 60 ثانية
+            .getPublicUrl(filePathInBucket); // استخدام getPublicUrl مباشرة بدلاً من createSignedUrl لملفات Public
 
-        if (error || !data || !data.signedUrl) {
-            console.error(`خطأ: فشل إنشاء رابط موقّع للملف ${filePathInBucket}:`, error);
+        if (error || !data || !data.publicUrl) {
+            console.error(`خطأ: فشل الحصول على الرابط العام للملف ${filePathInBucket}:`, error);
             return res.status(500).send('فشل في خدمة الملف.');
         }
 
-        res.redirect(data.signedUrl);
+        res.redirect(data.publicUrl); // إعادة التوجيه إلى الرابط العام مباشرة
 
     } catch (error) {
         console.error(`خطأ: فشل خدمة ملف الوسائط ${filePathInBucket} من Supabase Storage:`, error);
@@ -1621,6 +1649,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     let messageMediaUrl = null;
     let messageMediaType = mediaType || 'text';
 
+    if (!senderId || !senderName || (!text && !mediaFile)) {
+        console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لإرسال رسالة.');
+        return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
+    }
+
     try {
         // نستخدم Pool المشروع الافتراضي للتحقق من معلومات المحادثة (لأن المحادثات موجودة هنا)
         const chatCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -1628,15 +1661,18 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         const chat = chatResult.rows[0];
 
         if (!chat) {
+            console.error(`خطأ: المحادثة ${chatId} غير موجودة.`);
             return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
         if (!chat.participants.includes(senderId)) {
+            console.error(`خطأ: المستخدم ${senderId} ليس عضواً في المحادثة ${chatId}.`);
             return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
         }
 
         if (chat.type === 'group' && chat.send_permission === 'admins_only') {
             const senderRole = chat.member_roles[senderId];
             if (senderRole !== 'admin') {
+                console.error(`خطأ: المستخدم ${senderId} ليس مشرفاً في المجموعة ${chatId} ولا يمكنه الإرسال.`);
                 return res.status(403).json({ error: 'فقط المشرفون يمكنهم إرسال الرسائل في هذه المجموعة.' });
             }
         }
@@ -1646,6 +1682,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${senderId}/${fileName}`;
 
+            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
             const { data, error: uploadError } = await supabase.storage
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
@@ -1898,6 +1935,7 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
     const bucketName = 'group-backgrounds';
 
     if (!callerUid || !uploadedFile) {
+        console.error('خطأ: معرف المستخدم والملف مطلوبان لرفع خلفية المجموعة.');
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
 
@@ -1906,10 +1944,12 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
         const group = groupResult.rows[0];
 
         if (!group) {
+            console.error(`خطأ: المجموعة ${groupId} غير موجودة.`);
             return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         }
 
         if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
+            console.error(`خطأ: المستخدم ${callerUid} ليس مشرفاً في المجموعة ${groupId} ولا يملك صلاحية تغيير الخلفية.`);
             return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير خلفية المجموعة.' });
         }
 
@@ -1917,6 +1957,7 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${groupId}/${fileName}`;
 
+        console.log(`محاولة تحميل ملف خلفية المجموعة إلى المشروع ${BACKEND_DEFAULT_PROJECT_ID}، Bucket: ${bucketName}, المسار: ${filePath}`);
         const { data, error: uploadError } = await supabase.storage
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
@@ -1970,7 +2011,7 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => {
         }
 
         if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
+            return res.status(403).json({ error: 'لا تملك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
         }
 
         await pool.query('UPDATE chats SET send_permission = $1 WHERE id = $2', [newPermission, groupId]);
@@ -2039,7 +2080,7 @@ app.get('/api/group/:groupId/members/count', async (req, res) => {
         res.status(200).json({ count: group.participants.length });
     } catch (error) {
         console.error('خطأ: فشل جلب عدد أعضاء المجموعة:', error);
-        res.status(500).json({ error: 'فشل جلب عدد أعضاء المجموعة.' });
+        res.status(500).json({ error: 'فشل جلب عدد الأعضاء.' });
     }
 });
 
