@@ -17,29 +17,28 @@ const port = process.env.PORT || 3000; // استخدام المنفذ المحد
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ----------------------------------------------------------------------------------------------------
-// إعدادات مشاريع Supabase - قم بتحديث هذا الكائن بمعلومات مشاريعك
-// تأكد من استخدام Service Role Key لكل مشروع هنا!
+// إعدادات مشاريع Supabase - تم تحديثها بالمفاتيح التي قدمتها
 // ----------------------------------------------------------------------------------------------------
 const SUPABASE_PROJECT_CONFIGS = {
     'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **الصق المفتاح السري للمشروع الأول هنا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // مفتاح المشروع 1
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://ojuatwnwnvnzfyhicokc.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // **الصق المفتاح السري للمشروع الثاني هنا (تأكد من صحته)**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // مفتاح المشروع 2
     },
     'fznbkubzddthnboehmvq': { // معرف المشروع 3
         databaseUrl: "postgresql://postgres.fznbkubzddthnboehmvq:j%23ZM%24q%40WjH%40dtU6@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://fznbkubzddthnboehmvq.supabase.co",
-        serviceRoleKey: "YOUR_PROJECT_3_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الثالث هنا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzE2MCwiZXhwIjoyMDY4NDMzMTYwfQ.v47l39S4qOooMPxMGJrUPPBqY7B0Z0fiBB1h7uWZEXg" // مفتاح المشروع 3
     },
     'woxzcoerelijbsrbdnbk': { // معرف المشروع 4
         databaseUrl: "postgresql://postgres.woxzcoerelijbsrbdnbk:n%247j9tuvhRtQ!8y@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://woxzcoerelijbsrbdnbk.supabase.co",
-        serviceRoleKey: "YOUR_PROJECT_4_SERVICE_ROLE_KEY_HERE" // **الصق المفتاح السري للمشروع الرابع هنا**
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzQxOCwiZXhwIjoyMDY4NDMzNDE4fQ.nwKvMDUGq6zPzQluXR_3PrQy0HAVl1sDAflT5at2AQA" // مفتاح المشروع 4
     },
 };
 
@@ -85,7 +84,7 @@ async function initializeSupabaseClients() {
                     }
                 }
             );
-            console.log(`تم تهيئة عميل Supabase للمشروع: ${projectId}`);
+            console.log(`تم تهيئة عميل Supabase للمشروع: ${projectId}. المفتاح يبدأ بـ: ${config.serviceRoleKey.substring(0, 10)}...`); // لتأكيد قراءة المفتاح
 
             // إنشاء الجداول لهذا المشروع
             await createTables(projectDbPools[projectId]);
@@ -644,6 +643,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 
         if (uploadError) {
             console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
+            console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
@@ -794,7 +794,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         }
 
         if (mediaFile) {
-            const fileExtension = uploadedFile.originalname.split('.').pop();
+            const fileExtension = mediaFile.originalname.split('.').pop();
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${authorId}/${fileName}`;
 
@@ -808,6 +808,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
 
             if (uploadError) {
                 console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
+                console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
@@ -979,12 +980,13 @@ app.delete('/api/posts/:postId', async (req, res) => {
             const pathSegments = url.pathname.split('/');
             const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
 
-            const { error: deleteError } = await supabase.storage
+            const { data: removeData, error: deleteError } = await supabase.storage
                 .from(bucketName)
                 .remove([filePathInBucket]);
 
             if (deleteError) {
                 console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
+                console.error('تفاصيل خطأ Supabase:', deleteError.statusCode, deleteError.error, deleteError.message);
             } else {
                 console.log(`تم حذف الملف من Supabase Storage في المشروع ${projectId}: ${filePathInBucket}`);
             }
@@ -1328,10 +1330,11 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
             const supabaseClient = projectSupabaseClients[projectId];
             try {
                 // محاولة الحصول على توقيع URL، إذا نجحت، فهذا هو المشروع الصحيح
+                // نستخدم getPublicUrl لأن الملفات يجب أن تكون عامة
                 const { data, error } = await supabaseClient.storage
                     .from(bucketName)
-                    .createSignedUrl(`${folder}/${fileName}`, 1); // توقيع قصير جداً للاختبار فقط
-                if (!error && data && data.signedUrl) {
+                    .getPublicUrl(`${folder}/${fileName}`);
+                if (!error && data && data.publicUrl) {
                     targetSupabaseClient = supabaseClient;
                     foundProjectId = projectId;
                     break;
@@ -1692,6 +1695,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
 
             if (uploadError) {
                 console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
+                console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
@@ -1832,12 +1836,13 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
                         return pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
                     });
 
-                    const { error: deleteError } = await supabase.storage
+                    const { data: removeData, error: deleteError } = await supabase.storage
                         .from(bucketName)
                         .remove(filePathsToDelete);
 
                     if (deleteError) {
                         console.error(`خطأ: فشل حذف وسائط الرسالة من Supabase Storage في المشروع ${projectId}:`, deleteError);
+                        console.error('تفاصيل خطأ Supabase:', deleteError.statusCode, deleteError.error, deleteError.message);
                     } else {
                         console.log(`تم حذف ملفات الوسائط من Supabase Storage للمحادثة ${chatId} في المشروع ${projectId}.`);
                     }
@@ -1967,6 +1972,7 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
 
         if (uploadError) {
             console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
+            console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
