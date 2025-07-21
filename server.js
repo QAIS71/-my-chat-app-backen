@@ -272,38 +272,57 @@ app.use(bodyParser.json());
 // برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
 app.use('/api/*', async (req, res, next) => {
     let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
+    let userId = req.body.userId || req.query.userId || req.params.userId || req.headers['x-user-id'];
 
-    // محاولة استخراج معرف المستخدم من الطلب
-    const userId = req.body.userId || req.query.userId || req.params.userId || req.headers['x-user-id'];
-
-    if (!userId) {
-        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId. سيتم استخدام المشروع الافتراضي.`);
+    // معالجة خاصة لنقاط النهاية التي تستخدم معرف مستخدم مختلف في الجسم
+    if (req.path === '/api/posts' && req.method === 'POST' && req.body.authorId) {
+        userId = req.body.authorId;
+        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId as userId: ${userId}`);
+    } else if (req.path === '/api/upload-profile-background' && req.method === 'POST' && req.body.userId) {
+        userId = req.body.userId;
+        console.log(`DEBUG: Middleware: POST /api/upload-profile-background detected. Using userId from body: ${userId}`);
+    } else if (req.path.startsWith('/api/chats/') && req.path.endsWith('/messages') && req.method === 'POST' && req.body.senderId) {
+        userId = req.body.senderId;
+        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId as userId: ${userId}`);
+    } else if (userId) {
+        console.log(`DEBUG: Middleware: Using userId from request (default check): ${userId}`);
+    } else {
+        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId واضح. سيتم استخدام المشروع الافتراضي (${BACKEND_DEFAULT_PROJECT_ID}).`);
     }
 
-    // إذا كان هناك معرف مستخدم، حاول جلب معرف المشروع المخصص له
-    if (userId) {
+    // إذا لم يتم تحديد userId، فسنستخدم المشروع الافتراضي
+    if (!userId) {
+        projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
+        console.log(`DEBUG: Middleware: userId غير موجود، سيتم استخدام المشروع الافتراضي: ${projectIdToUse}.`);
+    } else {
         try {
-            // نستخدم Pool المشروع الافتراضي لجلب معلومات المستخدم
             const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
             if (defaultPool) {
                 const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
-                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
-                    projectIdToUse = userResult.rows[0].user_project_id;
-                    console.log(`DEBUG: تم تحديد المشروع ${projectIdToUse} للمستخدم ${userId}.`);
+                if (userResult.rows.length > 0) {
+                    if (userResult.rows[0].user_project_id) {
+                        projectIdToUse = userResult.rows[0].user_project_id;
+                        console.log(`DEBUG: Middleware: المستخدم ${userId} لديه مشروع معين: ${projectIdToUse}.`);
+                    } else {
+                        // المستخدم موجود ولكن user_project_id فارغ (مستخدم قديم)
+                        const assignedProjectId = projectIds[currentProjectIndex];
+                        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
+                        await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
+                        projectIdToUse = assignedProjectId;
+                        console.log(`DEBUG: Middleware: تم تعيين مشروع جديد ${projectIdToUse} للمستخدم القديم ${userId}.`);
+                    }
                 } else {
-                    // إذا كان المستخدم موجودًا ولكن ليس لديه user_project_id (مستخدم قديم)، قم بتعيين واحد له
-                    // هذه الحالة تحدث للمستخدمين الذين تم إنشاؤهم قبل إضافة عمود user_project_id
-                    const assignedProjectId = projectIds[currentProjectIndex];
-                    currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
-                    await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
-                    projectIdToUse = assignedProjectId;
-                    console.log(`DEBUG: تم تعيين مشروع ${projectIdToUse} للمستخدم القديم ${userId}.`);
+                    // المستخدم غير موجود في جدول المستخدمين بالمشروع الافتراضي (يجب ألا يحدث هذا للطلبات الموثقة)
+                    console.warn(`تحذير: المستخدم ${userId} غير موجود في جدول المستخدمين بالمشروع الافتراضي. سيتم استخدام المشروع الافتراضي.`);
+                    projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
                 }
+            } else {
+                console.error("خطأ: Default project pool غير مهيأ في البرمجية الوسيطة.");
+                projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // الرجوع إلى الافتراضي في حالة وجود خطأ
             }
         } catch (error) {
             console.error("خطأ في جلب أو تعيين معرف مشروع المستخدم في البرمجية الوسيطة:", error);
-            // في حالة الخطأ، نعود إلى استخدام المشروع الافتراضي
-            projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
+            projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // الرجوع إلى الافتراضي في حالة وجود خطأ في قاعدة البيانات
         }
     }
 
