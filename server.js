@@ -53,7 +53,9 @@ const projectSupabaseClients = {};
 
 // متغير لتتبع المشروع الحالي لتسجيل المستخدمين الجدد بنظام الدورة
 let currentProjectIndex = 0;
-const projectIds = Object.keys(SUPABASE_PROJECT_CONFIGS);
+// **تعديل بسيط هنا لضمان أن المشاريع المخصصة للمستخدمين تبدأ من المشروع الثاني**
+const userAssignableProjectIds = Object.keys(SUPABASE_PROJECT_CONFIGS).filter(id => id !== BACKEND_DEFAULT_PROJECT_ID);
+
 
 // ----------------------------------------------------------------------------------------------------
 // تهيئة PostgreSQL Pool وعميل Supabase لكل مشروع
@@ -263,21 +265,33 @@ async function createTables(pool) {
 // البرمجيات الوسيطة (Middleware)
 // ----------------------------------------------------------------------------------------------------
 
-// تمكين CORS لجميع الطلبات (Netlify Proxy سيتعامل مع الباقي)
+// تمكين CORS لجميع الطلبات
 app.use(cors());
 
 // تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
 
-// برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
-app.use('/api/*', async (req, res, next) => {
+
+// ====================================================================================================
+// ===== تعديل رئيسي: فصل منطق تحديد المشروع في برمجية وسيطة خاصة =====
+// ====================================================================================================
+// هذه البرمجية الوسيطة ستُستخدم فقط في نقاط النهاية التي تحتاج إلى تحديد مشروع المستخدم (مثل رفع الملفات).
+// هذا يحل المشكلة لأنها ستعمل بعد أن تقوم `multer` بتحليل الطلب وتعبئة `req.body`.
+const setProjectContext = async (req, res, next) => {
     let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
     let userId = null; // تهيئة userId إلى null
 
     // محاولة استخراج معرف المستخدم من أماكن مختلفة في الطلب
+    // الآن يمكننا قراءة `req.body` بأمان لأن `multer` قد عمل بالفعل
     if (req.body.userId) {
         userId = req.body.userId;
         console.log(`DEBUG: Middleware: Found userId in req.body: ${userId}`);
+    } else if (req.body.authorId) { // للتحقق من authorId في المنشورات
+        userId = req.body.authorId;
+        console.log(`DEBUG: Middleware: Found authorId in req.body: ${userId}`);
+    } else if (req.body.senderId) { // للتحقق من senderId في الرسائل
+        userId = req.body.senderId;
+        console.log(`DEBUG: Middleware: Found senderId in req.body: ${userId}`);
     } else if (req.query.userId) {
         userId = req.query.userId;
         console.log(`DEBUG: Middleware: Found userId in req.query: ${userId}`);
@@ -287,18 +301,6 @@ app.use('/api/*', async (req, res, next) => {
     } else if (req.headers['x-user-id']) {
         userId = req.headers['x-user-id'];
         console.log(`DEBUG: Middleware: Found userId in req.headers['x-user-id']: ${userId}`);
-    }
-
-    // معالجة خاصة لنقاط النهاية التي تستخدم معرف مستخدم مختلف في الجسم
-    if (req.path === '/api/posts' && req.method === 'POST' && req.body.authorId) {
-        userId = req.body.authorId;
-        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId from body: ${userId}`);
-    } else if (req.path === '/api/upload-profile-background' && req.method === 'POST' && req.body.userId) {
-        userId = req.body.userId;
-        console.log(`DEBUG: Middleware: POST /api/upload-profile-background detected. Using userId from body: ${userId}`);
-    } else if (req.path.startsWith('/api/chats/') && req.path.endsWith('/messages') && req.method === 'POST' && req.body.senderId) {
-        userId = req.body.senderId;
-        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId from body: ${userId}`);
     }
 
     // إذا لم يتم تحديد userId، فسنستخدم المشروع الافتراضي
@@ -316,8 +318,8 @@ app.use('/api/*', async (req, res, next) => {
                         console.log(`DEBUG: Middleware: المستخدم ${userId} لديه مشروع معين: ${projectIdToUse}.`);
                     } else {
                         // المستخدم موجود ولكن user_project_id فارغ (مستخدم قديم)
-                        const assignedProjectId = projectIds[currentProjectIndex];
-                        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
+                        const assignedProjectId = userAssignableProjectIds[currentProjectIndex];
+                        currentProjectIndex = (currentProjectIndex + 1) % userAssignableProjectIds.length;
                         await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
                         projectIdToUse = assignedProjectId;
                         console.log(`DEBUG: Middleware: تم تعيين مشروع جديد ${projectIdToUse} للمستخدم القديم ${userId}.`);
@@ -348,7 +350,11 @@ app.use('/api/*', async (req, res, next) => {
     req.supabase = projectSupabaseClients[projectIdToUse];
     req.currentProjectId = projectIdToUse; // لتمرير معرف المشروع إلى نقاط النهاية إذا لزم الأمر
     next();
-});
+};
+// ====================================================================================================
+// ===== نهاية التعديل الرئيسي =====
+// ====================================================================================================
+
 
 // ----------------------------------------------------------------------------------------------------
 // وظائف المساعدة (Helper Functions)
@@ -550,8 +556,8 @@ app.post('/api/register', async (req, res) => {
         const isVerified = (userRole === 'admin');
 
         // **جديد: تعيين معرف المشروع للمستخدم بنظام الدورة**
-        const assignedProjectId = projectIds[currentProjectIndex];
-        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length; // الانتقال للمشروع التالي
+        const assignedProjectId = userAssignableProjectIds[currentProjectIndex];
+        currentProjectIndex = (currentProjectIndex + 1) % userAssignableProjectIds.length; // الانتقال للمشروع التالي
 
         await pool.query(
             'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
@@ -638,11 +644,12 @@ app.put('/api/admin/verify-user/:customId', async (req, res) => {
 });
 
 // نقطة نهاية لرفع خلفية الملف الشخصي
-app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
+// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
+app.post('/api/upload-profile-background', upload.single('file'), setProjectContext, async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
+    const supabase = req.supabase;
     const bucketName = 'profile-backgrounds';
 
     if (!userId || !uploadedFile) {
@@ -799,11 +806,13 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 });
 
 // نقطة نهاية لنشر منشور جديد
-app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
+// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
+app.post('/api/posts', upload.single('mediaFile'), setProjectContext, async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
+    const pool = req.dbPool;
+    const supabase = req.supabase;
     const bucketName = 'post-media';
 
     let postMediaUrl = null;
@@ -1671,12 +1680,14 @@ async function getMessagesFromAllProjects(chatId, sinceTimestamp) {
 }
 
 // نقطة نهاية لإرسال رسالة في محادثة
-app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
+// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectContext, async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
+    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
+    const pool = req.dbPool;
+    const supabase = req.supabase;
     const bucketName = 'chat-media';
 
     let messageMediaUrl = null;
@@ -2214,7 +2225,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 // نقطة نهاية لإزالة عضو من المجموعة
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId } = req.params;
+    const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
