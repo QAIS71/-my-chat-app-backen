@@ -272,28 +272,39 @@ app.use(bodyParser.json());
 // برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
 app.use('/api/*', async (req, res, next) => {
     let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
-    let userId = req.body.userId || req.query.userId || req.params.userId || req.headers['x-user-id'];
+    let userId = null; // تهيئة userId إلى null
+
+    // محاولة استخراج معرف المستخدم من أماكن مختلفة في الطلب
+    if (req.body.userId) {
+        userId = req.body.userId;
+        console.log(`DEBUG: Middleware: Found userId in req.body: ${userId}`);
+    } else if (req.query.userId) {
+        userId = req.query.userId;
+        console.log(`DEBUG: Middleware: Found userId in req.query: ${userId}`);
+    } else if (req.params.userId) {
+        userId = req.params.userId;
+        console.log(`DEBUG: Middleware: Found userId in req.params: ${userId}`);
+    } else if (req.headers['x-user-id']) {
+        userId = req.headers['x-user-id'];
+        console.log(`DEBUG: Middleware: Found userId in req.headers['x-user-id']: ${userId}`);
+    }
 
     // معالجة خاصة لنقاط النهاية التي تستخدم معرف مستخدم مختلف في الجسم
     if (req.path === '/api/posts' && req.method === 'POST' && req.body.authorId) {
         userId = req.body.authorId;
-        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId as userId: ${userId}`);
+        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId from body: ${userId}`);
     } else if (req.path === '/api/upload-profile-background' && req.method === 'POST' && req.body.userId) {
         userId = req.body.userId;
         console.log(`DEBUG: Middleware: POST /api/upload-profile-background detected. Using userId from body: ${userId}`);
     } else if (req.path.startsWith('/api/chats/') && req.path.endsWith('/messages') && req.method === 'POST' && req.body.senderId) {
         userId = req.body.senderId;
-        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId as userId: ${userId}`);
-    } else if (userId) {
-        console.log(`DEBUG: Middleware: Using userId from request (default check): ${userId}`);
-    } else {
-        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId واضح. سيتم استخدام المشروع الافتراضي (${BACKEND_DEFAULT_PROJECT_ID}).`);
+        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId from body: ${userId}`);
     }
 
     // إذا لم يتم تحديد userId، فسنستخدم المشروع الافتراضي
     if (!userId) {
         projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
-        console.log(`DEBUG: Middleware: userId غير موجود، سيتم استخدام المشروع الافتراضي: ${projectIdToUse}.`);
+        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId واضح. سيتم استخدام المشروع الافتراضي: ${projectIdToUse}.`);
     } else {
         try {
             const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
