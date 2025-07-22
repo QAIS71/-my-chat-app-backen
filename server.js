@@ -271,40 +271,37 @@ app.use(bodyParser.json());
 
 // برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
 app.use('/api/*', async (req, res, next) => {
+    // تخطي هذه البرمجية الوسيطة لطلبات رفع الملفات، سيتم التعامل معها في نقطة النهاية نفسها
+    if (req.is('multipart/form-data')) {
+        return next();
+    }
+    
     let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
     let userId = null; // تهيئة userId إلى null
 
     // محاولة استخراج معرف المستخدم من أماكن مختلفة في الطلب
     if (req.body.userId) {
         userId = req.body.userId;
-        console.log(`DEBUG: Middleware: Found userId in req.body: ${userId}`);
     } else if (req.query.userId) {
         userId = req.query.userId;
-        console.log(`DEBUG: Middleware: Found userId in req.query: ${userId}`);
     } else if (req.params.userId) {
         userId = req.params.userId;
-        console.log(`DEBUG: Middleware: Found userId in req.params: ${userId}`);
     } else if (req.headers['x-user-id']) {
         userId = req.headers['x-user-id'];
-        console.log(`DEBUG: Middleware: Found userId in req.headers['x-user-id']: ${userId}`);
     }
 
     // معالجة خاصة لنقاط النهاية التي تستخدم معرف مستخدم مختلف في الجسم
     if (req.path === '/api/posts' && req.method === 'POST' && req.body.authorId) {
         userId = req.body.authorId;
-        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId from body: ${userId}`);
     } else if (req.path === '/api/upload-profile-background' && req.method === 'POST' && req.body.userId) {
         userId = req.body.userId;
-        console.log(`DEBUG: Middleware: POST /api/upload-profile-background detected. Using userId from body: ${userId}`);
     } else if (req.path.startsWith('/api/chats/') && req.path.endsWith('/messages') && req.method === 'POST' && req.body.senderId) {
         userId = req.body.senderId;
-        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId from body: ${userId}`);
     }
 
     // إذا لم يتم تحديد userId، فسنستخدم المشروع الافتراضي
     if (!userId) {
         projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
-        console.warn(`تحذير: طلب API لـ ${req.path} لا يحتوي على userId واضح. سيتم استخدام المشروع الافتراضي: ${projectIdToUse}.`);
     } else {
         try {
             const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -313,22 +310,18 @@ app.use('/api/*', async (req, res, next) => {
                 if (userResult.rows.length > 0) {
                     if (userResult.rows[0].user_project_id) {
                         projectIdToUse = userResult.rows[0].user_project_id;
-                        console.log(`DEBUG: Middleware: المستخدم ${userId} لديه مشروع معين: ${projectIdToUse}.`);
                     } else {
                         // المستخدم موجود ولكن user_project_id فارغ (مستخدم قديم)
                         const assignedProjectId = projectIds[currentProjectIndex];
                         currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
                         await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
                         projectIdToUse = assignedProjectId;
-                        console.log(`DEBUG: Middleware: تم تعيين مشروع جديد ${projectIdToUse} للمستخدم القديم ${userId}.`);
                     }
                 } else {
-                    // المستخدم غير موجود في جدول المستخدمين بالمشروع الافتراضي (يجب ألا يحدث هذا للطلبات الموثقة)
-                    console.warn(`تحذير: المستخدم ${userId} غير موجود في جدول المستخدمين بالمشروع الافتراضي. سيتم استخدام المشروع الافتراضي.`);
+                    // المستخدم غير موجود في جدول المستخدمين بالمشروع الافتراضي
                     projectIdToUse = BACKEND_DEFAULT_PROJECT_ID;
                 }
             } else {
-                console.error("خطأ: Default project pool غير مهيأ في البرمجية الوسيطة.");
                 projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // الرجوع إلى الافتراضي في حالة وجود خطأ
             }
         } catch (error) {
@@ -353,6 +346,41 @@ app.use('/api/*', async (req, res, next) => {
 // ----------------------------------------------------------------------------------------------------
 // وظائف المساعدة (Helper Functions)
 // ----------------------------------------------------------------------------------------------------
+
+// **إضافة جديدة**: وظيفة مساعدة للحصول على سياق المشروع الصحيح (Pool و Supabase Client) للمستخدم
+async function getUserProjectContext(userId) {
+    let projectId = BACKEND_DEFAULT_PROJECT_ID; // القيمة الافتراضية
+    if (userId) {
+        try {
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
+            if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                projectId = userResult.rows[0].user_project_id;
+            } else {
+                 // في حالة عدم العثور على المستخدم أو عدم وجود معرف مشروع، استخدم المشروع الافتراضي
+                console.warn(`تحذير: لم يتم العثور على مشروع للمستخدم ${userId}. سيتم استخدام المشروع الافتراضي.`);
+                projectId = BACKEND_DEFAULT_PROJECT_ID;
+            }
+        } catch (error) {
+            console.error(`خطأ في جلب معرف المشروع للمستخدم ${userId}:`, error);
+            // الرجوع إلى الافتراضي في حالة وجود خطأ
+            projectId = BACKEND_DEFAULT_PROJECT_ID;
+        }
+    }
+
+    // التحقق من أن المشروع المحدد صالح ومهيأ
+    if (!projectDbPools[projectId] || !projectSupabaseClients[projectId]) {
+        console.error(`خطأ: معرف المشروع ${projectId} غير صالح أو غير مهيأ. سيتم الرجوع إلى المشروع الافتراضي.`);
+        projectId = BACKEND_DEFAULT_PROJECT_ID;
+    }
+
+    return {
+        pool: projectDbPools[projectId],
+        supabase: projectSupabaseClients[projectId],
+        projectId: projectId
+    };
+}
+
 
 // وظيفة لإنشاء معرف مستخدم فريد مكون من 8 أرقام (تأخذ Pool كمعامل)
 async function generateCustomId(pool) {
@@ -641,14 +669,15 @@ app.put('/api/admin/verify-user/:customId', async (req, res) => {
 app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
     const bucketName = 'profile-backgrounds';
 
     if (!userId || !uploadedFile) {
         console.error('خطأ: معرف المستخدم والملف مطلوبان لرفع خلفية الملف الشخصي.');
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
+    
+    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
+    const { supabase, projectId } = await getUserProjectContext(userId);
 
     try {
         // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
@@ -663,8 +692,8 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         const fileName = `${uuidv4()}.${fileExtension}`;
         const filePath = `${userId}/${fileName}`;
 
-        console.log(`محاولة تحميل ملف خلفية الملف الشخصي إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-        const { data, error: uploadError } = await supabase.storage
+        console.log(`محاولة تحميل ملف خلفية الملف الشخصي إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
+        const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
                 contentType: uploadedFile.mimetype,
@@ -677,7 +706,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
-        const { data: publicUrlData } = supabase.storage
+        const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
             .from(bucketName)
             .getPublicUrl(filePath);
 
@@ -691,7 +720,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         // تحديث profile_bg_url في جدول users في المشروع الافتراضي
         await userCheckPool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [mediaUrl, userId]);
 
-        console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId} في المشروع ${req.currentProjectId}: ${mediaUrl}`);
+        console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId} في المشروع ${projectId}: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: mediaUrl });
     } catch (error) {
         console.error('خطأ: فشل تحميل خلفية الملف الشخصي أو تحديث قاعدة البيانات:', error);
@@ -802,8 +831,6 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
     const bucketName = 'post-media';
 
     let postMediaUrl = null;
@@ -813,6 +840,9 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لنشر منشور جديد.');
         return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
     }
+    
+    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
+    const { pool, supabase, projectId } = await getUserProjectContext(authorId);
 
     try {
         // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
@@ -828,8 +858,8 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${authorId}/${fileName}`;
 
-            console.log(`محاولة تحميل ملف المنشور إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-            const { data, error: uploadError } = await supabase.storage
+            console.log(`محاولة تحميل ملف المنشور إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
+            const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
                     contentType: mediaFile.mimetype,
@@ -842,7 +872,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
-            const { data: publicUrlData } = supabase.storage
+            const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
                 .from(bucketName)
                 .getPublicUrl(filePath);
 
@@ -852,7 +882,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             }
 
             postMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للمنشور في المشروع ${req.currentProjectId}: ${postMediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للمنشور في المشروع ${projectId}: ${postMediaUrl}`);
 
             if (!mediaType || mediaType === 'text') {
                 if (mediaFile.mimetype.startsWith('image/')) {
@@ -866,7 +896,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
         const postId = uuidv4();
         const timestamp = Date.now();
 
-        await pool.query(
+        await pool.query( // **استخدم pool الصحيح**
             `INSERT INTO posts (id, author_id, author_name, text, timestamp, media_url, media_type, author_profile_bg, likes, views, is_pinned)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [postId, authorId, authorName, text || '', timestamp, postMediaUrl, postMediaType, authorProfileBg || null, '[]', '[]', false]
@@ -886,7 +916,7 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
             authorProfileBg: authorProfileBg || null,
             isPinned: false
         };
-        console.log(`تم نشر منشور جديد في المشروع ${req.currentProjectId}:`, newPost);
+        console.log(`تم نشر منشور جديد في المشروع ${projectId}:`, newPost);
         res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
     } catch (error) {
         console.error('خطأ: فشل نشر المنشور:', error);
@@ -1675,8 +1705,6 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
-    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
     const bucketName = 'chat-media';
 
     let messageMediaUrl = null;
@@ -1686,6 +1714,9 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لإرسال رسالة.');
         return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
     }
+
+    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
+    const { pool, supabase, projectId } = await getUserProjectContext(senderId);
 
     try {
         // نستخدم Pool المشروع الافتراضي للتحقق من معلومات المحادثة (لأن المحادثات موجودة هنا)
@@ -1715,8 +1746,8 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${senderId}/${fileName}`;
 
-            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-            const { data, error: uploadError } = await supabase.storage
+            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
+            const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
                     contentType: mediaFile.mimetype,
@@ -1729,7 +1760,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
 
-            const { data: publicUrlData } = supabase.storage
+            const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
                 .from(bucketName)
                 .getPublicUrl(filePath);
 
@@ -1739,7 +1770,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             }
 
             messageMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${req.currentProjectId}: ${messageMediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${projectId}: ${messageMediaUrl}`);
 
             if (!mediaType || mediaType === 'text') {
                 if (mediaFile.mimetype.startsWith('image/')) {
@@ -1755,7 +1786,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         const messageId = uuidv4();
         const timestamp = Date.now();
 
-        await pool.query( // سيتم حفظ الرسالة في مشروع المستخدم
+        await pool.query( // **استخدم pool الصحيح** - سيتم حفظ الرسالة في مشروع المستخدم
             `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_url, media_type, sender_profile_bg)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
@@ -1786,7 +1817,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             senderProfileBg: senderProfileBg || null
         };
 
-        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${req.currentProjectId}:`, newMessage);
+        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${projectId}:`, newMessage);
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
@@ -2214,7 +2245,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 // نقطة نهاية لإزالة عضو من المجموعة
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId } = req.params;
+    const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
