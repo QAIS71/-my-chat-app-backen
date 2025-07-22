@@ -111,6 +111,18 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""; // قم بتعيين ه
 // وظيفة لإنشاء الجداول إذا لم تكن موجودة (تأخذ Pool كمعامل)
 async function createTables(pool) {
     try {
+        // **الإصلاح**: إزالة القيود الخارجية القديمة التي تسبب المشكلة
+        // سيتم تشغيل هذا بأمان في كل مرة يبدأ فيها الخادم
+        try {
+            await pool.query(`ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_sender_id_fkey;`);
+            await pool.query(`ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_author_id_fkey;`);
+            await pool.query(`ALTER TABLE comments DROP CONSTRAINT IF EXISTS comments_user_id_fkey;`);
+            console.log(`تم التأكد من إزالة القيود الخارجية (Foreign Keys) القديمة للمشروع.`);
+        } catch (dropError) {
+            // هذا الخطأ متوقع إذا كانت الجداول غير موجودة بعد، وهو أمر طبيعي
+            console.warn(`ملاحظة عند إزالة القيود القديمة (قد يكون طبيعياً في أول تشغيل):`, dropError.message);
+        }
+
         // تحديث جدول users لإضافة user_project_id إذا لم يكن موجودًا
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
@@ -676,11 +688,9 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     }
     
-    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
     const { supabase, projectId } = await getUserProjectContext(userId);
 
     try {
-        // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
         const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [userId]);
         if (userResult.rows.length === 0) {
@@ -693,7 +703,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         const filePath = `${userId}/${fileName}`;
 
         console.log(`محاولة تحميل ملف خلفية الملف الشخصي إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-        const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
+        const { data, error: uploadError } = await supabase.storage
             .from(bucketName)
             .upload(filePath, uploadedFile.buffer, {
                 contentType: uploadedFile.mimetype,
@@ -702,11 +712,10 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 
         if (uploadError) {
             console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
-            console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
 
-        const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
+        const { data: publicUrlData } = supabase.storage
             .from(bucketName)
             .getPublicUrl(filePath);
 
@@ -716,10 +725,7 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
         }
 
         const mediaUrl = publicUrlData.publicUrl;
-
-        // تحديث profile_bg_url في جدول users في المشروع الافتراضي
         await userCheckPool.query('UPDATE users SET profile_bg_url = $1 WHERE uid = $2', [mediaUrl, userId]);
-
         console.log(`تم تحميل خلفية الملف الشخصي للمستخدم ${userId} في المشروع ${projectId}: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل الخلفية بنجاح.', url: mediaUrl });
     } catch (error) {
@@ -731,7 +737,6 @@ app.post('/api/upload-profile-background', upload.single('file'), async (req, re
 // نقطة نهاية للحصول على عدد متابعي مستخدم معين
 app.get('/api/user/:userId/followers/count', async (req, res) => {
     const { userId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب عدد المتابعين (لأن جدول المتابعين موجود هنا)
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query('SELECT COUNT(*) FROM followers WHERE followed_id = $1', [userId]);
@@ -746,7 +751,6 @@ app.get('/api/user/:userId/followers/count', async (req, res) => {
 // نقطة نهاية للحصول على حالة المتابعة بين مستخدمين
 app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب حالة المتابعة
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
@@ -761,25 +765,18 @@ app.get('/api/user/:followerId/following/:followedId', async (req, res) => {
 // نقطة نهاية للمتابعة/إلغاء المتابعة
 app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     const { followerId, followedId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لعمليات المتابعة
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
     if (followerId === followedId) {
         return res.status(400).json({ error: 'لا يمكنك متابعة نفسك.' });
     }
-
     try {
         const followerUserResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [followerId]);
         const followedUserResult = await pool.query('SELECT 1 FROM users WHERE uid = $1', [followedId]);
-
         if (followerUserResult.rows.length === 0 || followedUserResult.rows.length === 0) {
             return res.status(404).json({ error: 'المستخدم (المتابع أو المتابع) غير موجود.' });
         }
-
         const existingFollow = await pool.query('SELECT 1 FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
-
-        let message;
-        let isFollowing;
+        let message, isFollowing;
         if (existingFollow.rows.length > 0) {
             await pool.query('DELETE FROM followers WHERE follower_id = $1 AND followed_id = $2', [followerId, followedId]);
             message = 'تم إلغاء المتابعة بنجاح.';
@@ -789,7 +786,6 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
             message = 'تمت المتابعة بنجاح.';
             isFollowing = true;
         }
-        console.log(`المستخدم ${followerId} ${message} المستخدم ${followedId}`);
         res.status(200).json({ message, isFollowing });
     } catch (error) {
         console.error('خطأ: فشل في عملية المتابعة/إلغاء المتابعة:', error);
@@ -797,29 +793,20 @@ app.post('/api/user/:followerId/follow/:followedId', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على جهات الاتصال (المستخدمين الذين أجرى معهم المستخدم الحالي محادثات فردية)
+// نقطة نهاية للحصول على جهات الاتصال
 app.get('/api/user/:userId/contacts', async (req, res) => {
     const { userId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب جهات الاتصال (لأن معلومات المستخدمين والمحادثات الأساسية موجودة هنا)
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query(`
             SELECT DISTINCT u.uid, u.username, u.custom_id, u.profile_bg_url, u.is_verified, u.user_role
             FROM users u
-            JOIN chats c ON (
-                (c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]) AND u.uid != $1)
-            )
+            JOIN chats c ON ((c.type = 'private' AND c.participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND c.participants @> to_jsonb(ARRAY[u.uid]::VARCHAR[]) AND u.uid != $1))
         `, [userId]);
-
         const userContacts = result.rows.map(row => ({
-            uid: row.uid,
-            username: row.username,
-            customId: row.custom_id,
-            profileBg: row.profile_bg_url,
-            isVerified: row.is_verified,
-            userRole: row.user_role
+            uid: row.uid, username: row.username, customId: row.custom_id,
+            profileBg: row.profile_bg_url, isVerified: row.is_verified, userRole: row.user_role
         }));
-
         res.status(200).json(userContacts);
     } catch (error) {
         console.error('خطأ: فشل جلب جهات الاتصال:', error);
@@ -831,92 +818,39 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    const bucketName = 'post-media';
-
+    if (!authorId || !authorName || (!text && !mediaFile)) return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
+    const { pool, supabase, projectId } = await getUserProjectContext(authorId);
     let postMediaUrl = null;
     let postMediaType = mediaType || 'text';
-
-    if (!authorId || !authorName || (!text && !mediaFile)) {
-        console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لنشر منشور جديد.');
-        return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
-    }
-    
-    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
-    const { pool, supabase, projectId } = await getUserProjectContext(authorId);
-
     try {
-        // التحقق من وجود المستخدم في المشروع الافتراضي (حيث يتم تخزين معلومات المستخدمين)
         const userCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const userResult = await userCheckPool.query('SELECT 1 FROM users WHERE uid = $1', [authorId]);
-        if (userResult.rows.length === 0) {
-            console.error(`خطأ: المستخدم ${authorId} غير موجود لنشر المنشور.`);
-            return res.status(404).json({ error: 'المستخدم غير موجود.' });
-        }
-
+        if (userResult.rows.length === 0) return res.status(404).json({ error: 'المستخدم غير موجود.' });
         if (mediaFile) {
-            const fileExtension = mediaFile.originalname.split('.').pop();
-            const fileName = `${uuidv4()}.${fileExtension}`;
-            const filePath = `${authorId}/${fileName}`;
-
-            console.log(`محاولة تحميل ملف المنشور إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-            const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
-                .from(bucketName)
-                .upload(filePath, mediaFile.buffer, {
-                    contentType: mediaFile.mimetype,
-                    upsert: false
-                });
-
+            const bucketName = 'post-media';
+            const filePath = `${authorId}/${uuidv4()}.${mediaFile.originalname.split('.').pop()}`;
+            console.log(`محاولة تحميل ملف المنشور إلى المشروع ${projectId}, Bucket: ${bucketName}, المسار: ${filePath}`);
+            const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, mediaFile.buffer, { contentType: mediaFile.mimetype });
             if (uploadError) {
                 console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
-                console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
-
-            const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
-                .from(bucketName)
-                .getPublicUrl(filePath);
-
-            if (!publicUrlData || !publicUrlData.publicUrl) {
-                console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
-                return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
-            }
-
+            const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+            if (!publicUrlData || !publicUrlData.publicUrl) return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
             postMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للمنشور في المشروع ${projectId}: ${postMediaUrl}`);
-
             if (!mediaType || mediaType === 'text') {
-                if (mediaFile.mimetype.startsWith('image/')) {
-                    postMediaType = 'image';
-                } else if (mediaFile.mimetype.startsWith('video/')) {
-                    postMediaType = 'video';
-                }
+                if (mediaFile.mimetype.startsWith('image/')) postMediaType = 'image';
+                else if (mediaFile.mimetype.startsWith('video/')) postMediaType = 'video';
             }
         }
-
         const postId = uuidv4();
         const timestamp = Date.now();
-
-        await pool.query( // **استخدم pool الصحيح**
+        await pool.query(
             `INSERT INTO posts (id, author_id, author_name, text, timestamp, media_url, media_type, author_profile_bg, likes, views, is_pinned)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [postId, authorId, authorName, text || '', timestamp, postMediaUrl, postMediaType, authorProfileBg || null, '[]', '[]', false]
         );
-
-        const newPost = {
-            id: postId,
-            authorId,
-            authorName,
-            text: text || '',
-            timestamp,
-            likes: [],
-            comments: [],
-            views: [],
-            mediaUrl: postMediaUrl,
-            mediaType: postMediaType,
-            authorProfileBg: authorProfileBg || null,
-            isPinned: false
-        };
-        console.log(`تم نشر منشور جديد في المشروع ${projectId}:`, newPost);
+        const newPost = { id: postId, authorId, authorName, text: text || '', timestamp, likes: [], comments: [], views: [], mediaUrl: postMediaUrl, mediaType: postMediaType, authorProfileBg: authorProfileBg || null, isPinned: false };
         res.status(201).json({ message: 'تم نشر المنشور بنجاح.', post: newPost });
     } catch (error) {
         console.error('خطأ: فشل نشر المنشور:', error);
@@ -924,12 +858,11 @@ app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على جميع المنشورات (الآن تجلب من جميع المشاريع)
+// نقطة نهاية للحصول على جميع المنشورات
 app.get('/api/posts', async (req, res) => {
-    const { userId } = req.query; // معرف المستخدم اختياري لموضع التشغيل
+    const { userId } = req.query;
     try {
-        const postsWithDetails = await getPostsFromAllProjects('', [], userId); // تجلب من جميع المشاريع
-        console.log('DEBUG: بيانات المنشورات التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects('', [], userId);
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب جميع المنشورات:', error);
@@ -937,23 +870,17 @@ app.get('/api/posts', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على منشورات المستخدمين الذين يتابعهم المستخدم الحالي (الآن تجلب من جميع المشاريع)
+// نقطة نهاية للحصول على منشورات المتابعين
 app.get('/api/posts/followed/:userId', async (req, res) => {
     const { userId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين (لأن جدول المتابعين موجود هنا)
     const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const followedUsersResult = await followersPool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
         const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
-        followedUsersIds.push(userId); // تضمين منشورات المستخدم نفسه
-
-        if (followedUsersIds.length === 0) {
-            return res.status(200).json([]);
-        }
-
+        followedUsersIds.push(userId);
+        if (followedUsersIds.length === 0) return res.status(200).json([]);
         const baseQuery = `WHERE p.author_id = ANY($1::VARCHAR[])`;
-        const postsWithDetails = await getPostsFromAllProjects(baseQuery, [followedUsersIds], userId); // تجلب من جميع المشاريع
-        console.log('DEBUG: بيانات المنشورات المتابعة التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects(baseQuery, [followedUsersIds], userId);
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل جلب منشورات المتابعين:', error);
@@ -961,18 +888,15 @@ app.get('/api/posts/followed/:userId', async (req, res) => {
     }
 });
 
-// نقطة نهاية للبحث في المنشورات (الآن تجري البحث في جميع المشاريع)
+// نقطة نهاية للبحث في المنشورات
 app.get('/api/posts/search', async (req, res) => {
     const { q, filter, userId } = req.query;
     const searchTerm = q ? `%${q.toLowerCase()}%` : '';
-
     let baseQuery = ``;
     let queryParams = [];
     let paramIndex = 1;
-
     if (filter === 'followed' && userId) {
         try {
-            // نستخدم Pool المشروع الافتراضي لجلب قائمة المتابعين للبحث
             const followersPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
             const followedUsersResult = await followersPool.query('SELECT followed_id FROM followers WHERE follower_id = $1', [userId]);
             const followedUsersIds = followedUsersResult.rows.map(row => row.followed_id);
@@ -988,21 +912,14 @@ app.get('/api/posts/search', async (req, res) => {
             return res.status(500).json({ error: 'فشل في البحث عن منشورات المتابعين.' });
         }
     }
-
     if (searchTerm) {
         queryParams.push(searchTerm);
-        if (baseQuery) {
-            baseQuery += ` AND (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(p.author_name) LIKE $${paramIndex++})`; // تم تغيير u.username إلى p.author_name
-            queryParams.push(searchTerm);
-        } else {
-            baseQuery += ` WHERE (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(p.author_name) LIKE $${paramIndex++})`; // تم تغيير u.username إلى p.author_name
-            queryParams.push(searchTerm);
-        }
+        baseQuery += baseQuery ? ' AND' : ' WHERE';
+        baseQuery += ` (LOWER(p.text) LIKE $${paramIndex++} OR LOWER(p.author_name) LIKE $${paramIndex++})`;
+        queryParams.push(searchTerm);
     }
-
     try {
-        const postsWithDetails = await getPostsFromAllProjects(baseQuery, queryParams, userId); // تجلب من جميع المشاريع
-        console.log('DEBUG: بيانات نتائج البحث التي يتم إرسالها (أول منشور):', JSON.stringify(postsWithDetails.slice(0, 1)));
+        const postsWithDetails = await getPostsFromAllProjects(baseQuery, queryParams, userId);
         res.status(200).json(postsWithDetails);
     } catch (error) {
         console.error('خطأ: فشل البحث في المنشورات:', error);
@@ -1014,46 +931,25 @@ app.get('/api/posts/search', async (req, res) => {
 app.delete('/api/posts/:postId', async (req, res) => {
     const { postId } = req.params;
     const { callerUid } = req.body;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { post: deletedPost, pool, projectId } = postInfo;
-    const supabase = projectSupabaseClients[projectId]; // عميل Supabase للمشروع الذي يوجد به المنشور
+    const supabase = projectSupabaseClients[projectId];
     const bucketName = 'post-media';
-
     try {
-        // التحقق من أن المستخدم هو صاحب المنشور أو مدير (من المشروع الافتراضي)
         const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const callerUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
-        if (!callerUser.rows[0] || callerUser.rows[0].user_role !== 'admin') {
-            // إذا لم يكن مديرًا، يجب أن يكون هو صاحب المنشور
-            if (deletedPost.author_id !== callerUid) {
-                return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
-            }
+        if (!callerUser.rows[0] || (callerUser.rows[0].user_role !== 'admin' && deletedPost.author_id !== callerUid)) {
+            return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا المنشور.' });
         }
-
         if (deletedPost.media_url) {
             const url = new URL(deletedPost.media_url);
             const pathSegments = url.pathname.split('/');
             const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-
-            const { data: removeData, error: deleteError } = await supabase.storage
-                .from(bucketName)
-                .remove([filePathInBucket]);
-
-            if (deleteError) {
-                console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
-                console.error('تفاصيل خطأ Supabase:', deleteError.statusCode, deleteError.error, deleteError.message);
-            } else {
-                console.log(`تم حذف الملف من Supabase Storage في المشروع ${projectId}: ${filePathInBucket}`);
-            }
+            const { error: deleteError } = await supabase.storage.from(bucketName).remove([filePathInBucket]);
+            if (deleteError) console.error('خطأ: فشل حذف الوسائط من Supabase Storage:', deleteError);
         }
-
         await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
-        console.log(`تم حذف المنشور ${postId} من المشروع ${projectId}.`);
         res.status(200).json({ message: 'تم حذف المنشور بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل حذف المنشور:', error);
@@ -1061,28 +957,21 @@ app.delete('/api/posts/:postId', async (req, res) => {
     }
 });
 
-// نقطة نهاية لتثبيت/إلغاء تثبيت منشور (للمدير فقط)
+// نقطة نهاية لتثبيت/إلغاء تثبيت منشور
 app.put('/api/posts/:postId/pin', async (req, res) => {
     const { postId } = req.params;
     const { isPinned, callerUid } = req.body;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-    const { pool, projectId } = postInfo;
-
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
+    const { pool } = postInfo;
     try {
-        // التحقق من أن المستخدم الذي يقوم بالطلب هو مدير (من المشروع الافتراضي)
         const adminCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const adminUser = await adminCheckPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
         if (!adminUser.rows[0] || adminUser.rows[0].user_role !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لتثبيت/إلغاء تثبيت المنشورات.' });
         }
-
         await pool.query('UPDATE posts SET is_pinned = $1 WHERE id = $2', [isPinned, postId]);
-        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح في المشروع ${projectId}.`, isPinned });
+        res.status(200).json({ message: `تم ${isPinned ? 'تثبيت' : 'إلغاء تثبيت'} المنشور بنجاح.`, isPinned });
     } catch (error) {
         console.error('خطأ: فشل تثبيت/إلغاء تثبيت المنشور:', error);
         res.status(500).json({ error: 'فشل تثبيت/إلغاء تثبيت المنشور.' });
@@ -1093,50 +982,31 @@ app.put('/api/posts/:postId/pin', async (req, res) => {
 app.post('/api/posts/:postId/like', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { post, pool } = postInfo;
-
     try {
         let currentLikes = post.likes || [];
         const userIndex = currentLikes.indexOf(userId);
-        let isLiked;
-
-        if (userIndex === -1) {
-            currentLikes.push(userId);
-            isLiked = true;
-        } else {
-            currentLikes.splice(userIndex, 1);
-            isLiked = false;
-        }
-
+        if (userIndex === -1) currentLikes.push(userId);
+        else currentLikes.splice(userIndex, 1);
         await pool.query('UPDATE posts SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), postId]);
-        res.status(200).json({ message: 'تم تحديث الإعجاب بنجاح.', likesCount: currentLikes.length, isLiked });
+        res.status(200).json({ message: 'تم تحديث الإعجاب بنجاح.', likesCount: currentLikes.length, isLiked: userIndex === -1 });
     } catch (error) {
         console.error('خطأ: فشل الإعجاب بالمنشور:', error);
         res.status(500).json({ error: 'فشل تحديث الإعجاب.' });
     }
 });
 
-// نقطة نهاية لزيادة عدد المشاهدات
+// نقطة نهاية للمشاهدة
 app.post('/api/posts/:postId/view', async (req, res) => {
     const { postId } = req.params;
     const { userId } = req.body;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { post, pool } = postInfo;
-
     try {
         let currentViews = post.views || [];
-
         if (!currentViews.includes(userId)) {
             currentViews.push(userId);
             await pool.query('UPDATE posts SET views = $1 WHERE id = $2', [JSON.stringify(currentViews), postId]);
@@ -1148,48 +1018,23 @@ app.post('/api/posts/:postId/view', async (req, res) => {
     }
 });
 
-// نقطة نهاية لإضافة تعليق على منشور
+// نقطة نهاية لإضافة تعليق
 app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-    const { pool, projectId } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
-
-    if (!text) {
-        return res.status(400).json({ error: 'نص التعليق مطلوب.' });
-    }
-
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
+    const { pool } = postInfo;
+    if (!text) return res.status(400).json({ error: 'نص التعليق مطلوب.' });
     try {
-        // جلب معلومات المستخدم من المشروع الافتراضي (حيث يوجد جدول المستخدمين)
         const userDetails = await getUserDetailsFromDefaultProject(userId);
-        const userProfileBg = userDetails ? userDetails.profile_bg_url : null;
-        const isVerified = userDetails ? userDetails.is_verified : false;
-
         const commentId = uuidv4();
         const timestamp = Date.now();
-
         await pool.query(
-            `INSERT INTO comments (id, post_id, user_id, username, text, timestamp, user_profile_bg, likes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [commentId, postId, userId, username, text, timestamp, userProfileBg, '[]']
+            `INSERT INTO comments (id, post_id, user_id, username, text, timestamp, user_profile_bg, likes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [commentId, postId, userId, username, text, timestamp, userDetails?.profile_bg_url || null, '[]']
         );
-
-        const newComment = {
-            id: commentId,
-            userId,
-            username,
-            text,
-            timestamp,
-            likes: [],
-            userProfileBg: userProfileBg,
-            isVerified: isVerified
-        };
-        console.log(`DEBUG: تم إنشاء التعليق الجديد في المشروع ${projectId} وإرساله:`, newComment);
+        const newComment = { id: commentId, userId, username, text, timestamp, likes: [], userProfileBg: userDetails?.profile_bg_url || null, isVerified: userDetails?.is_verified || false };
         res.status(201).json({ message: 'تم إضافة التعليق بنجاح.', comment: newComment });
     } catch (error) {
         console.error('خطأ: فشل إضافة التعليق:', error);
@@ -1197,41 +1042,18 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على تعليقات منشور
+// نقطة نهاية للحصول على التعليقات
 app.get('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
-    
-    // البحث عن المنشور في أي مشروع
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-    const { pool, projectId } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
-
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
+    const { pool } = postInfo;
     try {
-        const result = await pool.query(
-            `SELECT c.id, c.user_id, c.username, c.text, c.timestamp, c.user_profile_bg, c.likes
-             FROM comments c
-             WHERE c.post_id = $1
-             ORDER BY c.timestamp ASC`,
-            [postId]
-        );
-
-        // إثراء التعليقات بتفاصيل المستخدم من المشروع الافتراضي
+        const result = await pool.query(`SELECT * FROM comments WHERE post_id = $1 ORDER BY timestamp ASC`, [postId]);
         const comments = await Promise.all(result.rows.map(async row => {
             const userDetails = await getUserDetailsFromDefaultProject(row.user_id);
-            return {
-                id: row.id,
-                userId: row.user_id,
-                username: userDetails ? userDetails.username : row.username,
-                text: row.text,
-                timestamp: parseInt(row.timestamp),
-                userProfileBg: userDetails ? userDetails.profile_bg_url : row.user_profile_bg,
-                likes: row.likes,
-                isVerified: userDetails ? userDetails.is_verified : false
-            };
+            return { ...row, timestamp: parseInt(row.timestamp), userProfileBg: userDetails?.profile_bg_url || row.user_profile_bg, isVerified: userDetails?.is_verified || false };
         }));
-        console.log(`DEBUG: بيانات التعليقات التي يتم إرسالها من المشروع ${projectId} (أول تعليق):`, JSON.stringify(comments.slice(0, 1)));
         res.status(200).json(comments);
     } catch (error) {
         console.error('خطأ: فشل جلب التعليقات:', error);
@@ -1243,30 +1065,15 @@ app.get('/api/posts/:postId/comments', async (req, res) => {
 app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId, newText } = req.body;
-    
-    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { pool } = postInfo;
-
-    if (!newText || newText.trim() === '') {
-        return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
-    }
-
+    if (!newText || newText.trim() === '') return res.status(400).json({ error: 'نص التعليق الجديد مطلوب.' });
     try {
         const commentResult = await pool.query('SELECT user_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
         const comment = commentResult.rows[0];
-
-        if (!comment) {
-            return res.status(404).json({ error: 'التعليق غير موجود.' });
-        }
-
-        if (comment.user_id !== userId) {
-            return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذا التعليق.' });
-        }
-
+        if (!comment) return res.status(404).json({ error: 'التعليق غير موجود.' });
+        if (comment.user_id !== userId) return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذا التعليق.' });
         await pool.query('UPDATE comments SET text = $1 WHERE id = $2', [newText, commentId]);
         res.status(200).json({ message: 'تم تعديل التعليق بنجاح.', newText });
     } catch (error) {
@@ -1279,34 +1086,21 @@ app.put('/api/posts/:postId/comments/:commentId', async (req, res) => {
 app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    
-    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { pool } = postInfo;
-
     try {
         const commentResult = await pool.query('SELECT user_id, post_id FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
         const comment = commentResult.rows[0];
-
-        if (!comment) {
-            return res.status(404).json({ error: 'التعليق غير موجود.' });
-        }
-
-        // جلب معلومات مالك المنشور ودور المستخدم من المشروع الافتراضي
+        if (!comment) return res.status(404).json({ error: 'التعليق غير موجود.' });
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const postOwnerResult = await defaultPool.query('SELECT author_id FROM posts WHERE id = $1', [comment.post_id]);
-        const postOwnerId = postOwnerResult.rows[0] ? postOwnerResult.rows[0].author_id : null;
-
+        const postOwnerId = postOwnerResult.rows[0]?.author_id;
         const callerUser = await defaultPool.query('SELECT user_role FROM users WHERE uid = $1', [userId]);
-        const callerRole = callerUser.rows[0] ? callerUser.rows[0].user_role : 'normal';
-
+        const callerRole = callerUser.rows[0]?.user_role;
         if (comment.user_id !== userId && postOwnerId !== userId && callerRole !== 'admin') {
             return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا التعليق.' });
         }
-
         await pool.query('DELETE FROM comments WHERE id = $1', [commentId]);
         res.status(200).json({ message: 'تم حذف التعليق بنجاح.' });
     } catch (error) {
@@ -1315,60 +1109,34 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
     }
 });
 
-
 // نقطة نهاية للإعجاب بتعليق
 app.post('/api/posts/:postId/comments/:commentId/like', async (req, res) => {
     const { postId, commentId } = req.params;
     const { userId } = req.body;
-    
-    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
     const { pool } = postInfo;
-
     try {
         const commentResult = await pool.query('SELECT likes FROM comments WHERE id = $1 AND post_id = $2', [commentId, postId]);
         const comment = commentResult.rows[0];
-
-        if (!comment) {
-            return res.status(404).json({ error: 'التعليق غير موجود.' });
-        }
-
+        if (!comment) return res.status(404).json({ error: 'التعليق غير موجود.' });
         let currentLikes = comment.likes || [];
         const userIndex = currentLikes.indexOf(userId);
-        let isLiked;
-
-        if (userIndex === -1) {
-            currentLikes.push(userId);
-            isLiked = true;
-        } else {
-            currentLikes.splice(userIndex, 1);
-            isLiked = false;
-        }
-
+        if (userIndex === -1) currentLikes.push(userId);
+        else currentLikes.splice(userIndex, 1);
         await pool.query('UPDATE comments SET likes = $1 WHERE id = $2', [JSON.stringify(currentLikes), commentId]);
-        console.log(`DEBUG: تم تحديث الإعجاب بالتعليق في المشروع ${postInfo.projectId}. الإعجابات:`, currentLikes.length, 'هل أعجب:', isLiked);
-        res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked });
+        res.status(200).json({ message: 'تم تحديث الإعجاب بالتعليق بنجاح.', likesCount: currentLikes.length, isLiked: userIndex === -1 });
     } catch (error) {
         console.error('خطأ: فشل الإعجاب بالتعليق:', error);
         res.status(500).json({ error: 'فشل تحديث الإعجاب بالتعليق.' });
     }
 });
 
-// نقطة نهاية خدمة ملفات الوسائط (الصور والفيديوهات والرسائل الصوتية)
+// نقطة نهاية لخدمة ملفات الوسائط
 app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
     const { bucketName, folder, fileName } = req.params;
-    // هذه النقطة لا تستخدم req.currentProjectId لأن الملف قد يكون في أي مشروع
-    // يجب أن نحدد المشروع من خلال مسار الملف إذا أمكن
-    // أو نستخدم جميع عملاء Supabase للبحث عن الملف
-
     let targetSupabaseClient = null;
     let foundProjectId = null;
-
-    // محاولة تحديد المشروع من خلال معرف المستخدم في المسار
-    // هذا افتراض بأن folder هو userId
     const potentialUserId = folder;
     const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     if (defaultPool) {
@@ -1382,86 +1150,46 @@ app.get('/api/media/:bucketName/:folder/:fileName', async (req, res) => {
             console.error(`خطأ في تحديد المشروع لخدمة الوسائط للمستخدم ${potentialUserId}:`, error);
         }
     }
-
-    // إذا لم يتم تحديد مشروع، حاول البحث في جميع المشاريع
     if (!targetSupabaseClient) {
-        console.warn(`لم يتم تحديد مشروع لخدمة الوسائط. سأبحث في جميع المشاريع عن الملف: ${folder}/${fileName} في ${bucketName}`);
         for (const projectId in projectSupabaseClients) {
             const supabaseClient = projectSupabaseClients[projectId];
             try {
-                // محاولة الحصول على توقيع URL، إذا نجحت، فهذا هو المشروع الصحيح
-                // نستخدم getPublicUrl لأن الملفات يجب أن تكون عامة
-                const { data, error } = await supabaseClient.storage
-                    .from(bucketName)
-                    .getPublicUrl(`${folder}/${fileName}`);
-                if (!error && data && data.publicUrl) {
+                const { data, error } = await supabaseClient.storage.from(bucketName).getPublicUrl(`${folder}/${fileName}`);
+                if (!error && data?.publicUrl) {
                     targetSupabaseClient = supabaseClient;
                     foundProjectId = projectId;
                     break;
                 }
-            } catch (error) {
-                // تجاهل الأخطاء، فقط حاول في المشروع التالي
-            }
+            } catch (e) {}
         }
     }
-
-    if (!targetSupabaseClient) {
-        console.error(`خطأ: لم يتم العثور على الملف ${folder}/${fileName} في أي مشروع.`);
-        return res.status(404).send('الملف غير موجود في أي من المشاريع المتاحة.');
-    }
-
+    if (!targetSupabaseClient) return res.status(404).send('الملف غير موجود في أي من المشاريع المتاحة.');
     const filePathInBucket = `${folder}/${fileName}`;
-
-    console.log(`DEBUG: طلب ملف وسائط: ${filePathInBucket} من Bucket: ${bucketName} للمشروع: ${foundProjectId}`);
-
     try {
-        const { data, error } = await targetSupabaseClient.storage
-            .from(bucketName)
-            .getPublicUrl(filePathInBucket); // استخدام getPublicUrl مباشرة بدلاً من createSignedUrl لملفات Public
-
-        if (error || !data || !data.publicUrl) {
-            console.error(`خطأ: فشل الحصول على الرابط العام للملف ${filePathInBucket}:`, error);
-            return res.status(500).send('فشل في خدمة الملف.');
-        }
-
-        res.redirect(data.publicUrl); // إعادة التوجيه إلى الرابط العام مباشرة
-
+        const { data, error } = await targetSupabaseClient.storage.from(bucketName).getPublicUrl(filePathInBucket);
+        if (error || !data?.publicUrl) return res.status(500).send('فشل في خدمة الملف.');
+        res.redirect(data.publicUrl);
     } catch (error) {
         console.error(`خطأ: فشل خدمة ملف الوسائط ${filePathInBucket} من Supabase Storage:`, error);
         res.status(500).send('فشل في خدمة الملف.');
     }
 });
 
-
-// ----------------------------------------------------------------------------------------------------
-// نقاط نهاية تقدم تشغيل الفيديو
-// ----------------------------------------------------------------------------------------------------
-
-// نقطة نهاية لحفظ أو تحديث موضع تشغيل الفيديو
+// نقطة نهاية لتقدم تشغيل الفيديو
 app.post('/api/video/:postId/playback-position', async (req, res) => {
     const { postId } = req.params;
     const { userId, positionSeconds } = req.body;
-    
-    // البحث عن المنشور لتحديد الـ pool الصحيح
     const postInfo = await getPostFromAnyProject(postId);
-    if (!postInfo) {
-        return res.status(404).json({ error: 'المنشور غير موجود.' });
-    }
-    const { pool } = postInfo; // استخدام pool المشروع الذي يوجد به المنشور
-
-    if (!userId || positionSeconds === undefined || positionSeconds === null) {
-        return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
-    }
-
+    if (!postInfo) return res.status(404).json({ error: 'المنشور غير موجود.' });
+    const { pool } = postInfo;
+    if (userId == null || positionSeconds == null) return res.status(400).json({ error: 'معرف المستخدم وموضع التشغيل مطلوبان.' });
     try {
-        await pool.query(`
-            INSERT INTO video_playback_progress (user_id, post_id, position_seconds, last_updated)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (user_id, post_id) DO UPDATE SET
-                position_seconds = EXCLUDED.position_seconds,
-                last_updated = EXCLUDED.last_updated;
-        `, [userId, postId, positionSeconds, Date.now()]);
-
+        await pool.query(
+            `INSERT INTO video_playback_progress (user_id, post_id, position_seconds, last_updated)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (user_id, post_id) DO UPDATE SET position_seconds = EXCLUDED.position_seconds, last_updated = EXCLUDED.last_updated;`,
+            [userId, postId, positionSeconds, Date.now()]
+        );
         res.status(200).json({ message: 'تم حفظ موضع التشغيل بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل حفظ موضع تشغيل الفيديو:', error);
@@ -1469,47 +1197,26 @@ app.post('/api/video/:postId/playback-position', async (req, res) => {
     }
 });
 
-
-// ----------------------------------------------------------------------------------------------------
-// نقاط نهاية وكيل Gemini API
-// ----------------------------------------------------------------------------------------------------
+// نقطة نهاية وكيل Gemini API
 app.post('/api/gemini-proxy', async (req, res) => {
     const { prompt, chatHistory = [] } = req.body;
-
-    if (!GEMINI_API_KEY) {
-        console.error("لم يتم تكوين مفتاح Gemini API.");
-        return res.status(500).json({ error: "لم يتم تكوين مفتاح Gemini API على الخادم." });
-    }
-
+    if (!GEMINI_API_KEY) return res.status(500).json({ error: "لم يتم تكوين مفتاح Gemini API على الخادم." });
     const payload = {
         contents: [...chatHistory, { role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-        }
+        generationConfig: {}
     };
-
     try {
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
+        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`خطأ في Gemini API: ${response.status} - ${errorText}`);
             return res.status(response.status).json({ error: `خطأ في Gemini API: ${response.status} - ${errorText}` });
         }
-
         const result = await response.json();
-
-        if (result.candidates && result.candidates.length > 0 &&
-            result.candidates[0].content && result.candidates[0].content.parts &&
-            result.candidates[0].content.parts.length > 0) {
-            const text = result.candidates[0].content.parts[0].text;
-            res.status(200).json({ response: text });
+        if (result.candidates?.[0]?.content?.parts?.[0]) {
+            res.status(200).json({ response: result.candidates[0].content.parts[0].text });
         } else {
-            console.warn('هيكل استجابة Gemini API غير متوقع:', result);
             res.status(500).json({ error: 'أرجع Gemini API هيكل استجابة غير متوقع.' });
         }
     } catch (error) {
@@ -1518,53 +1225,33 @@ app.post('/api/gemini-proxy', async (req, res) => {
     }
 });
 
-
 // ----------------------------------------------------------------------------------------------------
-// وظائف الدردشة - تم تعديلها للعمل مع PostgreSQL
+// وظائف الدردشة
 // ----------------------------------------------------------------------------------------------------
 
 // نقطة نهاية لإنشاء محادثة فردية
 app.post('/api/chats/private', async (req, res) => {
-    const { user1Id, user2Id, user1Name, user2Name, user1CustomId, user2CustomId, contactName } = req.body;
-    // نستخدم Pool المشروع الافتراضي لإنشاء محادثة فردية (لأن معلومات المستخدمين موجودة هنا)
+    const { user1Id, user2Id, user1Name, user2Name, contactName } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
-    if (!user1Id || !user2Id || !user1Name || !user2Name || !user1CustomId || !user2CustomId || !contactName) {
-        return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة لإنشاء محادثة فردية.' });
-    }
-
+    if (!user1Id || !user2Id || !user1Name || !user2Name || !contactName) return res.status(400).json({ error: 'جميع بيانات المستخدمين مطلوبة.' });
     try {
-        const existingChatResult = await pool.query(`
-            SELECT id FROM chats
-            WHERE type = 'private'
-            AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))
-        `, [user1Id, user2Id]);
-
+        const existingChatResult = await pool.query(
+            `SELECT id FROM chats WHERE type = 'private' AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))`,
+            [user1Id, user2Id]
+        );
         if (existingChatResult.rows.length > 0) {
-            const existingChatId = existingChatResult.rows[0].id;
-            console.log('محادثة فردية موجودة بالفعل:', existingChatId);
-            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChatId });
+            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChatResult.rows[0].id });
         }
-
         const newChatId = uuidv4();
         const timestamp = Date.now();
         const participantsArray = [user1Id, user2Id];
-        const contactNamesObject = {
-            [user1Id]: contactName,
-            [user2Id]: user1Name
-        };
-
+        const contactNamesObject = { [user1Id]: contactName, [user2Id]: user1Name };
         const user2Profile = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user2Id]);
-        const chatProfileBg = user2Profile.rows[0] ? user2Profile.rows[0].profile_bg_url : null;
-
-
+        const chatProfileBg = user2Profile.rows[0]?.profile_bg_url;
         await pool.query(
-            `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names, profile_bg_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [newChatId, 'private', JSON.stringify(participantsArray), null, timestamp, JSON.stringify(contactNamesObject), chatProfileBg]
+            `INSERT INTO chats (id, type, participants, timestamp, contact_names, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6)`,
+            [newChatId, 'private', JSON.stringify(participantsArray), timestamp, JSON.stringify(contactNamesObject), chatProfileBg]
         );
-
-        console.log('تم إنشاء محادثة فردية جديدة:', newChatId);
         res.status(201).json({ message: 'تم إنشاء المحادثة.', chatId: newChatId });
     } catch (error) {
         console.error('خطأ: فشل إنشاء محادثة فردية:', error);
@@ -1572,26 +1259,18 @@ app.post('/api/chats/private', async (req, res) => {
     }
 });
 
-// نقطة نهاية لتعديل اسم جهة الاتصال في محادثة فردية
+// نقطة نهاية لتعديل اسم جهة الاتصال
 app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     const { chatId } = req.params;
     const { userId, newContactName } = req.body;
-    // نستخدم Pool المشروع الافتراضي لتعديل اسم جهة الاتصال
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
     try {
         const chatResult = await pool.query('SELECT contact_names FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
         const chat = chatResult.rows[0];
-
-        if (!chat) {
-            return res.status(404).json({ error: 'المحادثة غير موجودة أو لا تملك صلاحية التعديل.' });
-        }
-
+        if (!chat) return res.status(404).json({ error: 'المحادثة غير موجودة أو لا تملك صلاحية التعديل.' });
         let currentContactNames = chat.contact_names || {};
         currentContactNames[userId] = newContactName;
-
         await pool.query('UPDATE chats SET contact_names = $1 WHERE id = $2', [JSON.stringify(currentContactNames), chatId]);
-        console.log(`تم تحديث اسم جهة الاتصال للمحادثة ${chatId} بواسطة ${userId} إلى ${newContactName}`);
         res.status(200).json({ message: 'تم تحديث اسم جهة الاتصال بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل تحديث اسم جهة الاتصال:', error);
@@ -1599,63 +1278,36 @@ app.put('/api/chats/private/:chatId/contact-name', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على جميع المحادثات لمستخدم معين
-// ملاحظة: هذه النقطة ستجلب المحادثات من المشروع الافتراضي فقط.
+// نقطة نهاية للحصول على محادثات المستخدم
 app.get('/api/user/:userId/chats', async (req, res) => {
     const { userId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب المحادثات
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const result = await pool.query(`
-            SELECT id, type, name, last_message, timestamp, profile_bg_url, admin_id, contact_names, participants, send_permission
-            FROM chats
-            WHERE participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) OR (type = 'private' AND name = 'المساعدة')
+            SELECT * FROM chats WHERE participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) OR (type = 'private' AND name = 'المساعدة')
             ORDER BY CASE WHEN name = 'المساعدة' THEN 0 ELSE 1 END, timestamp DESC
         `, [userId]);
-
-        const userChats = [];
-        for (const row of result.rows) {
-            let chatName = '';
-            let chatCustomId = null;
-            let chatProfileBg = row.profile_bg_url;
-            let chatAdminId = null;
-            let chatSendPermission = row.send_permission;
-
+        const userChats = await Promise.all(result.rows.map(async row => {
+            let chatName = row.name;
+            let chatCustomId = null, chatProfileBg = row.profile_bg_url;
             if (row.type === 'private') {
                 if (row.name === 'المساعدة') {
-                    chatName = 'المساعدة';
-                    const botUserResult = await pool.query('SELECT custom_id FROM users WHERE username = $1 AND user_role = $2', ['المساعدة', 'bot']);
-                    chatCustomId = botUserResult.rows[0] ? botUserResult.rows[0].custom_id : null;
+                    const botUserResult = await pool.query("SELECT custom_id FROM users WHERE username = 'المساعدة' AND user_role = 'bot'");
+                    chatCustomId = botUserResult.rows[0]?.custom_id;
                 } else {
-                    chatName = row.contact_names ? row.contact_names[userId] : 'جهة اتصال غير معروفة';
+                    chatName = row.contact_names?.[userId] || 'جهة اتصال غير معروفة';
                     const otherParticipantId = row.participants.find(pId => pId !== userId);
                     if (otherParticipantId) {
-                        const otherUserResult = await pool.query('SELECT custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipantId]);
-                        const otherUser = otherUserResult.rows[0];
+                        const otherUser = (await pool.query('SELECT custom_id, profile_bg_url FROM users WHERE uid = $1', [otherParticipantId])).rows[0];
                         if (otherUser) {
                             chatCustomId = otherUser.custom_id;
                             chatProfileBg = otherUser.profile_bg_url;
                         }
                     }
                 }
-            } else if (row.type === 'group') {
-                chatName = row.name;
-                chatAdminId = row.admin_id;
             }
-
-            userChats.push({
-                id: row.id,
-                type: row.type,
-                name: chatName,
-                lastMessage: row.last_message,
-                timestamp: parseInt(row.timestamp),
-                customId: chatCustomId,
-                profileBg: chatProfileBg,
-                adminId: chatAdminId,
-                sendPermission: chatSendPermission
-            });
-        }
-        console.log('DEBUG: بيانات محادثات المستخدم التي يتم إرسالها (أول محادثة):', JSON.stringify(userChats.slice(0, 1)));
+            return { ...row, name: chatName, customId: chatCustomId, profileBg: chatProfileBg, timestamp: parseInt(row.timestamp) };
+        }));
         res.status(200).json(userChats);
     } catch (error) {
         console.error('خطأ: فشل جلب محادثات المستخدم:', error);
@@ -1663,175 +1315,84 @@ app.get('/api/user/:userId/chats', async (req, res) => {
     }
 });
 
-// وظيفة لجلب الرسائل من جميع المشاريع وإثرائها بتفاصيل المرسل
+// وظيفة لجلب الرسائل من جميع المشاريع
 async function getMessagesFromAllProjects(chatId, sinceTimestamp) {
     let allRawMessages = [];
     for (const projectId in projectDbPools) {
-        const pool = projectDbPools[projectId];
         try {
-            const result = await pool.query(
-                `SELECT m.* FROM messages m WHERE m.chat_id = $1 AND m.timestamp > $2 ORDER BY m.timestamp ASC`,
-                [chatId, sinceTimestamp]
-            );
+            const result = await projectDbPools[projectId].query(`SELECT * FROM messages WHERE chat_id = $1 AND timestamp > $2 ORDER BY timestamp ASC`, [chatId, sinceTimestamp]);
             allRawMessages = allRawMessages.concat(result.rows);
         } catch (error) {
-            console.error(`خطأ في جلب الرسائل الخام من المشروع ${projectId} للمحادثة ${chatId}:`, error);
+            console.error(`خطأ في جلب الرسائل من المشروع ${projectId}:`, error);
         }
     }
-
-    // الآن قم بإثراء الرسائل بتفاصيل المرسل
     const enrichedMessages = await Promise.all(allRawMessages.map(async row => {
         const senderDetails = await getUserDetailsFromDefaultProject(row.sender_id);
-        return {
-            id: row.id,
-            senderId: row.sender_id,
-            senderName: senderDetails ? senderDetails.username : row.sender_name,
-            text: row.text,
-            timestamp: parseInt(row.timestamp),
-            mediaUrl: row.media_url,
-            mediaType: row.media_type,
-            senderProfileBg: senderDetails ? senderDetails.profile_bg_url : row.sender_profile_bg,
-            senderIsVerified: senderDetails ? senderDetails.is_verified : false,
-            senderUserRole: senderDetails ? senderDetails.user_role : 'normal'
-        };
+        return { ...row, timestamp: parseInt(row.timestamp), senderName: senderDetails?.username || row.sender_name, senderProfileBg: senderDetails?.profile_bg_url || row.sender_profile_bg, senderIsVerified: senderDetails?.is_verified || false, senderUserRole: senderDetails?.user_role || 'normal' };
     }));
-
     enrichedMessages.sort((a, b) => a.timestamp - b.timestamp);
     return enrichedMessages;
 }
 
-// نقطة نهاية لإرسال رسالة في محادثة
+// نقطة نهاية لإرسال رسالة
 app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    const bucketName = 'chat-media';
-
+    if (!senderId || !senderName || (!text && !mediaFile)) return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
+    const { pool, supabase, projectId } = await getUserProjectContext(senderId);
+    const chatCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     let messageMediaUrl = null;
     let messageMediaType = mediaType || 'text';
-
-    if (!senderId || !senderName || (!text && !mediaFile)) {
-        console.error('خطأ: المعرف، الاسم، والنص أو ملف الوسائط مطلوب لإرسال رسالة.');
-        return res.status(400).json({ error: 'المعرف، الاسم، والنص أو ملف الوسائط مطلوب.' });
-    }
-
-    // **تعديل**: احصل على سياق المشروع الصحيح للمستخدم بعد أن يقوم multer بتحليل الجسم
-    const { pool, supabase, projectId } = await getUserProjectContext(senderId);
-
     try {
-        // نستخدم Pool المشروع الافتراضي للتحقق من معلومات المحادثة (لأن المحادثات موجودة هنا)
-        const chatCheckPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-        const chatResult = await chatCheckPool.query('SELECT participants, type, admin_id, member_roles, send_permission FROM chats WHERE id = $1', [chatId]);
+        const chatResult = await chatCheckPool.query('SELECT * FROM chats WHERE id = $1', [chatId]);
         const chat = chatResult.rows[0];
-
-        if (!chat) {
-            console.error(`خطأ: المحادثة ${chatId} غير موجودة.`);
-            return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+        if (!chat) return res.status(404).json({ error: 'المحادثة غير موجودة.' });
+        if (!chat.participants.includes(senderId)) return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
+        if (chat.type === 'group' && chat.send_permission === 'admins_only' && chat.member_roles?.[senderId] !== 'admin') {
+            return res.status(403).json({ error: 'فقط المشرفون يمكنهم إرسال الرسائل في هذه المجموعة.' });
         }
-        if (!chat.participants.includes(senderId)) {
-            console.error(`خطأ: المستخدم ${senderId} ليس عضواً في المحادثة ${chatId}.`);
-            return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
-        }
-
-        if (chat.type === 'group' && chat.send_permission === 'admins_only') {
-            const senderRole = chat.member_roles[senderId];
-            if (senderRole !== 'admin') {
-                console.error(`خطأ: المستخدم ${senderId} ليس مشرفاً في المجموعة ${chatId} ولا يمكنه الإرسال.`);
-                return res.status(403).json({ error: 'فقط المشرفون يمكنهم إرسال الرسائل في هذه المجموعة.' });
-            }
-        }
-
         if (mediaFile) {
-            const fileExtension = mediaFile.originalname.split('.').pop();
-            const fileName = `${uuidv4()}.${fileExtension}`;
-            const filePath = `${senderId}/${fileName}`;
-
-            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
-            const { data, error: uploadError } = await supabase.storage // **استخدم supabase الصحيح**
-                .from(bucketName)
-                .upload(filePath, mediaFile.buffer, {
-                    contentType: mediaFile.mimetype,
-                    upsert: false
-                });
-
+            const bucketName = 'chat-media';
+            const filePath = `${senderId}/${uuidv4()}.${mediaFile.originalname.split('.').pop()}`;
+            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${projectId}, Bucket: ${bucketName}, المسار: ${filePath}`);
+            const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, mediaFile.buffer, { contentType: mediaFile.mimetype });
             if (uploadError) {
                 console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
-                console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
                 return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
             }
-
-            const { data: publicUrlData } = supabase.storage // **استخدم supabase الصحيح**
-                .from(bucketName)
-                .getPublicUrl(filePath);
-
-            if (!publicUrlData || !publicUrlData.publicUrl) {
-                console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
-                return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
-            }
-
+            const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+            if (!publicUrlData || !publicUrlData.publicUrl) return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
             messageMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${projectId}: ${messageMediaUrl}`);
-
             if (!mediaType || mediaType === 'text') {
-                if (mediaFile.mimetype.startsWith('image/')) {
-                    messageMediaType = 'image';
-                } else if (mediaFile.mimetype.startsWith('video/')) {
-                    messageMediaType = 'video';
-                } else if (mediaFile.mimetype.startsWith('audio/')) {
-                    messageMediaType = 'audio';
-                }
+                if (mediaFile.mimetype.startsWith('image/')) messageMediaType = 'image';
+                else if (mediaFile.mimetype.startsWith('video/')) messageMediaType = 'video';
+                else if (mediaFile.mimetype.startsWith('audio/')) messageMediaType = 'audio';
             }
         }
-
         const messageId = uuidv4();
         const timestamp = Date.now();
-
-        await pool.query( // **استخدم pool الصحيح** - سيتم حفظ الرسالة في مشروع المستخدم
+        await pool.query(
             `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_url, media_type, sender_profile_bg)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
         );
-
-        let lastMessageText = '';
-        if (messageMediaType === 'image') {
-            lastMessageText = 'صورة';
-        } else if (messageMediaType === 'video') {
-            lastMessageText = 'فيديو';
-        } else if (messageMediaType === 'audio') {
-            lastMessageText = 'رسالة صوتية';
-        } else {
-            lastMessageText = text || '';
-        }
-
-        // تحديث آخر رسالة في المحادثة في المشروع الافتراضي
+        let lastMessageText = (messageMediaType === 'text') ? (text || '') : (messageMediaType === 'image' ? 'صورة' : (messageMediaType === 'video' ? 'فيديو' : 'رسالة صوتية'));
         await chatCheckPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
-
-        const newMessage = {
-            id: messageId,
-            senderId,
-            senderName,
-            text: text || '',
-            timestamp,
-            mediaUrl: messageMediaUrl,
-            mediaType: messageMediaType,
-            senderProfileBg: senderProfileBg || null
-        };
-
-        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${projectId}:`, newMessage);
+        const newMessage = { id: messageId, senderId, senderName, text: text || '', timestamp, mediaUrl: messageMediaUrl, mediaType: messageMediaType, senderProfileBg: senderProfileBg || null };
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
-        res.status(500).json({ error: 'فشل إرسال الرسالة.' });
+        res.status(500).json({ error: 'فشل إرسال الرسالة: ' + error.message });
     }
 });
 
-// نقطة نهاية للحصول على رسائل محادثة معينة (مع فلتر زمني) - الآن تجلب من جميع المشاريع
+// نقطة نهاية للحصول على رسائل المحادثة
 app.get('/api/chats/:chatId/messages', async (req, res) => {
     const { chatId } = req.params;
     const sinceTimestamp = parseInt(req.query.since || '0');
     try {
-        const messages = await getMessagesFromAllProjects(chatId, sinceTimestamp); // تجلب من جميع المشاريع
-        console.log('DEBUG: بيانات رسائل المحادثة التي يتم إرسالها (أول رسالة):', JSON.stringify(messages.slice(0, 1)));
+        const messages = await getMessagesFromAllProjects(chatId, sinceTimestamp);
         res.status(200).json(messages);
     } catch (error) {
         console.error('خطأ: فشل جلب رسائل المحادثة:', error);
@@ -1839,30 +1400,21 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
     }
 });
 
-// نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
+// نقطة نهاية لحذف محادثة للمستخدم
 app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
     const { chatId } = req.params;
     const { userId } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const chatResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, userId]);
         const chat = chatResult.rows[0];
-
-        if (!chat) {
-            return res.status(404).json({ error: 'المحادثة غير موجودة أو المستخدم ليس عضواً فيها.' });
-        }
-
+        if (!chat) return res.status(404).json({ error: 'المحادثة غير موجودة أو المستخدم ليس عضواً فيها.' });
         let updatedParticipants = chat.participants.filter(p => p !== userId);
-
         if (updatedParticipants.length === 0) {
             await pool.query('DELETE FROM chats WHERE id = $1', [chatId]);
-            console.log(`تم حذف المحادثة ${chatId} بالكامل لأن المستخدم ${userId} كان آخر مشارك.`);
             res.status(200).json({ message: 'تم حذف المحادثة بالكامل بنجاح.' });
         } else {
             await pool.query('UPDATE chats SET participants = $1 WHERE id = $2', [JSON.stringify(updatedParticipants), chatId]);
-            console.log(`تم حذف المحادثة ${chatId} للمستخدم ${userId} فقط.`);
             res.status(200).json({ message: 'تم حذف المحادثة من عندك بنجاح.' });
         }
     } catch (error) {
@@ -1871,54 +1423,30 @@ app.delete('/api/chats/:chatId/delete-for-user', async (req, res) => {
     }
 });
 
-// نقطة نهاية لحذف محادثة فردية من الطرفين
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
-// **تحذير: حذف الوسائط من جميع المشاريع يتطلب منطقًا إضافيًا لتحديد مكان وجود كل رسالة**
+// نقطة نهاية لحذف محادثة من الطرفين
 app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
     const { chatId } = req.params;
     const { callerUid } = req.body;
-    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
-        // الخطوة 1: حذف الرسائل من جميع المشاريع
         for (const projectId in projectDbPools) {
             const pool = projectDbPools[projectId];
             const supabase = projectSupabaseClients[projectId];
             const bucketName = 'chat-media';
-
             try {
                 const messagesResult = await pool.query('SELECT media_url FROM messages WHERE chat_id = $1', [chatId]);
                 const messagesMediaUrls = messagesResult.rows.map(row => row.media_url).filter(Boolean);
-
                 if (messagesMediaUrls.length > 0) {
-                    const filePathsToDelete = messagesMediaUrls.map(url => {
-                        const urlObj = new URL(url);
-                        const pathSegments = urlObj.pathname.split('/');
-                        return pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-                    });
-
-                    const { data: removeData, error: deleteError } = await supabase.storage
-                        .from(bucketName)
-                        .remove(filePathsToDelete);
-
-                    if (deleteError) {
-                        console.error(`خطأ: فشل حذف وسائط الرسالة من Supabase Storage في المشروع ${projectId}:`, deleteError);
-                        console.error('تفاصيل خطأ Supabase:', deleteError.statusCode, deleteError.error, deleteError.message);
-                    } else {
-                        console.log(`تم حذف ملفات الوسائط من Supabase Storage للمحادثة ${chatId} في المشروع ${projectId}.`);
-                    }
+                    const filePathsToDelete = messagesMediaUrls.map(url => new URL(url).pathname.split('/').slice(new URL(url).pathname.split('/').indexOf(bucketName) + 1).join('/'));
+                    const { error: deleteError } = await supabase.storage.from(bucketName).remove(filePathsToDelete);
+                    if (deleteError) console.error(`خطأ: فشل حذف وسائط الرسالة من Supabase Storage في المشروع ${projectId}:`, deleteError);
                 }
                 await pool.query('DELETE FROM messages WHERE chat_id = $1', [chatId]);
-                console.log(`تم حذف الرسائل من قاعدة بيانات المشروع ${projectId} للمحادثة ${chatId}.`);
             } catch (error) {
                 console.error(`خطأ: فشل حذف الرسائل أو وسائطها من المشروع ${projectId}:`, error);
             }
         }
-
-        // الخطوة 2: حذف المحادثة من المشروع الافتراضي
         await defaultPool.query('DELETE FROM chats WHERE id = $1 AND type = \'private\' AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[])', [chatId, callerUid]);
-
-        console.log(`تم حذف المحادثة الفردية ${chatId} من الطرفين بواسطة ${callerUid}.`);
         res.status(200).json({ message: 'تم حذف المحادثة من الطرفين بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل حذف المحادثة الفردية من الطرفين:', error);
@@ -1927,34 +1455,24 @@ app.delete('/api/chats/private/:chatId/delete-for-both', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------------------------------
-// وظائف المجموعة - تم تعديلها للعمل مع PostgreSQL
+// وظائف المجموعة
 // ----------------------------------------------------------------------------------------------------
 
-// نقطة نهاية لإنشاء مجموعة جديدة
+// نقطة نهاية لإنشاء مجموعة
 app.post('/api/groups', async (req, res) => {
     const { name, description, adminId, members, profileBgUrl } = req.body;
-    // نستخدم Pool المشروع الافتراضي لإنشاء المجموعات
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
-    if (!name || !adminId || !members || Object.keys(members).length < 2) {
-        return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
-    }
-    if (!members[adminId] || members[adminId] !== 'admin') {
-        return res.status(400).json({ error: 'يجب أن يكون المشرف المحدد عضواً ومشرفاً.' });
-    }
-
+    if (!name || !adminId || !members || Object.keys(members).length < 2) return res.status(400).json({ error: 'اسم المجموعة، معرف المشرف، وعضوان على الأقل مطلوبان.' });
+    if (!members[adminId] || members[adminId] !== 'admin') return res.status(400).json({ error: 'يجب أن يكون المشرف المحدد عضواً ومشرفاً.' });
     try {
         const newGroupId = uuidv4();
         const timestamp = Date.now();
         const participantsArray = Object.keys(members);
-
         await pool.query(
-            `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, send_permission)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), null, timestamp, profileBgUrl || null, 'all']
+            `INSERT INTO chats (id, type, name, description, admin_id, participants, member_roles, timestamp, profile_bg_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [newGroupId, 'group', name, description || '', adminId, JSON.stringify(participantsArray), JSON.stringify(members), timestamp, profileBgUrl || null]
         );
-
-        console.log('تم إنشاء مجموعة جديدة:', newGroupId);
         res.status(201).json({ message: 'تم إنشاء المجموعة بنجاح.', groupId: newGroupId });
     } catch (error) {
         console.error('خطأ: فشل إنشاء المجموعة:', error);
@@ -1966,23 +1484,13 @@ app.post('/api/groups', async (req, res) => {
 app.put('/api/groups/:groupId/name', async (req, res) => {
     const { groupId } = req.params;
     const { newName, callerUid } = req.body;
-    // نستخدم Pool المشروع الافتراضي لتغيير اسم المجموعة
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
     try {
         const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية تغيير اسم المجموعة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'لا تملك صلاحية تغيير اسم المجموعة.' });
         await pool.query('UPDATE chats SET name = $1 WHERE id = $2', [newName, groupId]);
-        console.log(`تم تغيير اسم المجموعة ${groupId} إلى ${newName}`);
         res.status(200).json({ message: 'تم تغيير اسم المجموعة بنجاح.' });
     } catch (error) {
         console.error('خطأ: فشل تغيير اسم المجموعة:', error);
@@ -1995,62 +1503,25 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
     const { groupId } = req.params;
     const { callerUid } = req.body;
     const uploadedFile = req.file;
-    // نستخدم Pool المشروع الافتراضي للتحقق من صلاحيات المجموعة
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID]; // يستخدم عميل Supabase للمشروع الافتراضي
+    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID];
     const bucketName = 'group-backgrounds';
-
-    if (!callerUid || !uploadedFile) {
-        console.error('خطأ: معرف المستخدم والملف مطلوبان لرفع خلفية المجموعة.');
-        return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
-    }
-
+    if (!callerUid || !uploadedFile) return res.status(400).json({ error: 'معرف المستخدم والملف مطلوبان.' });
     try {
         const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            console.error(`خطأ: المجموعة ${groupId} غير موجودة.`);
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            console.error(`خطأ: المستخدم ${callerUid} ليس مشرفاً في المجموعة ${groupId} ولا يملك صلاحية تغيير الخلفية.`);
-            return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير خلفية المجموعة.' });
-        }
-
-        const fileExtension = uploadedFile.originalname.split('.').pop();
-        const fileName = `${uuidv4()}.${fileExtension}`;
-        const filePath = `${groupId}/${fileName}`;
-
-        console.log(`محاولة تحميل ملف خلفية المجموعة إلى المشروع ${BACKEND_DEFAULT_PROJECT_ID}، Bucket: ${bucketName}, المسار: ${filePath}`);
-        const { data, error: uploadError } = await supabase.storage
-            .from(bucketName)
-            .upload(filePath, uploadedFile.buffer, {
-                contentType: uploadedFile.mimetype,
-                upsert: false
-            });
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'ليس لديك صلاحية لتغيير خلفية المجموعة.' });
+        const filePath = `${groupId}/${uuidv4()}.${uploadedFile.originalname.split('.').pop()}`;
+        const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, uploadedFile.buffer, { contentType: uploadedFile.mimetype });
         if (uploadError) {
             console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
-            console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
             return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
         }
-
-        const { data: publicUrlData } = supabase.storage
-                .from(bucketName)
-                .getPublicUrl(filePath);
-
-        if (!publicUrlData || !publicUrlData.publicUrl) {
-            console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
-            return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
-        }
-
+        const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+        if (!publicUrlData || !publicUrlData.publicUrl) return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
         const mediaUrl = publicUrlData.publicUrl;
-
         await pool.query('UPDATE chats SET profile_bg_url = $1 WHERE id = $2', [mediaUrl, groupId]);
-
-        console.log(`تم تحميل خلفية المجموعة ${groupId} في المشروع الافتراضي: ${mediaUrl}`);
         res.status(200).json({ message: 'تم تحميل خلفية المجموعة بنجاح.', url: mediaUrl });
     } catch (error) {
         console.error('خطأ: فشل تحميل خلفية المجموعة أو تحديث قاعدة البيانات:', error);
@@ -2062,25 +1533,13 @@ app.post('/api/groups/:groupId/background', upload.single('file'), async (req, r
 app.put('/api/groups/:groupId/send-permission', async (req, res) => {
     const { groupId } = req.params;
     const { callerUid, newPermission } = req.body;
-    // نستخدم Pool المشروع الافتراضي لتغيير إذن الإرسال
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
-    if (!newPermission || !['all', 'admins_only'].includes(newPermission)) {
-        return res.status(400).json({ error: 'إذن الإرسال غير صالح.' });
-    }
-
+    if (!newPermission || !['all', 'admins_only'].includes(newPermission)) return res.status(400).json({ error: 'إذن الإرسال غير صالح.' });
     try {
         const groupResult = await pool.query('SELECT member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'لا تملك صلاحية لتغيير إذن الإرسال في هذه المجموعة.' });
         await pool.query('UPDATE chats SET send_permission = $1 WHERE id = $2', [newPermission, groupId]);
         res.status(200).json({ message: 'تم تحديث إذن الإرسال بنجاح.', sendPermission: newPermission });
     } catch (error) {
@@ -2089,42 +1548,22 @@ app.put('/api/groups/:groupId/send-permission', async (req, res) => {
     }
 });
 
-
-// نقطة نهاية للحصول على أعضاء المجموعة (مع الأدوار)
-// ملاحظة: هذه النقطة ستجلب الأعضاء من المشروع الافتراضي (حيث يتم تخزين معلومات المجموعات)
+// نقطة نهاية للحصول على أعضاء المجموعة
 app.get('/api/group/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         const memberUids = group.participants;
         const memberRoles = group.member_roles;
-
-        // جلب معلومات المستخدمين من المشروع الافتراضي
         const usersResult = await pool.query('SELECT uid, username, custom_id, is_verified, user_role FROM users WHERE uid = ANY($1::VARCHAR[])', [memberUids]);
         const usersMap = new Map(usersResult.rows.map(u => [u.uid, u]));
-
         const membersInfo = memberUids.map(pId => {
             const user = usersMap.get(pId);
-            if (user) {
-                return {
-                    uid: user.uid,
-                    username: user.username,
-                    customId: user.custom_id,
-                    role: memberRoles[pId] || 'member',
-                    isVerified: user.is_verified,
-                    userRole: user.user_role
-                };
-            }
-            return null;
+            return user ? { uid: user.uid, username: user.username, customId: user.custom_id, role: memberRoles[pId] || 'member', isVerified: user.is_verified, userRole: user.user_role } : null;
         }).filter(Boolean);
-        console.log('DEBUG: بيانات أعضاء المجموعة التي يتم إرسالها (أول عضو):', JSON.stringify(membersInfo.slice(0, 1)));
         res.status(200).json(membersInfo);
     } catch (error) {
         console.error('خطأ: فشل جلب أعضاء المجموعة:', error);
@@ -2133,17 +1572,13 @@ app.get('/api/group/:groupId/members', async (req, res) => {
 });
 
 // نقطة نهاية للحصول على عدد أعضاء المجموعة
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.get('/api/group/:groupId/members/count', async (req, res) => {
     const { groupId } = req.params;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT participants FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         res.status(200).json({ count: group.participants.length });
     } catch (error) {
         console.error('خطأ: فشل جلب عدد أعضاء المجموعة:', error);
@@ -2151,34 +1586,22 @@ app.get('/api/group/:groupId/members/count', async (req, res) => {
     }
 });
 
-// نقطة نهاية لإضافة أعضاء إلى مجموعة موجودة
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
+// نقطة نهاية لإضافة أعضاء للمجموعة
 app.post('/api/groups/:groupId/add-members', async (req, res) => {
     const { groupId } = req.params;
     const { newMemberUids, callerUid } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية إضافة أعضاء إلى هذه المجموعة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'لا تملك صلاحية إضافة أعضاء إلى هذه المجموعة.' });
         let currentParticipants = group.participants;
         let currentMemberRoles = group.member_roles;
         const addedMembers = [];
-
         for (const uid of newMemberUids) {
             if (!currentParticipants.includes(uid)) {
-                // جلب معلومات المستخدم من المشروع الافتراضي
-                const userResult = await pool.query('SELECT username FROM users WHERE uid = $1', [uid]);
-                const user = userResult.rows[0];
+                const user = (await pool.query('SELECT username FROM users WHERE uid = $1', [uid])).rows[0];
                 if (user) {
                     currentParticipants.push(uid);
                     currentMemberRoles[uid] = 'member';
@@ -2186,10 +1609,8 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => {
                 }
             }
         }
-
         if (addedMembers.length > 0) {
             await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(currentParticipants), JSON.stringify(currentMemberRoles), groupId]);
-            console.log(`تم إضافة أعضاء جدد إلى المجموعة ${groupId}: ${addedMembers.join(', ')}`);
             res.status(200).json({ message: `تم إضافة ${addedMembers.length} أعضاء بنجاح: ${addedMembers.join(', ')}` });
         } else {
             res.status(200).json({ message: 'لم يتم إضافة أعضاء جدد (ربما كانوا موجودين بالفعل).' });
@@ -2200,40 +1621,21 @@ app.post('/api/groups/:groupId/add-members', async (req, res) => {
     }
 });
 
-// نقطة نهاية لتغيير دور عضو في المجموعة (مشرف/عضو)
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
+// نقطة نهاية لتغيير دور عضو في المجموعة
 app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { newRole, callerUid } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية تغيير أدوار الأعضاء.' });
-        }
-
-        if (memberUid === group.admin_id && callerUid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا تملك صلاحية تغيير دور مالك المجموعة.' });
-        }
-
-        if (group.member_roles[memberUid] === 'admin' && newRole === 'member' && callerUid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر من الإشراف.' });
-        }
-
-        if (!group.participants.includes(memberUid)) {
-            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'لا تملك صلاحية تغيير أدوار الأعضاء.' });
+        if (memberUid === group.admin_id && callerUid !== group.admin_id) return res.status(403).json({ error: 'لا تملك صلاحية تغيير دور مالك المجموعة.' });
+        if (group.member_roles[memberUid] === 'admin' && newRole === 'member' && callerUid !== group.admin_id) return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر من الإشراف.' });
+        if (!group.participants.includes(memberUid)) return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
         let updatedMemberRoles = group.member_roles;
         updatedMemberRoles[memberUid] = newRole;
-
         await pool.query('UPDATE chats SET member_roles = $1 WHERE id = $2', [JSON.stringify(updatedMemberRoles), groupId]);
         res.status(200).json({ message: 'تم تغيير دور العضو بنجاح.' });
     } catch (error) {
@@ -2243,41 +1645,22 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 });
 
 // نقطة نهاية لإزالة عضو من المجموعة
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
     const { groupId, memberUid } = req.params;
     const { callerUid } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
-        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') {
-            return res.status(403).json({ error: 'لا تملك صلاحية إزالة أعضاء من هذه المجموعة.' });
-        }
-
-        if (memberUid === group.admin_id) {
-            return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
-        }
-
-        if (group.member_roles[memberUid] === 'admin' && callerUid !== group.admin_id) {
-            return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
+        if (!group.member_roles[callerUid] || group.member_roles[callerUid] !== 'admin') return res.status(403).json({ error: 'لا تملك صلاحية إزالة أعضاء من هذه المجموعة.' });
+        if (memberUid === group.admin_id) return res.status(403).json({ error: 'لا يمكنك إزالة مالك المجموعة.' });
+        if (group.member_roles[memberUid] === 'admin' && callerUid !== group.admin_id) return res.status(403).json({ error: 'لا تملك صلاحية إزالة مشرف آخر.' });
         const memberIndex = group.participants.indexOf(memberUid);
-        if (memberIndex === -1) {
-            return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
-        }
-
+        if (memberIndex === -1) return res.status(404).json({ error: 'العضو غير موجود في هذه المجموعة.' });
         let updatedParticipants = group.participants.filter(id => id !== memberUid);
         let updatedMemberRoles = group.member_roles;
         delete updatedMemberRoles[memberUid];
-
         await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(updatedParticipants), JSON.stringify(updatedMemberRoles), groupId]);
         res.status(200).json({ message: 'تم إزالة العضو بنجاح.' });
     } catch (error) {
@@ -2287,39 +1670,27 @@ app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
 });
 
 // نقطة نهاية لمغادرة المجموعة
-// ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/leave', async (req, res) => {
     const { groupId } = req.params;
     const { memberUid } = req.body;
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
-
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
         const groupResult = await pool.query('SELECT admin_id, participants, member_roles FROM chats WHERE id = $1 AND type = \'group\'', [groupId]);
         const group = groupResult.rows[0];
-
-        if (!group) {
-            return res.status(404).json({ error: 'المجموعة غير موجودة.' });
-        }
-
+        if (!group) return res.status(404).json({ error: 'المجموعة غير موجودة.' });
         const memberIndex = group.participants.indexOf(memberUid);
-        if (memberIndex === -1) {
-            return res.status(404).json({ error: 'أنت لست عضواً في هذه المجموعة.' });
-        }
-
+        if (memberIndex === -1) return res.status(404).json({ error: 'أنت لست عضواً في هذه المجموعة.' });
         if (memberUid === group.admin_id) {
             if (group.participants.length > 1) {
-                 return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
+                return res.status(403).json({ error: 'لا يمكنك مغادرة المجموعة بصفتك المالك. يرجى تعيين مالك جديد أولاً.' });
             } else {
                 await pool.query('DELETE FROM chats WHERE id = $1', [groupId]);
-                console.log(`تم حذف المجموعة ${groupId} لأن المالك غادر وكان العضو الوحيد.`);
                 return res.status(200).json({ message: 'تم حذف المجموعة بنجاح بعد مغادرتك.' });
             }
         }
-
         let updatedParticipants = group.participants.filter(id => id !== memberUid);
         let updatedMemberRoles = group.member_roles;
         delete updatedMemberRoles[memberUid];
-
         await pool.query('UPDATE chats SET participants = $1, member_roles = $2 WHERE id = $3', [JSON.stringify(updatedParticipants), JSON.stringify(updatedMemberRoles), groupId]);
         res.status(200).json({ message: 'تمت مغادرة المجموعة بنجاح.' });
     } catch (error) {
