@@ -23,22 +23,22 @@ const SUPABASE_PROJECT_CONFIGS = {
     'kdbtusugpqboxsaosaci': { // معرف المشروع 1 (الافتراضي)
         databaseUrl: "postgresql://postgres.kdbtusugpqboxsaosaci:Feaw%2BJu%25RWp4*Hq@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://kdbtusugpqboxsaosaci.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NDU1NCwiZXhwIjoyMDY4NDMwNTU0fQ.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // مفتاح المشروع 1
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnR1c3VncHFib3hzYW9zYWNpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImiaWF0IjoxNzUyODU0NTU0LCJleHAiOjIwNjg0MzA1NTR9.AQKVeRlWPoXmplNRg_xKL1OMPP-TW8qCGUcftTYaky8" // مفتاح المشروع 1
     },
     'ojuatwnwnvnzfyhicokc': { // معرف المشروع 2
         databaseUrl: "postgresql://postgres.ojuatwnwnvnzfyhicokc:w%26qGbv4!gLVG%26Cg@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://ojuatwnwnvnzfyhicokc.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NjIxNCwiZXhwIjoyMDY4NDMyMjE0fQ.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // مفتاح المشروع 2
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWF0d253bnZuemZ5aGljb2tjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImiaWF0IjoxNzUyODU2MjE0LCJleHAiOjIwNjg0MzIyMTR9.JLhsU2VUzF2tiAEWIkq3ivWtfLemwEJgVUkh4cHRQRQ" // مفتاح المشروع 2
     },
     'fznbkubzddthnboehmvq': { // معرف المشروع 3
         databaseUrl: "postgresql://postgres.fznbkubzddthnboehmvq:j%23ZM%24q%40WjH%40dtU6@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://fznbkubzddthnboehmvq.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzE2MCwiZXhwIjoyMDY4NDMzMTYwfQ.v47l39S4qOooMPxMGJrUPPBqY7B0Z0fiBB1h7uWZEXg" // مفتاح المشروع 3
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6bmJrdWJ6ZGR0aG5ib2VobXZxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImiaWF0IjoxNzUyODU3MTYwLCJleHAiOjIwNjg0MzMxNjB9.v47l39S4qOooMPxMGJrUPPBqY7B0Z0fiBB1h7uWZEXg" // مفتاح المشروع 3
     },
     'woxzcoerelijbsrbdnbk': { // معرف المشروع 4
         databaseUrl: "postgresql://postgres.woxzcoerelijbsrbdnbk:n%247j9tuvhRtQ!8y@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
         projectUrl: "https://woxzcoerelijbsrbdnbk.supabase.co",
-        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Mjg1NzQxOCwiZXhwIjoyMDY4NDMzNDE4fQ.nwKvMDUGq6zPzQluXR_3PrQy0HAVl1sDAflT5at2AQA" // مفتاح المشروع 4
+        serviceRoleKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndveHpjb2VyZWxpamJzcmJkbmJrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImiaWF0IjoxNzUyODU3NDE4LCJleHAiOjIwNjg0MzM0MTh9.nwKvMDUGq6zPzQluXR_3PrQy0HAVl1sDAflT5at2AQA" // مفتاح المشروع 4
     },
 };
 
@@ -53,9 +53,7 @@ const projectSupabaseClients = {};
 
 // متغير لتتبع المشروع الحالي لتسجيل المستخدمين الجدد بنظام الدورة
 let currentProjectIndex = 0;
-// **تعديل بسيط هنا لضمان أن المشاريع المخصصة للمستخدمين تبدأ من المشروع الثاني**
-const userAssignableProjectIds = Object.keys(SUPABASE_PROJECT_CONFIGS).filter(id => id !== BACKEND_DEFAULT_PROJECT_ID);
-
+const projectIds = Object.keys(SUPABASE_PROJECT_CONFIGS);
 
 // ----------------------------------------------------------------------------------------------------
 // تهيئة PostgreSQL Pool وعميل Supabase لكل مشروع
@@ -145,7 +143,7 @@ async function createTables(pool) {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS posts (
                 id VARCHAR(255) PRIMARY KEY,
-                author_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                author_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 author_name VARCHAR(255) NOT NULL,
                 text TEXT,
                 timestamp BIGINT NOT NULL,
@@ -159,8 +157,8 @@ async function createTables(pool) {
 
             CREATE TABLE IF NOT EXISTS comments (
                 id VARCHAR(255) PRIMARY KEY,
-                post_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
-                user_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                post_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
+                user_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 username VARCHAR(255) NOT NULL,
                 text TEXT NOT NULL,
                 timestamp BIGINT NOT NULL,
@@ -173,7 +171,7 @@ async function createTables(pool) {
                 type VARCHAR(50) NOT NULL,
                 name VARCHAR(255),
                 description TEXT,
-                admin_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                admin_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 participants JSONB NOT NULL,
                 member_roles JSONB,
                 last_message TEXT,
@@ -185,8 +183,8 @@ async function createTables(pool) {
 
             CREATE TABLE IF NOT EXISTS messages (
                 id VARCHAR(255) PRIMARY KEY,
-                chat_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن chats في مشروع آخر
-                sender_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                chat_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن chats في مشروع آخر
+                sender_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 sender_name VARCHAR(255) NOT NULL,
                 text TEXT,
                 timestamp BIGINT NOT NULL,
@@ -196,14 +194,14 @@ async function createTables(pool) {
             );
 
             CREATE TABLE IF NOT EXISTS followers (
-                follower_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
-                followed_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                follower_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                followed_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
                 PRIMARY KEY (follower_id, followed_id)
             );
 
             CREATE TABLE IF NOT EXISTS video_playback_progress (
-                user_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن users في مشروع آخر
-                post_id VARCHAR(255), -- لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
+                user_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن users في مشروع آخر
+                post_id VARCHAR(255), // لا يوجد REFERENCES هنا لأن posts قد يكون في مشروع آخر
                 position_seconds REAL NOT NULL,
                 last_updated BIGINT NOT NULL,
                 PRIMARY KEY (user_id, post_id)
@@ -265,33 +263,21 @@ async function createTables(pool) {
 // البرمجيات الوسيطة (Middleware)
 // ----------------------------------------------------------------------------------------------------
 
-// تمكين CORS لجميع الطلبات
+// تمكين CORS لجميع الطلبات (Netlify Proxy سيتعامل مع الباقي)
 app.use(cors());
 
 // تحليل نصوص JSON في طلبات HTTP
 app.use(bodyParser.json());
 
-
-// ====================================================================================================
-// ===== تعديل رئيسي: فصل منطق تحديد المشروع في برمجية وسيطة خاصة =====
-// ====================================================================================================
-// هذه البرمجية الوسيطة ستُستخدم فقط في نقاط النهاية التي تحتاج إلى تحديد مشروع المستخدم (مثل رفع الملفات).
-// هذا يحل المشكلة لأنها ستعمل بعد أن تقوم `multer` بتحليل الطلب وتعبئة `req.body`.
-const setProjectContext = async (req, res, next) => {
+// برمجية وسيطة لتحديد المشروع بناءً على المستخدم أو العملية
+app.use('/api/*', async (req, res, next) => {
     let projectIdToUse = BACKEND_DEFAULT_PROJECT_ID; // المشروع الافتراضي للعمليات العامة أو غير الموثقة
     let userId = null; // تهيئة userId إلى null
 
     // محاولة استخراج معرف المستخدم من أماكن مختلفة في الطلب
-    // الآن يمكننا قراءة `req.body` بأمان لأن `multer` قد عمل بالفعل
     if (req.body.userId) {
         userId = req.body.userId;
         console.log(`DEBUG: Middleware: Found userId in req.body: ${userId}`);
-    } else if (req.body.authorId) { // للتحقق من authorId في المنشورات
-        userId = req.body.authorId;
-        console.log(`DEBUG: Middleware: Found authorId in req.body: ${userId}`);
-    } else if (req.body.senderId) { // للتحقق من senderId في الرسائل
-        userId = req.body.senderId;
-        console.log(`DEBUG: Middleware: Found senderId in req.body: ${userId}`);
     } else if (req.query.userId) {
         userId = req.query.userId;
         console.log(`DEBUG: Middleware: Found userId in req.query: ${userId}`);
@@ -301,6 +287,18 @@ const setProjectContext = async (req, res, next) => {
     } else if (req.headers['x-user-id']) {
         userId = req.headers['x-user-id'];
         console.log(`DEBUG: Middleware: Found userId in req.headers['x-user-id']: ${userId}`);
+    }
+
+    // معالجة خاصة لنقاط النهاية التي تستخدم معرف مستخدم مختلف في الجسم
+    if (req.path === '/api/posts' && req.method === 'POST' && req.body.authorId) {
+        userId = req.body.authorId;
+        console.log(`DEBUG: Middleware: POST /api/posts detected. Using authorId from body: ${userId}`);
+    } else if (req.path === '/api/upload-profile-background' && req.method === 'POST' && req.body.userId) {
+        userId = req.body.userId;
+        console.log(`DEBUG: Middleware: POST /api/upload-profile-background detected. Using userId from body: ${userId}`);
+    } else if (req.path.startsWith('/api/chats/') && req.path.endsWith('/messages') && req.method === 'POST' && req.body.senderId) {
+        userId = req.body.senderId;
+        console.log(`DEBUG: Middleware: POST /api/chats/:chatId/messages detected. Using senderId from body: ${userId}`);
     }
 
     // إذا لم يتم تحديد userId، فسنستخدم المشروع الافتراضي
@@ -318,8 +316,8 @@ const setProjectContext = async (req, res, next) => {
                         console.log(`DEBUG: Middleware: المستخدم ${userId} لديه مشروع معين: ${projectIdToUse}.`);
                     } else {
                         // المستخدم موجود ولكن user_project_id فارغ (مستخدم قديم)
-                        const assignedProjectId = userAssignableProjectIds[currentProjectIndex];
-                        currentProjectIndex = (currentProjectIndex + 1) % userAssignableProjectIds.length;
+                        const assignedProjectId = projectIds[currentProjectIndex];
+                        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length;
                         await defaultPool.query('UPDATE users SET user_project_id = $1 WHERE uid = $2', [assignedProjectId, userId]);
                         projectIdToUse = assignedProjectId;
                         console.log(`DEBUG: Middleware: تم تعيين مشروع جديد ${projectIdToUse} للمستخدم القديم ${userId}.`);
@@ -350,11 +348,7 @@ const setProjectContext = async (req, res, next) => {
     req.supabase = projectSupabaseClients[projectIdToUse];
     req.currentProjectId = projectIdToUse; // لتمرير معرف المشروع إلى نقاط النهاية إذا لزم الأمر
     next();
-};
-// ====================================================================================================
-// ===== نهاية التعديل الرئيسي =====
-// ====================================================================================================
-
+});
 
 // ----------------------------------------------------------------------------------------------------
 // وظائف المساعدة (Helper Functions)
@@ -556,8 +550,8 @@ app.post('/api/register', async (req, res) => {
         const isVerified = (userRole === 'admin');
 
         // **جديد: تعيين معرف المشروع للمستخدم بنظام الدورة**
-        const assignedProjectId = userAssignableProjectIds[currentProjectIndex];
-        currentProjectIndex = (currentProjectIndex + 1) % userAssignableProjectIds.length; // الانتقال للمشروع التالي
+        const assignedProjectId = projectIds[currentProjectIndex];
+        currentProjectIndex = (currentProjectIndex + 1) % projectIds.length; // الانتقال للمشروع التالي
 
         await pool.query(
             'INSERT INTO users (uid, username, password, custom_id, profile_bg_url, is_verified, user_role, user_project_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
@@ -644,12 +638,11 @@ app.put('/api/admin/verify-user/:customId', async (req, res) => {
 });
 
 // نقطة نهاية لرفع خلفية الملف الشخصي
-// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
-app.post('/api/upload-profile-background', upload.single('file'), setProjectContext, async (req, res) => {
+app.post('/api/upload-profile-background', upload.single('file'), async (req, res) => {
     const { userId } = req.body;
     const uploadedFile = req.file;
-    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
-    const supabase = req.supabase;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
     const bucketName = 'profile-backgrounds';
 
     if (!userId || !uploadedFile) {
@@ -806,13 +799,11 @@ app.get('/api/user/:userId/contacts', async (req, res) => {
 });
 
 // نقطة نهاية لنشر منشور جديد
-// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
-app.post('/api/posts', upload.single('mediaFile'), setProjectContext, async (req, res) => {
+app.post('/api/posts', upload.single('mediaFile'), async (req, res) => {
     const { authorId, authorName, text, mediaType, authorProfileBg } = req.body;
     const mediaFile = req.file;
-    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
-    const pool = req.dbPool;
-    const supabase = req.supabase;
+    const pool = req.dbPool; // سيستخدم Pool المشروع المخصص للمستخدم
+    const supabase = req.supabase; // سيستخدم عميل Supabase للمشروع المخصص للمستخدم
     const bucketName = 'post-media';
 
     let postMediaUrl = null;
@@ -1132,7 +1123,7 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
     const { postId } = req.params;
     const { userId, username, text } = req.body;
     
-    // البحث عن المنشور في أي مشروع
+    // البحث عن المنشور في أي مشروع لتحديد الـ pool الصحيح للتعليق
     const postInfo = await getPostFromAnyProject(postId);
     if (!postInfo) {
         return res.status(404).json({ error: 'المنشور غير موجود.' });
@@ -1289,8 +1280,8 @@ app.delete('/api/posts/:postId/comments/:commentId', async (req, res) => {
         await pool.query('DELETE FROM comments WHERE id = $1', [commentId]);
         res.status(200).json({ message: 'تم حذف التعليق بنجاح.' });
     } catch (error) {
-        console.error('خطأ: فشل حذف التعليق:', error);
-        res.status(500).json({ error: 'فشل حذف التعليق.' });
+            console.error('خطأ: فشل حذف التعليق:', error);
+            res.status(500).json({ error: 'فشل حذف التعليق.' });
     }
 });
 
@@ -1680,14 +1671,13 @@ async function getMessagesFromAllProjects(chatId, sinceTimestamp) {
 }
 
 // نقطة نهاية لإرسال رسالة في محادثة
-// ===== تعديل: إضافة البرمجية الوسيطة `setProjectContext` بعد `multer` =====
-app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectContext, async (req, res) => {
+app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, res) => {
     const { chatId } = req.params;
     const { senderId, senderName, text, mediaType, senderProfileBg } = req.body;
     const mediaFile = req.file;
-    // الآن `req.supabase` و `req.dbPool` تم تعيينهما بشكل صحيح بواسطة `setProjectContext`
-    const pool = req.dbPool;
-    const supabase = req.supabase;
+    // سيتم الآن حفظ الرسائل والوسائط في قاعدة بيانات المشروع الافتراضي لضمان توافق المفتاح الخارجي مع جدول chats
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; 
+    const supabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID]; 
     const bucketName = 'chat-media';
 
     let messageMediaUrl = null;
@@ -1726,7 +1716,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectCo
             const fileName = `${uuidv4()}.${fileExtension}`;
             const filePath = `${senderId}/${fileName}`;
 
-            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${req.currentProjectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
+            console.log(`محاولة تحميل ملف رسالة إلى المشروع ${BACKEND_DEFAULT_PROJECT_ID}، Bucket: ${bucketName}, المسار: ${filePath}`);
             const { data, error: uploadError } = await supabase.storage
                 .from(bucketName)
                 .upload(filePath, mediaFile.buffer, {
@@ -1750,7 +1740,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectCo
             }
 
             messageMediaUrl = publicUrlData.publicUrl;
-            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${req.currentProjectId}: ${messageMediaUrl}`);
+            console.log(`تم تحميل ملف الوسائط للرسالة في المشروع ${BACKEND_DEFAULT_PROJECT_ID}: ${messageMediaUrl}`);
 
             if (!mediaType || mediaType === 'text') {
                 if (mediaFile.mimetype.startsWith('image/')) {
@@ -1766,7 +1756,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectCo
         const messageId = uuidv4();
         const timestamp = Date.now();
 
-        await pool.query( // سيتم حفظ الرسالة في مشروع المستخدم
+        await pool.query( // سيتم حفظ الرسالة في المشروع الافتراضي
             `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_url, media_type, sender_profile_bg)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [messageId, chatId, senderId, senderName, text || '', timestamp, messageMediaUrl, messageMediaType, senderProfileBg || null]
@@ -1797,7 +1787,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), setProjectCo
             senderProfileBg: senderProfileBg || null
         };
 
-        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${req.currentProjectId}:`, newMessage);
+        console.log(`DEBUG: تم إرسال رسالة جديدة في المحادثة ${chatId} في المشروع ${BACKEND_DEFAULT_PROJECT_ID}:`, newMessage);
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
@@ -2225,7 +2215,7 @@ app.put('/api/group/:groupId/members/:memberUid/role', async (req, res) => {
 // نقطة نهاية لإزالة عضو من المجموعة
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي
 app.delete('/api/group/:groupId/members/:memberUid', async (req, res) => {
-    const { groupId, memberUid } = req.params;
+    const { groupId } = req.params;
     const { callerUid } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // يعمل على المشروع الافتراضي
 
