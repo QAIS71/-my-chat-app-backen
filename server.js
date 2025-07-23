@@ -117,6 +117,8 @@ async function createTables(pool) {
             await pool.query(`ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_sender_id_fkey;`);
             await pool.query(`ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_author_id_fkey;`);
             await pool.query(`ALTER TABLE comments DROP CONSTRAINT IF EXISTS comments_user_id_fkey;`);
+            // **السطر الجديد والمهم جداً**
+            await pool.query(`ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_chat_id_fkey;`);
             console.log(`تم التأكد من إزالة القيود الخارجية (Foreign Keys) القديمة للمشروع.`);
         } catch (dropError) {
             console.warn(`ملاحظة عند إزالة القيود القديمة (هذا طبيعي إذا كانت الجداول غير موجودة بعد):`, dropError.message);
