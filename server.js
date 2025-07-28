@@ -209,6 +209,23 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
+        // NEW: Create marketing_ads table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS marketing_ads (
+                id VARCHAR(255) PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                price VARCHAR(255),
+                image_url VARCHAR(255),
+                is_promoted BOOLEAN DEFAULT FALSE,
+                ad_type VARCHAR(50), -- e.g., 'product', 'service', 'job', 'offer'
+                timestamp BIGINT NOT NULL,
+                seller_id VARCHAR(255) -- Optional: Link to user who posted the ad
+            );
+        `);
+        console.log('تم التأكد من وجود جدول marketing_ads.');
+
+
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
             const adminCheck = await pool.query('SELECT uid FROM users WHERE username = $1 AND user_role = $2', [ADMIN_USERNAME, 'admin']);
@@ -2316,6 +2333,10 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
         res.status(500).json({ error: 'فشل مغادرة المجموعة.' });
     }
 });
+
+// NEW: Import and use marketing routes
+const marketingRoutes = require('./marketingRoutes'); 
+app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
 
 
 // بدء تشغيل الخادم
