@@ -1,237 +1,263 @@
-// marketingRoutes.js
+// استيراد المكتبات المطلوبة
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 
+// هذه الوظيفة تستقبل مجمعات الاتصال بقواعد البيانات وعملاء Supabase
+// بالإضافة إلى كائن upload من multer ومعرف المشروع الافتراضي.
 module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) => {
     const router = express.Router();
 
-    // احصل على مجمع قاعدة البيانات وعميل Supabase الافتراضيين لعمليات التسويق
-    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-    const defaultSupabase = projectSupabaseClients[BACKEND_DEFAULT_PROJECT_ID];
-    const bucketName = 'marketing-ads'; // دلو مخصص لصور الإعلانات التسويقية
+    // وظيفة مساعدة للحصول على سياق المشروع الصحيح (Pool و Supabase Client) للمستخدم
+    // تم نسخها من server.js لضمان استقلال marketingRoutes.js قدر الإمكان
+    async function getUserProjectContext(userId) {
+        let projectId = BACKEND_DEFAULT_PROJECT_ID;
+        if (userId) {
+            try {
+                const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+                const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
+                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                    projectId = userResult.rows[0].user_project_id;
+                }
+            } catch (error) {
+                console.error(`خطأ في جلب معرف المشروع للمستخدم ${userId} في marketingRoutes:`, error);
+            }
+        }
 
-    if (!defaultPool || !defaultSupabase) {
-        console.error("خطأ: لم يتم تهيئة مجمع قاعدة البيانات أو عميل Supabase للمشروع الافتراضي في مسارات التسويق.");
-        // يمكن التعامل مع هذا الخطأ بشكل مناسب، ربما عن طريق رمي استثناء أو إرجاع قيمة فارغة
+        if (!projectDbPools[projectId] || !projectSupabaseClients[projectId]) {
+            console.error(`خطأ: معرف المشروع ${projectId} غير صالح أو غير مهيأ في marketingRoutes. سيتم الرجوع إلى المشروع الافتراضي.`);
+            projectId = BACKEND_DEFAULT_PROJECT_ID;
+        }
+
+        return {
+            pool: projectDbPools[projectId],
+            supabase: projectSupabaseClients[projectId],
+            projectId: projectId
+        };
     }
 
-    // POST: إضافة إعلان جديد
-    // يتطلب: title, description, adType. اختياري: price, isPromoted, sellerId, adImage (ملف)
-    router.post('/ads', upload.single('adImage'), async (req, res) => {
-        // callerUid هو للتحقق من الأذونات (إذا لزم الأمر)، sellerId لربط الإعلان بمستخدم معين
-        const { title, description, price, isPromoted, adType, sellerId, callerUid } = req.body;
-        const adImageFile = req.file;
-
-        if (!title || !description || !adType) {
-            return res.status(400).json({ error: 'العنوان والوصف ونوع الإعلان مطلوبة.' });
+    // وظيفة مساعدة لجلب تفاصيل المستخدم من المشروع الافتراضي
+    async function getUserDetailsFromDefaultProject(userId) {
+        const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        if (!defaultPool) {
+            console.error("Default project pool not initialized in marketingRoutes.");
+            return null;
         }
-
-        // اختياري: التحقق مما إذا كان sellerId موجودًا في جدول المستخدمين
-        if (sellerId) {
-            try {
-                const sellerCheck = await defaultPool.query('SELECT 1 FROM users WHERE uid = $1', [sellerId]);
-                if (sellerCheck.rows.length === 0) {
-                    return res.status(404).json({ error: 'معرف البائع غير موجود.' });
-                }
-            } catch (error) {
-                console.error('خطأ في التحقق من معرف البائع:', error);
-                return res.status(500).json({ error: 'فشل التحقق من معرف البائع.' });
-            }
+        try {
+            const userResult = await defaultPool.query(
+                'SELECT username, is_verified, user_role, profile_bg_url FROM users WHERE uid = $1',
+                [userId]
+            );
+            return userResult.rows[0] || null;
+        } catch (error) {
+            console.error(`خطأ في جلب تفاصيل المستخدم ${userId} من المشروع الافتراضي في marketingRoutes:`, error);
+            return null;
         }
+    }
+
+    // نقطة نهاية لنشر إعلان جديد (منتج، خدمة، وظيفة)
+    router.post('/ads', upload.single('mediaFile'), async (req, res) => {
+        const { title, description, price, adType, isPromoted, sellerId } = req.body;
+        const mediaFile = req.file;
+        const bucketName = 'marketing-ads-media'; // اسم الباكت لملفات التسويق
 
         let imageUrl = null;
-        if (adImageFile) {
-            try {
-                const fileExtension = adImageFile.originalname.split('.').pop();
-                const fileName = `${uuidv4()}.${fileExtension}`;
-                // تخزين الصور تحت مجلد عام 'ads' أو حسب sellerId إذا كانت مرتبطة
-                const filePath = sellerId ? `${sellerId}/${fileName}` : `general/${fileName}`;
 
-                const { data, error: uploadError } = await defaultSupabase.storage
+        if (!title || !adType || !sellerId) {
+            console.error('خطأ: العنوان، نوع الإعلان، ومعرف البائع مطلوبون.');
+            return res.status(400).json({ error: 'العنوان، نوع الإعلان، ومعرف البائع مطلوبون.' });
+        }
+
+        // الحصول على سياق المشروع الصحيح للبائع (المستخدم الذي ينشر الإعلان)
+        const { pool, supabase, projectId } = await getUserProjectContext(sellerId);
+
+        try {
+            // التحقق من وجود البائع في جدول المستخدمين بالمشروع الافتراضي
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const sellerCheck = await defaultPool.query('SELECT 1 FROM users WHERE uid = $1', [sellerId]);
+            if (sellerCheck.rows.length === 0) {
+                console.error(`خطأ: البائع ${sellerId} غير موجود.`);
+                return res.status(404).json({ error: 'البائع غير موجود.' });
+            }
+
+            if (mediaFile) {
+                const fileExtension = mediaFile.originalname.split('.').pop();
+                const fileName = `${uuidv4()}.${fileExtension}`;
+                const filePath = `${sellerId}/${fileName}`; // تخزين الملفات تحت مجلد باسم البائع
+
+                console.log(`محاولة تحميل ملف الإعلان إلى المشروع ${projectId}، Bucket: ${bucketName}, المسار: ${filePath}`);
+                const { data, error: uploadError } = await supabase.storage
                     .from(bucketName)
-                    .upload(filePath, adImageFile.buffer, {
-                        contentType: adImageFile.mimetype,
-                        upsert: false
+                    .upload(filePath, mediaFile.buffer, {
+                        contentType: mediaFile.mimetype,
+                        upsert: false // لا تقم بالتحديث إذا كان الملف موجودًا بالفعل
                     });
 
                 if (uploadError) {
-                    console.error('خطأ: فشل تحميل صورة الإعلان إلى Supabase Storage:', uploadError);
-                    return res.status(500).json({ error: 'فشل تحميل صورة الإعلان.' });
+                    console.error('خطأ: فشل تحميل الملف إلى Supabase Storage:', uploadError);
+                    console.error('تفاصيل خطأ Supabase:', uploadError.statusCode, uploadError.error, uploadError.message);
+                    return res.status(500).json({ error: 'فشل تحميل الملف إلى التخزين.' });
                 }
 
-                const { data: publicUrlData } = defaultSupabase.storage
+                const { data: publicUrlData } = supabase.storage
                     .from(bucketName)
                     .getPublicUrl(filePath);
 
                 if (!publicUrlData || !publicUrlData.publicUrl) {
-                    console.error('خطأ: فشل الحصول على الرابط العام لصورة الإعلان.');
-                    return res.status(500).json({ error: 'فشل الحصول على رابط صورة الإعلان العام.' });
+                    console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
+                    return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
                 }
+
                 imageUrl = publicUrlData.publicUrl;
-                console.log(`تم تحميل صورة الإعلان: ${imageUrl}`);
-            } catch (error) {
-                console.error('خطأ في معالجة تحميل صورة الإعلان:', error);
-                return res.status(500).json({ error: 'خطأ داخلي أثناء تحميل الصورة.' });
+                console.log(`تم تحميل ملف الوسائط للإعلان في المشروع ${projectId}: ${imageUrl}`);
             }
-        }
 
-        const adId = uuidv4();
-        const timestamp = Date.now();
+            const adId = uuidv4();
+            const timestamp = Date.now();
 
-        try {
-            await defaultPool.query(
+            await pool.query( // استخدام الـ pool الخاص بمشروع البائع
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, is_promoted, ad_type, timestamp, seller_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [adId, title, description, price || null, imageUrl, isPromoted === 'true', adType, timestamp, sellerId || null]
+                [adId, title, description || null, price || null, imageUrl, isPromoted === 'true', adType, timestamp, sellerId]
             );
-            res.status(201).json({ message: 'تم إضافة الإعلان بنجاح.', ad: { id: adId, title, description, price, imageUrl, isPromoted: isPromoted === 'true', adType, timestamp, sellerId } });
+
+            console.log(`تم نشر إعلان جديد في المشروع ${projectId}:`, { adId, title, adType, sellerId });
+            res.status(201).json({ message: 'تم نشر الإعلان بنجاح.', adId });
         } catch (error) {
-            console.error('خطأ: فشل إضافة الإعلان إلى قاعدة البيانات:', error);
-            res.status(500).json({ error: 'فشل إضافة الإعلان.' });
+            console.error('خطأ: فشل نشر الإعلان:', error);
+            res.status(500).json({ error: 'فشل نشر الإعلان.' });
         }
     });
 
-    // GET: جلب جميع الإعلانات (يمكن إضافة فلاتر لاحقًا)
+    // نقطة نهاية لجلب الإعلانات
     router.get('/ads', async (req, res) => {
-        try {
-            const result = await defaultPool.query('SELECT * FROM marketing_ads ORDER BY is_promoted DESC, timestamp DESC');
-            res.status(200).json(result.rows);
-        } catch (error) {
-            console.error('خطأ: فشل جلب الإعلانات:', error);
-            res.status(500).json({ error: 'فشل جلب الإعلانات.' });
+        const { type, search, promotedOnly } = req.query; // معايير الفلترة
+        let allAds = [];
+
+        // جلب الإعلانات من جميع المشاريع
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            try {
+                let query = `SELECT * FROM marketing_ads`;
+                const queryParams = [];
+                const conditions = [];
+                let paramIndex = 1;
+
+                if (type) {
+                    conditions.push(`ad_type = $${paramIndex++}`);
+                    queryParams.push(type);
+                }
+                if (search) {
+                    conditions.push(`(LOWER(title) LIKE $${paramIndex} OR LOWER(description) LIKE $${paramIndex++})`);
+                    queryParams.push(`%${search.toLowerCase()}%`);
+                }
+                if (promotedOnly === 'true') {
+                    conditions.push(`is_promoted = TRUE`);
+                }
+
+                if (conditions.length > 0) {
+                    query += ` WHERE ` + conditions.join(' AND ');
+                }
+                query += ` ORDER BY timestamp DESC`; // فرز حسب الأحدث
+
+                const result = await pool.query(query, queryParams);
+                allAds = allAds.concat(result.rows);
+            } catch (error) {
+                console.error(`خطأ في جلب الإعلانات من المشروع ${projectId}:`, error);
+            }
         }
+
+        // إثراء الإعلانات بتفاصيل البائع (المستخدم) من المشروع الافتراضي
+        const enrichedAds = await Promise.all(allAds.map(async ad => {
+            const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
+            return {
+                id: ad.id,
+                title: ad.title,
+                description: ad.description,
+                price: ad.price,
+                imageUrl: ad.image_url,
+                isPromoted: ad.is_promoted,
+                adType: ad.ad_type,
+                timestamp: parseInt(ad.timestamp),
+                sellerId: ad.seller_id,
+                sellerUsername: sellerDetails ? sellerDetails.username : 'Unknown Seller',
+                sellerProfileBg: sellerDetails ? sellerDetails.profile_bg_url : null,
+                sellerIsVerified: sellerDetails ? sellerDetails.is_verified : false,
+                sellerUserRole: sellerDetails ? sellerDetails.user_role : 'normal'
+            };
+        }));
+
+        // الفرز النهائي: الإعلانات المثبتة أولاً، ثم حسب الأحدث
+        enrichedAds.sort((a, b) => {
+            if (a.isPromoted && !b.isPromoted) return -1;
+            if (!a.isPromoted && b.isPromoted) return 1;
+            return b.timestamp - a.timestamp;
+        });
+
+        res.status(200).json(enrichedAds);
     });
 
-    // PUT: تحديث إعلان موجود (يتطلب صلاحيات المدير أو البائع الأصلي للإعلان)
-    // يتطلب: adId في params. اختياري: title, description, price, isPromoted, adType, sellerId, adImage (ملف)
-    router.put('/ads/:adId', upload.single('adImage'), async (req, res) => {
-        const { adId } = req.params;
-        const { title, description, price, isPromoted, adType, sellerId, callerUid } = req.body; // callerUid للتحقق من الصلاحيات
-        const adImageFile = req.file;
-
-        if (!callerUid) {
-            return res.status(401).json({ error: 'معرف المستخدم (callerUid) مطلوب للتحقق من الصلاحيات.' });
-        }
-
-        try {
-            const existingAdResult = await defaultPool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
-            const existingAd = existingAdResult.rows[0];
-
-            if (!existingAd) {
-                return res.status(404).json({ error: 'الإعلان غير موجود.' });
-            }
-
-            // التحقق من الصلاحيات: يمكن للمدير أو البائع الأصلي فقط تحديث الإعلان
-            const callerUser = await defaultPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
-            const callerRole = callerUser.rows[0] ? callerUser.rows[0].user_role : 'normal';
-
-            if (callerRole !== 'admin' && existingAd.seller_id !== callerUid) {
-                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذا الإعلان.' });
-            }
-
-            let imageUrl = existingAd.image_url;
-            if (adImageFile) {
-                // حذف الصورة القديمة إذا كانت موجودة
-                if (existingAd.image_url) {
-                    try {
-                        const url = new URL(existingAd.image_url);
-                        const pathSegments = url.pathname.split('/');
-                        const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-                        await defaultSupabase.storage.from(bucketName).remove([filePathInBucket]);
-                        console.log(`تم حذف الصورة القديمة للإعلان ${adId}: ${filePathInBucket}`);
-                    } catch (deleteError) {
-                        console.warn('تحذير: فشل حذف الصورة القديمة للإعلان:', deleteError);
-                    }
-                }
-
-                const fileExtension = adImageFile.originalname.split('.').pop();
-                const fileName = `${uuidv4()}.${fileExtension}`;
-                const filePath = existingAd.seller_id ? `${existingAd.seller_id}/${fileName}` : `general/${fileName}`;
-
-                const { data, error: uploadError } = await defaultSupabase.storage
-                    .from(bucketName)
-                    .upload(filePath, adImageFile.buffer, {
-                        contentType: adImageFile.mimetype,
-                        upsert: false
-                    });
-
-                if (uploadError) {
-                    console.error('خطأ: فشل تحميل الصورة الجديدة للإعلان:', uploadError);
-                    return res.status(500).json({ error: 'فشل تحميل الصورة الجديدة.' });
-                }
-
-                const { data: publicUrlData } = defaultSupabase.storage
-                    .from(bucketName)
-                    .getPublicUrl(filePath);
-
-                if (!publicUrlData || !publicUrlData.publicUrl) {
-                    console.error('خطأ: فشل الحصول على الرابط العام للصورة الجديدة للإعلان.');
-                    return res.status(500).json({ error: 'فشل الحصول على رابط الصورة الجديدة العام.' });
-                }
-                imageUrl = publicUrlData.publicUrl;
-                console.log(`تم تحميل الصورة الجديدة للإعلان ${adId}: ${imageUrl}`);
-            }
-
-            // تحديث الحقول فقط إذا تم توفيرها في الطلب
-            const updatedTitle = title !== undefined ? title : existingAd.title;
-            const updatedDescription = description !== undefined ? description : existingAd.description;
-            const updatedPrice = price !== undefined ? price : existingAd.price;
-            const updatedIsPromoted = isPromoted !== undefined ? (isPromoted === 'true') : existingAd.is_promoted;
-            const updatedAdType = adType !== undefined ? adType : existingAd.ad_type;
-            const updatedSellerId = sellerId !== undefined ? sellerId : existingAd.seller_id;
-
-
-            await defaultPool.query(
-                `UPDATE marketing_ads SET title = $1, description = $2, price = $3, image_url = $4, is_promoted = $5, ad_type = $6, seller_id = $7 WHERE id = $8`,
-                [updatedTitle, updatedDescription, updatedPrice, imageUrl, updatedIsPromoted, updatedAdType, updatedSellerId, adId]
-            );
-            res.status(200).json({ message: 'تم تحديث الإعلان بنجاح.', ad: { id: adId, title: updatedTitle, description: updatedDescription, price: updatedPrice, imageUrl, isPromoted: updatedIsPromoted, adType: updatedAdType, sellerId: updatedSellerId } });
-        } catch (error) {
-            console.error('خطأ: فشل تحديث الإعلان:', error);
-            res.status(500).json({ error: 'فشل تحديث الإعلان.' });
-        }
-    });
-
-    // DELETE: حذف إعلان (يتطلب صلاحيات المدير أو البائع الأصلي للإعلان)
-    // يتطلب: adId في params, callerUid في body
+    // نقطة نهاية لحذف إعلان (للبائع أو المدير)
     router.delete('/ads/:adId', async (req, res) => {
         const { adId } = req.params;
-        const { callerUid } = req.body; // callerUid للتحقق من الصلاحيات
+        const { callerId } = req.body; // معرف المستخدم الذي يقوم بالحذف
 
-        if (!callerUid) {
-            return res.status(401).json({ error: 'معرف المستخدم (callerUid) مطلوب للتحقق من الصلاحيات.' });
+        if (!callerId) {
+            return res.status(400).json({ error: 'معرف المستخدم الذي يقوم بالحذف مطلوب.' });
+        }
+
+        let adToDelete = null;
+        let adPool = null;
+        let adProjectId = null;
+
+        // البحث عن الإعلان في جميع المشاريع
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            try {
+                const result = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
+                if (result.rows.length > 0) {
+                    adToDelete = result.rows[0];
+                    adPool = pool;
+                    adProjectId = projectId;
+                    break;
+                }
+            } catch (error) {
+                console.error(`خطأ في البحث عن الإعلان ${adId} في المشروع ${projectId}:`, error);
+            }
+        }
+
+        if (!adToDelete) {
+            return res.status(404).json({ error: 'الإعلان غير موجود.' });
         }
 
         try {
-            const existingAdResult = await defaultPool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
-            const existingAd = existingAdResult.rows[0];
-
-            if (!existingAd) {
-                return res.status(404).json({ error: 'الإعلان غير موجود.' });
-            }
-
-            // التحقق من الصلاحيات: يمكن للمدير أو البائع الأصلي فقط حذف الإعلان
-            const callerUser = await defaultPool.query('SELECT user_role FROM users WHERE uid = $1', [callerUid]);
-            const callerRole = callerUser.rows[0] ? callerUser.rows[0].user_role : 'normal';
-
-            if (callerRole !== 'admin' && existingAd.seller_id !== callerUid) {
+            // التحقق من صلاحيات الحذف (البائع نفسه أو مدير عام)
+            const callerDetails = await getUserDetailsFromDefaultProject(callerId);
+            if (!callerDetails || (callerDetails.user_role !== 'admin' && adToDelete.seller_id !== callerId)) {
                 return res.status(403).json({ error: 'ليس لديك صلاحية لحذف هذا الإعلان.' });
             }
 
-            // حذف الصورة من التخزين إذا كانت موجودة
-            if (existingAd.image_url) {
-                try {
-                    const url = new URL(existingAd.image_url);
-                    const pathSegments = url.pathname.split('/');
-                    const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
-                    await defaultSupabase.storage.from(bucketName).remove([filePathInBucket]);
-                    console.log(`تم حذف الصورة المرتبطة بالإعلان ${adId}: ${filePathInBucket}`);
-                } catch (deleteError) {
-                    console.warn('تحذير: فشل حذف الصورة من Supabase Storage:', deleteError);
+            // حذف الصورة من Supabase Storage إذا كانت موجودة
+            if (adToDelete.image_url) {
+                const supabase = projectSupabaseClients[adProjectId]; // عميل Supabase للمشروع الذي يوجد به الإعلان
+                const bucketName = 'marketing-ads-media';
+                const url = new URL(adToDelete.image_url);
+                const pathSegments = url.pathname.split('/');
+                const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+
+                const { data: removeData, error: deleteError } = await supabase.storage
+                    .from(bucketName)
+                    .remove([filePathInBucket]);
+
+                if (deleteError) {
+                    console.error('خطأ: فشل حذف صورة الإعلان من Supabase Storage:', deleteError);
+                } else {
+                    console.log(`تم حذف ملف صورة الإعلان من Supabase Storage في المشروع ${adProjectId}: ${filePathInBucket}`);
                 }
             }
 
-            await defaultPool.query('DELETE FROM marketing_ads WHERE id = $1', [adId]);
+            // حذف الإعلان من قاعدة البيانات
+            await adPool.query('DELETE FROM marketing_ads WHERE id = $1', [adId]);
+            console.log(`تم حذف الإعلان ${adId} من المشروع ${adProjectId}.`);
             res.status(200).json({ message: 'تم حذف الإعلان بنجاح.' });
         } catch (error) {
             console.error('خطأ: فشل حذف الإعلان:', error);
@@ -241,4 +267,3 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
 
     return router;
 };
-
