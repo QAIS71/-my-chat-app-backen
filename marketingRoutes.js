@@ -56,12 +56,14 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
 
     // نقطة نهاية لنشر إعلان جديد (منتج، خدمة، وظيفة)
     router.post('/ads', upload.single('mediaFile'), async (req, res) => {
+        // تم إضافة adType هنا لاستخراجه من req.body
         const { title, description, price, adType, isPromoted, sellerId } = req.body;
         const mediaFile = req.file;
         const bucketName = 'marketing-ads-media'; // اسم الباكت لملفات التسويق
 
         let imageUrl = null;
 
+        // تم تعديل التحقق ليشمل adType
         if (!title || !adType || !sellerId) {
             console.error('خطأ: العنوان، نوع الإعلان، ومعرف البائع مطلوبون.');
             return res.status(400).json({ error: 'العنوان، نوع الإعلان، ومعرف البائع مطلوبون.' });
@@ -114,6 +116,7 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
             const adId = uuidv4();
             const timestamp = Date.now();
 
+            // تم تعديل استعلام INSERT ليشمل حقل ad_type الجديد
             await pool.query( // استخدام الـ pool الخاص بمشروع البائع
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, is_promoted, ad_type, timestamp, seller_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -128,21 +131,111 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
         }
     });
 
+    // نقطة نهاية لتحديث إعلان موجود
+    router.put('/ads/:adId', upload.single('mediaFile'), async (req, res) => {
+        const { adId } = req.params;
+        // تم إضافة adType هنا لاستخراجه من req.body
+        const { title, description, price, adType, isPromoted, sellerId } = req.body;
+        const mediaFile = req.file;
+        const bucketName = 'marketing-ads-media';
+
+        if (!sellerId) {
+            return res.status(400).json({ error: 'معرف البائع مطلوب لتحديث الإعلان.' });
+        }
+
+        const { pool, supabase, projectId } = await getUserProjectContext(sellerId);
+
+        try {
+            const result = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
+            if (result.rows.length === 0) {
+                return res.status(404).json({ error: 'الإعلان غير موجود.' });
+            }
+            const adToUpdate = result.rows[0];
+
+            // التحقق من أن المستخدم هو بائع الإعلان أو مدير عام
+            const callerDetails = await getUserDetailsFromDefaultProject(sellerId);
+            if (!callerDetails || (callerDetails.user_role !== 'admin' && adToUpdate.seller_id !== sellerId)) {
+                return res.status(403).json({ error: 'ليس لديك صلاحية لتعديل هذا الإعلان.' });
+            }
+
+            let imageUrl = adToUpdate.image_url; // احتفظ بالصورة الحالية افتراضياً
+
+            if (mediaFile) {
+                // إذا كان هناك ملف جديد، احذف القديم وقم بتحميل الجديد
+                if (adToUpdate.image_url) {
+                    const url = new URL(adToUpdate.image_url);
+                    const pathSegments = url.pathname.split('/');
+                    const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+                    const { error: deleteError } = await supabase.storage
+                        .from(bucketName)
+                        .remove([filePathInBucket]);
+                    if (deleteError) {
+                        console.error('خطأ: فشل حذف الصورة القديمة من Supabase Storage:', deleteError);
+                        // لا توقف العملية، فقط سجل الخطأ
+                    }
+                }
+
+                const fileExtension = mediaFile.originalname.split('.').pop();
+                const fileName = `${uuidv4()}.${fileExtension}`;
+                const filePath = `${sellerId}/${fileName}`;
+
+                const { data, error: uploadError } = await supabase.storage
+                    .from(bucketName)
+                    .upload(filePath, mediaFile.buffer, {
+                        contentType: mediaFile.mimetype,
+                        upsert: true // قم بالتحديث إذا كان الملف موجودًا (للتأكد)
+                    });
+
+                if (uploadError) {
+                    console.error('خطأ: فشل تحميل الملف الجديد إلى Supabase Storage:', uploadError);
+                    return res.status(500).json({ error: 'فشل تحميل الملف الجديد إلى التخزين.' });
+                }
+
+                const { data: publicUrlData } = supabase.storage
+                    .from(bucketName)
+                    .getPublicUrl(filePath);
+
+                if (!publicUrlData || !publicUrlData.publicUrl) {
+                    console.error('خطأ: فشل الحصول على الرابط العام للملف الذي تم تحميله.');
+                    return res.status(500).json({ error: 'فشل الحصول على رابط الملف العام.' });
+                }
+                imageUrl = publicUrlData.publicUrl;
+            }
+
+            // تم تعديل استعلام UPDATE ليشمل حقل ad_type الجديد
+            await pool.query(
+                `UPDATE marketing_ads SET title = $1, description = $2, price = $3, image_url = $4, is_promoted = $5, ad_type = $6
+                 WHERE id = $7 AND seller_id = $8`,
+                [title || adToUpdate.title, description || adToUpdate.description, price || adToUpdate.price, imageUrl, isPromoted === 'true', adType || adToUpdate.ad_type, adId, sellerId]
+            );
+
+            console.log(`تم تحديث الإعلان ${adId} في المشروع ${projectId}.`);
+            res.status(200).json({ message: 'تم تحديث الإعلان بنجاح.' });
+        } catch (error) {
+            console.error('خطأ: فشل تحديث الإعلان:', error);
+            res.status(500).json({ error: 'فشل تحديث الإعلان.' });
+        }
+    });
+
+
     // نقطة نهاية لجلب الإعلانات
     router.get('/ads', async (req, res) => {
-        const { type, search, promotedOnly } = req.query; // معايير الفلترة
+        // تم إضافة type هنا لاستخراجه من req.query
+        const { type, search, promotedOnly, seller_id, ad_id } = req.query; // معايير الفلترة
         let allAds = [];
 
         // جلب الإعلانات من جميع المشاريع
         for (const projectId in projectDbPools) {
             const pool = projectDbPools[projectId];
             try {
-                let query = `SELECT * FROM marketing_ads`;
+                // تم تعديل SELECT ليشمل ad_type
+                let query = `SELECT id, seller_id, title, description, price, image_url, is_promoted, ad_type, timestamp FROM marketing_ads`;
                 const queryParams = [];
                 const conditions = [];
                 let paramIndex = 1;
 
-                if (type) {
+                // إضافة شرط التصفية حسب النوع
+                if (type && type !== 'all') { // 'all' يعني لا توجد تصفية حسب النوع
                     conditions.push(`ad_type = $${paramIndex++}`);
                     queryParams.push(type);
                 }
@@ -152,6 +245,14 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
                 }
                 if (promotedOnly === 'true') {
                     conditions.push(`is_promoted = TRUE`);
+                }
+                if (seller_id) {
+                    conditions.push(`seller_id = $${paramIndex++}`);
+                    queryParams.push(seller_id);
+                }
+                if (ad_id) {
+                    conditions.push(`id = $${paramIndex++}`);
+                    queryParams.push(ad_id);
                 }
 
                 if (conditions.length > 0) {
@@ -176,10 +277,10 @@ module.exports = (projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAUL
                 price: ad.price,
                 imageUrl: ad.image_url,
                 isPromoted: ad.is_promoted,
-                adType: ad.ad_type,
+                adType: ad.ad_type, // تم تضمين adType هنا
                 timestamp: parseInt(ad.timestamp),
                 sellerId: ad.seller_id,
-                sellerUsername: sellerDetails ? sellerDetails.username : 'Unknown Seller',
+                sellerDisplayName: sellerDetails ? sellerDetails.username : 'Unknown Seller', // تم تغيير sellerUsername إلى sellerDisplayName للتوافق مع الواجهة الأمامية
                 sellerProfileBg: sellerDetails ? sellerDetails.profile_bg_url : null,
                 sellerIsVerified: sellerDetails ? sellerDetails.is_verified : false,
                 sellerUserRole: sellerDetails ? sellerDetails.user_role : 'normal'
