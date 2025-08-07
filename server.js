@@ -2347,7 +2347,8 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
 // NEW: Import and use marketing routes
 const marketingRoutes = require('./marketingRoutes'); 
 app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
-
+// تفعيل إعدادات ونقطة نهاية الإشعارات
+pushNotifications.setup(app, projectDbPools[BACKEND_DEFAULT_PROJECT_ID]);
 
 // بدء تشغيل الخادم
 app.listen(port, async () => {
