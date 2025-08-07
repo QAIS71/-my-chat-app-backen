@@ -7,6 +7,8 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
+const webPush = require('web-push');
+const pushNotifications = require('./pushNotifications');
 
 // تهيئة تطبيق Express
 const app = express();
@@ -111,7 +113,14 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""; // قم بتعيين ه
 // وظيفة لإنشاء الجداول إذا لم تكن موجودة (تأخذ Pool كمعامل)
 async function createTables(pool) {
     try {
-        // تحديث جدول users لإضافة user_project_id إذا لم يكن موجودًا
+        // أضف هذا الكود داخل دالة createTables
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        user_id VARCHAR(255) PRIMARY KEY,
+        subscription_info JSONB NOT NULL
+    );
+`);
+console.log('تم التأكد من وجود جدول push_subscriptions.');
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 uid VARCHAR(255) PRIMARY KEY,
