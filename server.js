@@ -1837,7 +1837,18 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             mediaType: messageMediaType,
             senderProfileBg: senderProfileBg || null
         };
+        // ==== بداية كود إرسال الإشعار ====
+const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+const payload = {
+    title: `رسالة جديدة من ${senderName}`,
+    body: lastMessageText,
+    url: `/?chatId=${chatId}` // هذا الرابط سيفتح التطبيق على المحادثة مباشرة
+};
 
+for (const recipientId of recipients) {
+    pushNotifications.sendNotificationToUser(defaultPool, recipientId, payload);
+}
+// ==== نهاية كود إرسال الإشعار ====
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
