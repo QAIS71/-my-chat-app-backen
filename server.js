@@ -2350,6 +2350,8 @@ app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients
 
 // بدء تشغيل الخادم
 app.listen(port, async () => {
+    // تفعيل إعدادات ونقطة نهاية الإشعارات
+pushNotifications.setup(app, projectDbPools[BACKEND_DEFAULT_PROJECT_ID]);
     console.log(`الخادم يعمل على المنفذ ${port}`);
     console.log(`رابط الواجهة الخلفية (Backend URL): http://localhost:${port}`);
     await initializeSupabaseClients();
