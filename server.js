@@ -1838,15 +1838,37 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             senderProfileBg: senderProfileBg || null
         };
         
-const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-const payload = {
-    title: `رسالة جديدة من ${senderName}`,
-    body: lastMessageText,
-    url: `/?chatId=${chatId}` // هذا الرابط سيفتح التطبيق على المحادثة مباشرة
-};
+// ابحث عن هذا السطر في نهاية دالة إرسال الرسائل
+// res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
 
-for (const recipientId of recipients) {
-    pushNotifications.sendNotificationToUser(defaultPool, recipientId, payload);
+// ==== أضف هذا الكود قبله مباشرة ====
+
+// إرسال إشعار فوري
+try {
+    const recipients = chat.participants.filter(pId => pId !== senderId); // كل المشاركين عدا المرسل
+    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+
+    for (const recipientId of recipients) {
+        const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [recipientId]);
+        if (subResult.rows.length > 0) {
+            const subscription = subResult.rows[0].subscription_info;
+            const payload = JSON.stringify({
+                title: `رسالة جديدة من ${senderName}`,
+                body: lastMessageText,
+                url: `/?chatId=${chatId}` // رابط لفتح المحادثة مباشرة
+            });
+
+            webPush.sendNotification(subscription, payload).catch(error => {
+                console.error(`فشل إرسال إشعار إلى ${recipientId}:`, error);
+                // يمكن إضافة كود هنا لحذف الاشتراك إذا كان غير صالح
+            });
+        }
+    }
+} catch (pushError) {
+    console.error("خطأ عام في إرسال الإشعارات:", pushError);
+}
+// ==== نهاية الكود المضاف ====        
+
 }
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
@@ -2359,6 +2381,30 @@ const marketingRoutes = require('./marketingRoutes');
 app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
 // تفعيل إعدادات ونقطة نهاية الإشعارات
 pushNotifications.setup(app, projectDbPools[BACKEND_DEFAULT_PROJECT_ID]);
+// ================== Push Notification Subscription Endpoint ==================
+app.post('/api/subscribe', async (req, res) => {
+    const { subscription, userId } = req.body;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // الاشتراكات تُحفظ دائماً في المشروع الافتراضي
+
+    if (!subscription || !userId) {
+        return res.status(400).json({ error: 'Subscription and userId are required.' });
+    }
+
+    try {
+        // استخدام ON CONFLICT لتحديث الاشتراك إذا كان موجوداً بالفعل
+        await pool.query(
+            `INSERT INTO push_subscriptions (user_id, subscription_info) VALUES ($1, $2)
+             ON CONFLICT (user_id) DO UPDATE SET subscription_info = EXCLUDED.subscription_info`,
+            [userId, JSON.stringify(subscription)]
+        );
+        console.log(`تم حفظ/تحديث اشتراك الإشعارات للمستخدم: ${userId}`);
+        res.status(201).json({ message: 'Subscription saved successfully.' });
+    } catch (error) {
+        console.error('Error saving subscription:', error);
+        res.status(500).json({ error: 'Failed to save subscription.' });
+    }
+});
+// ========================================================================
 
 // بدء تشغيل الخادم
 app.listen(port, async () => {
