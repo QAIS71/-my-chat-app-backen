@@ -7,7 +7,8 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
-
+const webPush = require('web-push');
+const pushNotifications = require('./pushNotifications');
 
 // تهيئة تطبيق Express
 const app = express();
@@ -2346,8 +2347,8 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
 // NEW: Import and use marketing routes
 const marketingRoutes = require('./marketingRoutes'); 
 app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
-const webPush = require('web-push');
-const pushNotifications = require('./pushNotifications');
+// تفعيل إعدادات ونقطة نهاية الإشعارات
+pushNotifications.setup(app, projectDbPools[BACKEND_DEFAULT_PROJECT_ID]);
 
 // بدء تشغيل الخادم
 app.listen(port, async () => {
