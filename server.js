@@ -131,6 +131,14 @@ async function createTables(pool) {
         // يجب أن يتم هذا فقط للمشروع الافتراضي
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
             try {
+                
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        user_id VARCHAR(255) PRIMARY KEY,
+        subscription_info JSONB NOT NULL
+    );
+`);
+console.log('تم التأكد من وجود جدول push_subscriptions.');
                 await pool.query(`
                     ALTER TABLE users
                     ADD COLUMN IF NOT EXISTS user_project_id VARCHAR(255);
