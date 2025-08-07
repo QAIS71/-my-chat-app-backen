@@ -7,7 +7,7 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
-
+const webPush = require('web-push');
 // تهيئة تطبيق Express
 const app = express();
 const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
@@ -128,6 +128,15 @@ async function createTables(pool) {
         // هذا ALTER TABLE سيضيف العمود إذا لم يكن موجودًا بالفعل
         // يجب أن يتم هذا فقط للمشروع الافتراضي
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
+            // أضف هذا الكود داخل دالة createTables، بعد إنشاء جدول users وقبل إنشاء جدول posts
+
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        user_id VARCHAR(255) PRIMARY KEY,
+        subscription_info JSONB NOT NULL
+    );
+`);
+console.log('تم التأكد من وجود جدول push_subscriptions.');
             try {
                 await pool.query(`
                     ALTER TABLE users
