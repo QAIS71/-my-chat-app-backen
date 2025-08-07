@@ -8,7 +8,16 @@ const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
 const webPush = require('web-push');
-const pushNotifications = require('./pushNotifications');
+// ================== VAPID Keys Setup ==================
+const publicVapidKey = 'BBlbt3D5lIiDN7xEbe4FfEA7ipXGsv0_fbP5xawOR3-5R7FxT9KNh_tUXklvENkADLYiv_2V8xPmncl8IcaaTIM';
+const privateVapidKey = '03sShkGPnA_dYhcGL45wXj0YJWBLweuMyMfhOWLoWOw';
+
+webPush.setVapidDetails(
+  'mailto:your-email@example.com', // يمكنك وضع بريدك الإلكتروني هنا
+  publicVapidKey,
+  privateVapidKey
+);
+// ======================================================
 
 // تهيئة تطبيق Express
 const app = express();
@@ -1837,7 +1846,6 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             mediaType: messageMediaType,
             senderProfileBg: senderProfileBg || null
         };
-        
 // ابحث عن هذا السطر في نهاية دالة إرسال الرسائل
 // res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
 
