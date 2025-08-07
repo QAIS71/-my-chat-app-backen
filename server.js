@@ -7,8 +7,7 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
-const webPush = require('web-push');
-const pushNotifications = require('./pushNotifications');
+
 
 // تهيئة تطبيق Express
 const app = express();
