@@ -7,8 +7,13 @@ const { v4: uuidv4 } = require('uuid'); // لإنشاء معرفات فريدة 
 const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
-const webPush = require('web-push');
-// ================== VAPID Keys Setup ==================
+const webPush = require('web-push'); // ==== تمت إضافة هذه المكتبة للإشعارات ====
+
+// تهيئة تطبيق Express
+const app = express();
+const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
+
+// ==== بداية كود إعداد الإشعارات ====
 const publicVapidKey = 'BBlbt3D5lIiDN7xEbe4FfEA7ipXGsv0_fbP5xawOR3-5R7FxT9KNh_tUXklvENkADLYiv_2V8xPmncl8IcaaTIM';
 const privateVapidKey = '03sShkGPnA_dYhcGL45wXj0YJWBLweuMyMfhOWLoWOw';
 
@@ -17,11 +22,8 @@ webPush.setVapidDetails(
   publicVapidKey,
   privateVapidKey
 );
-// ======================================================
+// ==== نهاية كود إعداد الإشعارات ====
 
-// تهيئة تطبيق Express
-const app = express();
-const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
 
 // ----------------------------------------------------------------------------------------------------
 // إعداد Multer لتخزين الملفات مؤقتاً في الذاكرة
@@ -140,14 +142,6 @@ async function createTables(pool) {
         // يجب أن يتم هذا فقط للمشروع الافتراضي
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
             try {
-                
-await pool.query(`
-    CREATE TABLE IF NOT EXISTS push_subscriptions (
-        user_id VARCHAR(255) PRIMARY KEY,
-        subscription_info JSONB NOT NULL
-    );
-`);
-console.log('تم التأكد من وجود جدول push_subscriptions.');
                 await pool.query(`
                     ALTER TABLE users
                     ADD COLUMN IF NOT EXISTS user_project_id VARCHAR(255);
@@ -247,6 +241,16 @@ console.log('تم التأكد من وجود جدول push_subscriptions.');
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
+            // ==== بداية كود إضافة جدول الإشعارات ====
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    user_id VARCHAR(255) PRIMARY KEY,
+                    subscription_info JSONB NOT NULL
+                );
+            `);
+            console.log('تم التأكد من وجود جدول push_subscriptions.');
+            // ==== نهاية كود إضافة جدول الإشعارات ====
+
             const adminCheck = await pool.query('SELECT uid FROM users WHERE username = $1 AND user_role = $2', [ADMIN_USERNAME, 'admin']);
             if (adminCheck.rows.length === 0) {
                 const adminUid = uuidv4();
@@ -1846,38 +1850,37 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             mediaType: messageMediaType,
             senderProfileBg: senderProfileBg || null
         };
-// ابحث عن هذا السطر في نهاية دالة إرسال الرسائل
-// res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
-
-// ==== أضف هذا الكود قبله مباشرة ====
-
-// إرسال إشعار فوري
-try {
-    const recipients = chat.participants.filter(pId => pId !== senderId); // كل المشاركين عدا المرسل
-    const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-
-    for (const recipientId of recipients) {
-        const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [recipientId]);
-        if (subResult.rows.length > 0) {
-            const subscription = subResult.rows[0].subscription_info;
-            const payload = JSON.stringify({
-                title: `رسالة جديدة من ${senderName}`,
-                body: lastMessageText,
-                url: `/?chatId=${chatId}` // رابط لفتح المحادثة مباشرة
-            });
-
-            webPush.sendNotification(subscription, payload).catch(error => {
-                console.error(`فشل إرسال إشعار إلى ${recipientId}:`, error);
-                // يمكن إضافة كود هنا لحذف الاشتراك إذا كان غير صالح
-            });
+        
+        // ==== بداية كود إرسال الإشعار ====
+        try {
+            const recipients = chat.participants.filter(pId => pId !== senderId); // كل المشاركين عدا المرسل
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    
+            for (const recipientId of recipients) {
+                const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [recipientId]);
+                if (subResult.rows.length > 0) {
+                    const subscription = subResult.rows[0].subscription_info;
+                    const payload = JSON.stringify({
+                        title: `رسالة جديدة من ${senderName}`,
+                        body: lastMessageText,
+                        url: `/?chatId=${chatId}` // رابط لفتح المحادثة مباشرة
+                    });
+                    
+                    webPush.sendNotification(subscription, payload).catch(error => {
+                        console.error(`فشل إرسال إشعار إلى ${recipientId}:`, error);
+                        // يمكن إضافة كود هنا لحذف الاشتراك إذا كان غير صالح (مثل خطأ 410)
+                        if (error.statusCode === 410 || error.statusCode === 404) {
+                            console.log(`اشتراك المستخدم ${recipientId} غير صالح. سيتم حذفه.`);
+                            defaultPool.query('DELETE FROM push_subscriptions WHERE user_id = $1', [recipientId]);
+                        }
+                    });
+                }
+            }
+        } catch (pushError) {
+            console.error("خطأ عام في إرسال الإشعارات:", pushError);
         }
-    }
-} catch (pushError) {
-    console.error("خطأ عام في إرسال الإشعارات:", pushError);
-}
-// ==== نهاية الكود المضاف ====        
+        // ==== نهاية كود إرسال الإشعار ====
 
-}
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
         console.error('خطأ: فشل إرسال الرسالة:', error);
@@ -2387,7 +2390,9 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
 // NEW: Import and use marketing routes
 const marketingRoutes = require('./marketingRoutes'); 
 app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
-// ================== Push Notification Subscription Endpoint ==================
+
+
+// ==== بداية كود نقطة نهاية حفظ اشتراك الإشعارات ====
 app.post('/api/subscribe', async (req, res) => {
     const { subscription, userId } = req.body;
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID]; // الاشتراكات تُحفظ دائماً في المشروع الافتراضي
@@ -2410,7 +2415,8 @@ app.post('/api/subscribe', async (req, res) => {
         res.status(500).json({ error: 'Failed to save subscription.' });
     }
 });
-// ========================================================================
+// ==== نهاية كود نقطة نهاية حفظ اشتراك الإشعارات ====
+
 
 // بدء تشغيل الخادم
 app.listen(port, async () => {
