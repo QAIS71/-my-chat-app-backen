@@ -1864,6 +1864,7 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                         title: `رسالة جديدة من ${senderName}`,
                         body: lastMessageText,
                         url: `/?chatId=${chatId}` // رابط لفتح المحادثة مباشرة
+                      icon: senderProfileBg // <<<<<< أضف هذا السطر فقط
                     });
                     
                     webPush.sendNotification(subscription, payload).catch(error => {
