@@ -659,6 +659,23 @@ app.post('/api/login', async (req, res) => {
 
 // نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
 app.get('/api/user/by-custom-id/:customId', async (req, res) => {
+  // نقطة نهاية جديدة للحصول على معلومات المستخدم بواسطة uid
+app.get('/api/user/by-uid/:uid', async (req, res) => {
+    const { uid } = req.params;
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+    try {
+        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url FROM users WHERE uid = $1', [uid]);
+        const user = result.rows[0];
+        if (user) {
+            res.status(200).json(user);
+        } else {
+            res.status(404).json({ error: 'المستخدم غير موجود.' });
+        }
+    } catch (error) {
+        console.error('خطأ: فشل جلب معلومات المستخدم بواسطة UID:', error);
+        res.status(500).json({ error: 'فشل جلب معلومات المستخدم.' });
+    }
+});
     const { customId } = req.params;
     // نستخدم Pool المشروع الافتراضي لجلب معلومات المستخدم (لأن المستخدمين موجودون هنا)
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
