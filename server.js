@@ -1861,11 +1861,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 if (subResult.rows.length > 0) {
                     const subscription = subResult.rows[0].subscription_info;
                     const payload = JSON.stringify({
-                        title: `رسالة جديدة من ${senderName}`,
-                        body: lastMessageText,
-                        url: `/?chatId=${chatId}` // رابط لفتح المحادثة مباشرة
-                      icon: senderProfileBg // <<<<<< أضف هذا السطر فقط
-                    });
+    title: `رسالة جديدة من ${senderName}`,
+    body: lastMessageText,
+    url: `/?chatId=${chatId}`,
+    icon: senderProfileBg // <<<<<< أضف هذا السطر فقط
+});
                     
                     webPush.sendNotification(subscription, payload).catch(error => {
                         console.error(`فشل إرسال إشعار إلى ${recipientId}:`, error);
