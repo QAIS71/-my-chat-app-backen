@@ -11,7 +11,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         if (!defaultPool || !userId) return null;
         try {
             const userResult = await defaultPool.query(
-                'SELECT username, is_verified, user_role FROM users WHERE uid = $1',
+                'SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role FROM users WHERE uid = $1',
                 [userId]
             );
             return userResult.rows[0] || null;
@@ -29,7 +29,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM marketing_ads ORDER BY timestamp DESC');
                 
-                // إثراء الإعلانات بأسماء المستخدمين ومعلومات التوثيق
                 const enrichedAds = await Promise.all(result.rows.map(async (ad) => {
                     const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
                     return {
@@ -39,7 +38,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                         seller_user_role: sellerDetails ? sellerDetails.user_role : 'normal'
                     };
                 }));
-
                 allAds = allAds.concat(enrichedAds);
             }
             allAds.sort((a, b) => b.timestamp - a.timestamp);
@@ -114,50 +112,117 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         const { adId } = req.params;
         const { callerUid } = req.body;
 
-        if (!callerUid) {
-            return res.status(401).json({ error: "Unauthorized" });
-        }
+        if (!callerUid) { return res.status(401).json({ error: "Unauthorized" }); }
 
         try {
             const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
             const isAdmin = callerDetails && callerDetails.user_role === 'admin';
             
-            let adFound = false;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const adResult = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
                 
                 if (adResult.rows.length > 0) {
-                    adFound = true;
                     const ad = adResult.rows[0];
-
                     if (ad.seller_id !== callerUid && !isAdmin) {
                         return res.status(403).json({ error: "You are not authorized to delete this ad." });
                     }
-
                     if (ad.image_url) {
                         const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'marketing-images';
                         const url = new URL(ad.image_url);
-                        const pathSegments = url.pathname.split('/');
-                        const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+                        const filePathInBucket = url.pathname.split(`/${bucketName}/`)[1];
                         await supabase.storage.from(bucketName).remove([filePathInBucket]);
                     }
-
                     await pool.query('DELETE FROM marketing_ads WHERE id = $1', [adId]);
                     return res.status(200).json({ message: 'Ad deleted successfully.' });
                 }
             }
-
-            if (!adFound) {
-                return res.status(404).json({ error: 'Ad not found.' });
-            }
-
+            return res.status(404).json({ error: 'Ad not found.' });
         } catch (error) {
             console.error("Error deleting ad:", error);
             res.status(500).json({ error: "Failed to delete ad." });
         }
     });
+
+    // ==== نقطة نهاية جديدة للشراء وإرسال الرسالة ====
+    router.post('/purchase', async (req, res) => {
+        const { sellerId, buyerId, messageText } = req.body;
+
+        if (!sellerId || !buyerId || !messageText) {
+            return res.status(400).json({ error: "Missing required fields for purchase." });
+        }
+
+        try {
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+
+            // 1. جلب بيانات البائع والمشتري
+            const sellerData = await getUserDetailsFromDefaultProject(sellerId);
+            const buyerData = await getUserDetailsFromDefaultProject(buyerId);
+            if (!sellerData || !buyerData) {
+                return res.status(404).json({ error: "Seller or buyer not found." });
+            }
+
+            // 2. التحقق من وجود محادثة أو إنشائها
+            let chatId;
+            const existingChatResult = await defaultPool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))`,
+                [buyerId, sellerId]
+            );
+
+            if (existingChatResult.rows.length > 0) {
+                chatId = existingChatResult.rows[0].id;
+            } else {
+                chatId = uuidv4();
+                const timestamp = Date.now();
+                const participantsArray = [buyerId, sellerId];
+                const contactNamesObject = { [buyerId]: sellerData.username, [sellerId]: buyerData.username };
+                await defaultPool.query(
+                    `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', JSON.stringify(participantsArray), null, timestamp, JSON.stringify(contactNamesObject), sellerData.profile_bg_url]
+                );
+            }
+
+            // 3. إرسال الرسالة إلى مشروع المشتري
+            const { pool: buyerPool } = await getUserProjectContext(buyerId); // دالة مساعدة للحصول على سياق المشروع
+            const messageId = uuidv4();
+            const messageTimestamp = Date.now();
+            await buyerPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [messageId, chatId, buyerId, buyerData.username, messageText, messageTimestamp, 'text', buyerData.profile_bg_url]
+            );
+
+            // 4. تحديث آخر رسالة في المحادثة
+            await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
+
+            res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
+
+        } catch (error) {
+            console.error("Error processing purchase request:", error);
+            res.status(500).json({ error: "Failed to send purchase request." });
+        }
+    });
+
+    // دالة مساعدة للحصول على سياق مشروع المستخدم (مكررة من server.js للعمل بشكل مستقل)
+    async function getUserProjectContext(userId) {
+        let projectId = BACKEND_DEFAULT_PROJECT_ID;
+        if (userId) {
+            try {
+                const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+                const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
+                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                    projectId = userResult.rows[0].user_project_id;
+                }
+            } catch (error) {
+                console.error(`Error fetching project ID for user ${userId}:`, error);
+            }
+        }
+        return {
+            pool: projectDbPools[projectId],
+            supabase: projectSupabaseClients[projectId],
+            projectId: projectId
+        };
+    }
 
     return router;
 };
