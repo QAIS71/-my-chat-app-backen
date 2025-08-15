@@ -2,6 +2,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
+const webPush = require('web-push'); // مهم جداً لوظيفة الإشعارات
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
@@ -145,7 +146,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // ==== نقطة نهاية جديدة للشراء وإرسال الرسالة ====
+    // POST /api/marketing/purchase - نقطة نهاية الشراء مع إرسال الإشعار
     router.post('/purchase', async (req, res) => {
         const { sellerId, buyerId, messageText } = req.body;
 
@@ -156,14 +157,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         try {
             const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
 
-            // 1. جلب بيانات البائع والمشتري
             const sellerData = await getUserDetailsFromDefaultProject(sellerId);
             const buyerData = await getUserDetailsFromDefaultProject(buyerId);
             if (!sellerData || !buyerData) {
                 return res.status(404).json({ error: "Seller or buyer not found." });
             }
 
-            // 2. التحقق من وجود محادثة أو إنشائها
             let chatId;
             const existingChatResult = await defaultPool.query(
                 `SELECT id FROM chats WHERE type = 'private' AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))`,
@@ -183,8 +182,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 );
             }
 
-            // 3. إرسال الرسالة إلى مشروع المشتري
-            const { pool: buyerPool } = await getUserProjectContext(buyerId); // دالة مساعدة للحصول على سياق المشروع
+            const { pool: buyerPool } = await getUserProjectContext(buyerId);
             const messageId = uuidv4();
             const messageTimestamp = Date.now();
             await buyerPool.query(
@@ -192,8 +190,23 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 [messageId, chatId, buyerId, buyerData.username, messageText, messageTimestamp, 'text', buyerData.profile_bg_url]
             );
 
-            // 4. تحديث آخر رسالة في المحادثة
             await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
+
+            // ==== بداية كود إرسال الإشعار للبائع ====
+            const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
+            if (subResult.rows.length > 0) {
+                const subscription = subResult.rows[0].subscription_info;
+                const payload = JSON.stringify({
+                    title: `طلب شراء جديد من ${buyerData.username}`,
+                    body: messageText,
+                    url: `/?chatId=${chatId}`,
+                    icon: buyerData.profile_bg_url // صورة المشتري
+                });
+                webPush.sendNotification(subscription, payload).catch(error => {
+                    console.error(`فشل إرسال إشعار شراء إلى ${sellerId}:`, error.body || error.message);
+                });
+            }
+            // ==== نهاية كود إرسال الإشعار ====
 
             res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
 
@@ -203,7 +216,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // دالة مساعدة للحصول على سياق مشروع المستخدم (مكررة من server.js للعمل بشكل مستقل)
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
@@ -217,11 +229,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 console.error(`Error fetching project ID for user ${userId}:`, error);
             }
         }
-        return {
-            pool: projectDbPools[projectId],
-            supabase: projectSupabaseClients[projectId],
-            projectId: projectId
-        };
+        return { pool: projectDbPools[projectId] };
     }
 
     return router;
