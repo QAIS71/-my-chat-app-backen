@@ -2,7 +2,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const webPush = require('web-push');
+const webPush = require('web-push'); // مهم جداً لوظيفة الإشعارات
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
@@ -22,13 +22,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق
+    // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق (تم التعديل هنا)
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                const result = await pool.query('SELECT * FROM marketing_ads ORDER BY timestamp DESC');
+                // --- التعديل: تم تغيير استعلام SQL للفرز حسب الإعلانات المثبتة أولاً ---
+                const result = await pool.query('SELECT * FROM marketing_ads ORDER BY is_pinned DESC, timestamp DESC');
                 
                 const enrichedAds = await Promise.all(result.rows.map(async (ad) => {
                     const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
@@ -41,7 +42,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 }));
                 allAds = allAds.concat(enrichedAds);
             }
-            allAds.sort((a, b) => b.timestamp - a.timestamp);
+            // الفرز النهائي بعد دمج الإعلانات من كل المشاريع
+            allAds.sort((a, b) => {
+                if (a.is_pinned && !b.is_pinned) return -1;
+                if (!a.is_pinned && b.is_pinned) return 1;
+                return b.timestamp - a.timestamp;
+            });
             res.status(200).json(allAds);
         } catch (error) {
             console.error("Error fetching marketing ads:", error);
@@ -51,12 +57,16 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
     // POST /api/marketing - لإنشاء إعلان جديد (تم التعديل هنا)
     router.post('/', upload.single('image'), async (req, res) => {
+        // --- التعديل: تمت إضافة is_pinned لقراءة قيمتها من الطلب ---
         const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
         const imageFile = req.file;
 
         if (!title || !description || !ad_type || !seller_id) {
             return res.status(400).json({ error: "Title, description, type, and seller ID are required." });
         }
+        
+        // تحويل قيمة is_pinned النصية إلى قيمة منطقية (boolean)
+        const isPinnedValue = is_pinned === 'true' || is_pinned === true;
 
         let imageUrl = null;
         let userProjectId = BACKEND_DEFAULT_PROJECT_ID;
@@ -93,11 +103,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
             const adId = uuidv4();
             const timestamp = Date.now();
-
+            
+            // --- التعديل: تم تحديث استعلام SQL ليقوم بإدراج قيمة is_pinned ---
+            // تأكد من أن جدول marketing_ads لديك يحتوي على عمود is_pinned من نوع BOOLEAN
             await pool.query(
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, is_pinned === 'true']
+                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, isPinnedValue]
             );
 
             res.status(201).json({ message: "Ad published successfully.", adId: adId });
@@ -108,6 +120,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
+    // DELETE /api/marketing/:adId - لحذف إعلان (لا يوجد تغيير هنا)
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
         const { callerUid } = req.body;
@@ -145,6 +158,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
+    // POST /api/marketing/purchase - نقطة نهاية الشراء مع إرسال الإشعار (لا يوجد تغيير هنا)
     router.post('/purchase', async (req, res) => {
         const { sellerId, buyerId, messageText } = req.body;
 
@@ -190,6 +204,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
             await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
 
+            // ==== بداية كود إرسال الإشعار للبائع ====
             const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
             if (subResult.rows.length > 0) {
                 const subscription = subResult.rows[0].subscription_info;
@@ -197,12 +212,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     title: `طلب شراء جديد من ${buyerData.username}`,
                     body: messageText,
                     url: `/?chatId=${chatId}`,
-                    icon: buyerData.profile_bg_url
+                    icon: buyerData.profile_bg_url // صورة المشتري
                 });
                 webPush.sendNotification(subscription, payload).catch(error => {
                     console.error(`فشل إرسال إشعار شراء إلى ${sellerId}:`, error.body || error.message);
                 });
             }
+            // ==== نهاية كود إرسال الإشعار ====
 
             res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
 
