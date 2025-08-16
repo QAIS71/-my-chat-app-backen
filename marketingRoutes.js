@@ -2,11 +2,10 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const webPush = require('web-push'); // مهم جداً لوظيفة الإشعارات
+const webPush = require('web-push');
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
-    // دالة مساعدة لجلب تفاصيل المستخدم من المشروع الافتراضي
     async function getUserDetailsFromDefaultProject(userId) {
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         if (!defaultPool || !userId) return null;
@@ -22,7 +21,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
@@ -49,9 +47,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing - لإنشاء إعلان جديد
+    // POST /api/marketing - لإنشاء إعلان جديد (تم التعديل هنا)
     router.post('/', upload.single('image'), async (req, res) => {
-        const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
+        const { title, description, price, ad_type, seller_id, is_pinned } = req.body; // تم إضافة is_pinned
         const imageFile = req.file;
 
         if (!title || !description || !ad_type || !seller_id) {
@@ -97,7 +95,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             await pool.query(
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, is_pinned === 'true']
+                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, is_pinned === 'true'] // تم إضافة is_pinned
             );
 
             res.status(201).json({ message: "Ad published successfully.", adId: adId });
@@ -108,7 +106,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // DELETE /api/marketing/:adId - لحذف إعلان
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
         const { callerUid } = req.body;
@@ -146,7 +143,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing/purchase - نقطة نهاية الشراء مع إرسال الإشعار
     router.post('/purchase', async (req, res) => {
         const { sellerId, buyerId, messageText } = req.body;
 
@@ -192,7 +188,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
             await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
 
-            // ==== بداية كود إرسال الإشعار للبائع ====
             const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
             if (subResult.rows.length > 0) {
                 const subscription = subResult.rows[0].subscription_info;
@@ -200,13 +195,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     title: `طلب شراء جديد من ${buyerData.username}`,
                     body: messageText,
                     url: `/?chatId=${chatId}`,
-                    icon: buyerData.profile_bg_url // صورة المشتري
+                    icon: buyerData.profile_bg_url
                 });
                 webPush.sendNotification(subscription, payload).catch(error => {
                     console.error(`فشل إرسال إشعار شراء إلى ${sellerId}:`, error.body || error.message);
                 });
             }
-            // ==== نهاية كود إرسال الإشعار ====
 
             res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
 
