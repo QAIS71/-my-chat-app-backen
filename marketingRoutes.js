@@ -6,6 +6,7 @@ const webPush = require('web-push');
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
+    // دالة مساعدة لجلب تفاصيل المستخدم من المشروع الافتراضي
     async function getUserDetailsFromDefaultProject(userId) {
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         if (!defaultPool || !userId) return null;
@@ -21,6 +22,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
+    // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
@@ -49,7 +51,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
     // POST /api/marketing - لإنشاء إعلان جديد (تم التعديل هنا)
     router.post('/', upload.single('image'), async (req, res) => {
-        const { title, description, price, ad_type, seller_id, is_pinned } = req.body; // تم إضافة is_pinned
+        const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
         const imageFile = req.file;
 
         if (!title || !description || !ad_type || !seller_id) {
@@ -95,7 +97,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             await pool.query(
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, is_pinned === 'true'] // تم إضافة is_pinned
+                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, is_pinned === 'true']
             );
 
             res.status(201).json({ message: "Ad published successfully.", adId: adId });
