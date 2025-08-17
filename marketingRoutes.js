@@ -67,7 +67,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
     // POST /api/marketing - لإنشاء إعلان جديد
     router.post('/', upload.single('image'), async (req, res) => {
-        const { title, description, price, ad_type, seller_id } = req.body;
+        const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
         const imageFile = req.file;
 
         if (!title || !description || !ad_type || !seller_id) {
@@ -109,11 +109,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
             const adId = uuidv4();
             const timestamp = Date.now();
+            const pinnedStatus = is_pinned === 'true';
 
             await pool.query(
-                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id]
+                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, pinnedStatus]
             );
 
             res.status(201).json({ message: "Ad published successfully.", adId: adId });
@@ -208,7 +209,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
             await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
 
-            // ==== بداية كود إرسال الإشعار للبائع ====
             const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
             if (subResult.rows.length > 0) {
                 const subscription = subResult.rows[0].subscription_info;
@@ -222,7 +222,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     console.error(`فشل إرسال إشعار شراء إلى ${sellerId}:`, error.body || error.message);
                 });
             }
-            // ==== نهاية كود إرسال الإشعار ====
 
             res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
 
