@@ -55,7 +55,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // GET /api/marketing - لجلب كل الإعلانات مع ترتيب المثبت أولاً
+    // GET /api/marketing - جلب كل الإعلانات مع ترتيب المثبت أولاً
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
