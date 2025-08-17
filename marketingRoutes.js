@@ -2,7 +2,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const webPush = require('web-push'); 
+const webPush = require('web-push'); // مهم جداً لوظيفة الإشعارات
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
@@ -21,27 +21,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             return null;
         }
     }
-    
-    // دالة مساعدة للحصول على سياق المشروع الصحيح للمستخدم
-    async function getUserProjectContext(userId) {
-        let projectId = BACKEND_DEFAULT_PROJECT_ID;
-        if (userId) {
-            try {
-                const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-                const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
-                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
-                    projectId = userResult.rows[0].user_project_id;
-                }
-            } catch (error) {
-                console.error(`Error fetching project ID for user ${userId}:`, error);
-            }
-        }
-        return { 
-            pool: projectDbPools[projectId], 
-            supabase: projectSupabaseClients[projectId],
-            projectId: projectId
-        };
-    }
 
     // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق
     router.get('/', async (req, res) => {
@@ -49,8 +28,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         try {
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                // التأكد من جلب حقل is_pinned والترتيب على أساسه
-                const result = await pool.query('SELECT * FROM marketing_ads ORDER BY is_pinned DESC, timestamp DESC');
+                const result = await pool.query('SELECT * FROM marketing_ads ORDER BY timestamp DESC');
                 
                 const enrichedAds = await Promise.all(result.rows.map(async (ad) => {
                     const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
@@ -63,8 +41,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 }));
                 allAds = allAds.concat(enrichedAds);
             }
-            // إعادة الترتيب النهائي بعد دمج الإعلانات من كل المشاريع
-            allAds.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0) || b.timestamp - a.timestamp);
+            allAds.sort((a, b) => b.timestamp - a.timestamp);
             res.status(200).json(allAds);
         } catch (error) {
             console.error("Error fetching marketing ads:", error);
@@ -74,24 +51,28 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
 
     // POST /api/marketing - لإنشاء إعلان جديد
     router.post('/', upload.single('image'), async (req, res) => {
-        // تم التعديل: إضافة is_pinned هنا
-        const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
+        const { title, description, price, ad_type, seller_id } = req.body;
         const imageFile = req.file;
 
         if (!title || !description || !ad_type || !seller_id) {
             return res.status(400).json({ error: "Title, description, type, and seller ID are required." });
         }
-        
-        // تم التعديل: تحويل قيمة is_pinned النصية ('true'/'false') إلى قيمة منطقية (boolean)
-        const isPinnedBoolean = is_pinned === 'true';
 
         let imageUrl = null;
-        
+        let userProjectId = BACKEND_DEFAULT_PROJECT_ID;
+
         try {
-            const { pool, supabase } = await getUserProjectContext(seller_id);
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [seller_id]);
+            if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                userProjectId = userResult.rows[0].user_project_id;
+            }
+
+            const pool = projectDbPools[userProjectId];
+            const supabase = projectSupabaseClients[userProjectId];
 
             if (!pool || !supabase) {
-                throw new Error(`Project context for seller ${seller_id} not found.`);
+                throw new Error(`Project context for ${userProjectId} not found.`);
             }
 
             if (imageFile) {
@@ -113,11 +94,10 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             const adId = uuidv4();
             const timestamp = Date.now();
 
-            // تم التعديل: إضافة حقل is_pinned إلى جملة INSERT
             await pool.query(
-                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id, isPinnedBoolean]
+                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [adId, title, description, price, imageUrl, ad_type, timestamp, seller_id]
             );
 
             res.status(201).json({ message: "Ad published successfully.", adId: adId });
@@ -149,7 +129,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                         return res.status(403).json({ error: "You are not authorized to delete this ad." });
                     }
                     if (ad.image_url) {
-                        const { supabase } = await getUserProjectContext(ad.seller_id);
+                        const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'marketing-images';
                         const url = new URL(ad.image_url);
                         const filePathInBucket = url.pathname.split(`/${bucketName}/`)[1];
@@ -211,7 +191,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             );
 
             await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, messageTimestamp, chatId]);
-            
+
+            // ==== بداية كود إرسال الإشعار للبائع ====
             const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
             if (subResult.rows.length > 0) {
                 const subscription = subResult.rows[0].subscription_info;
@@ -219,12 +200,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     title: `طلب شراء جديد من ${buyerData.username}`,
                     body: messageText,
                     url: `/?chatId=${chatId}`,
-                    icon: buyerData.profile_bg_url 
+                    icon: buyerData.profile_bg_url // صورة المشتري
                 });
                 webPush.sendNotification(subscription, payload).catch(error => {
-                    console.error(`Failed to send purchase notification to ${sellerId}:`, error.body || error.message);
+                    console.error(`فشل إرسال إشعار شراء إلى ${sellerId}:`, error.body || error.message);
                 });
             }
+            // ==== نهاية كود إرسال الإشعار ====
 
             res.status(200).json({ message: "Purchase request sent successfully!", chatId: chatId });
 
@@ -233,6 +215,22 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             res.status(500).json({ error: "Failed to send purchase request." });
         }
     });
+
+    async function getUserProjectContext(userId) {
+        let projectId = BACKEND_DEFAULT_PROJECT_ID;
+        if (userId) {
+            try {
+                const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+                const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [userId]);
+                if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                    projectId = userResult.rows[0].user_project_id;
+                }
+            } catch (error) {
+                console.error(`Error fetching project ID for user ${userId}:`, error);
+            }
+        }
+        return { pool: projectDbPools[projectId] };
+    }
 
     return router;
 };
