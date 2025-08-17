@@ -221,22 +221,36 @@ async function createTables(pool) {
             );
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
-
-        // NEW: Create marketing_ads table
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS marketing_ads (
-                id VARCHAR(255) PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                description TEXT,
-                price VARCHAR(255),
-                image_url VARCHAR(255),
-                is_pinned BOOLEAN DEFAULT FALSE, -- This is the corrected line
-                ad_type VARCHAR(50), 
-                timestamp BIGINT NOT NULL,
-                seller_id VARCHAR(255) 
-            );
-        `);
+// ... الكود السابق لإنشاء جدول marketing_ads
+        // ... );
         console.log('تم التأكد من وجود جدول marketing_ads.');
+
+        // ==== بداية الكود الجديد لتحديث الجدول ====
+        try {
+            // أولاً: محاولة إعادة تسمية العمود القديم إن وجد
+            await pool.query('ALTER TABLE marketing_ads RENAME COLUMN is_promoted TO is_pinned;');
+            console.log('تم تحديث هيكل الجدول بنجاح (إعادة تسمية).');
+        } catch (e) {
+            // ثانيًا: إذا فشلت إعادة التسمية (لأنه غير موجود)، قم بإضافة العمود الجديد
+            if (e.code === '42701') { // 42701 = duplicate column error (means it might exist)
+                console.log('العمود is_pinned موجود بالفعل.');
+            } else if (e.code === '42703') { // 42703 = undefined column error
+                try {
+                    await pool.query('ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;');
+                    console.log('تم تحديث هيكل الجدول بنجاح (إضافة عمود).');
+                } catch (addError) {
+                    console.error('خطأ فادح في إضافة عمود is_pinned:', addError);
+                }
+            } else {
+                 // تجاهل الأخطاء الأخرى مثل "العمود موجود بالفعل"
+                console.log('لم يتم إجراء تغيير على هيكل الجدول، قد يكون محدثًا بالفعل.');
+            }
+        }
+        // ==== نهاية الكود الجديد لتحديث الجدول ====
+
+        // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً
+        if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
+        // ... بقية الكود يستمر كما هو
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
