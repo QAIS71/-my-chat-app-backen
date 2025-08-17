@@ -55,7 +55,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // GET /api/marketing - لجلب كل الإعلانات مع ترتيب المثبت أولاً
+    // GET /api/marketing - جلب كل الإعلانات مع ترتيب المثبت أولاً
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
@@ -231,7 +231,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 console.error(`Error fetching project ID for user ${userId}:`, error);
             }
         }
-        return { pool: projectDbPools[projectId] };
+        return { pool: projectDbPools[projectId], supabase: projectSupabaseClients[projectId] };
     }
 
     return router;
