@@ -230,7 +230,7 @@ async function createTables(pool) {
                 description TEXT,
                 price VARCHAR(255),
                 image_url VARCHAR(255),
-                is_pinned BOOLEAN DEFAULT FALSE, -- تم التعديل هنا
+                is_pinned BOOLEAN DEFAULT FALSE, -- This is the corrected line
                 ad_type VARCHAR(50), 
                 timestamp BIGINT NOT NULL,
                 seller_id VARCHAR(255) 
