@@ -230,14 +230,13 @@ async function createTables(pool) {
                 description TEXT,
                 price VARCHAR(255),
                 image_url VARCHAR(255),
-                is_promoted BOOLEAN DEFAULT FALSE,
-                ad_type VARCHAR(50), -- e.g., 'product', 'service', 'job', 'offer'
+                is_pinned BOOLEAN DEFAULT FALSE, -- تم التعديل هنا
+                ad_type VARCHAR(50), 
                 timestamp BIGINT NOT NULL,
-                seller_id VARCHAR(255) -- Optional: Link to user who posted the ad
+                seller_id VARCHAR(255) 
             );
         `);
         console.log('تم التأكد من وجود جدول marketing_ads.');
-
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
