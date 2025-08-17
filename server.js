@@ -13,7 +13,7 @@ const webPush = require('web-push'); // ==== تمت إضافة هذه المكت
 const app = express();
 const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
 
-// ==== بداية كود إعداد الإشعارات ====
+// ==== بداية كود إعداد الإشعارات (القديم) ====
 const publicVapidKey = 'BBlbt3D5lIiDN7xEbe4FfEA7ipXGsv0_fbP5xawOR3-5R7FxT9KNh_tUXklvENkADLYiv_2V8xPmncl8IcaaTIM';
 const privateVapidKey = '03sShkGPnA_dYhcGL45wXj0YJWBLweuMyMfhOWLoWOw';
 
@@ -22,7 +22,73 @@ webPush.setVapidDetails(
   publicVapidKey,
   privateVapidKey
 );
-// ==== نهاية كود إعداد الإشعارات ====
+// ==== نهاية كود إعداد الإشعارات (القديم) ====
+
+
+// ====================================================
+// ====  بداية كود إعداد OneSignal (الكود الجديد) ====
+// ====================================================
+const ONESIGNAL_APP_ID = '4324b057-7a7d-442c-9d51-a42e25d30ca0';
+const ONESIGNAL_API_KEY = 'os_v2_app_imslav32pvcczhkruqxcluymubftejvh6hteweeggrycmpp2o2noghy2yvoiu7bbgcndwxjmoxsig2elbv5gaezp3ljn4nmjq6noely';
+
+/**
+ * دالة لإرسال إشعار عبر OneSignal باستخدام REST API
+ * @param {string[]} userIds - مصفوفة بمعرفات المستخدمين (external_user_id) لإرسال الإشعار إليهم
+ * @param {string} title - عنوان الإشعار
+ * @param {string} body - نص الإشعار
+ * @param {string} url - الرابط الذي سيتم فتحه عند النقر على الإشعار
+ * @param {string} icon - رابط أيقونة الإشعار (صورة المرسل)
+ */
+async function sendOneSignalNotification(userIds, title, body, url, icon) {
+  if (!userIds || userIds.length === 0) {
+    console.log("لا يوجد مستلمين لإرسال إشعار OneSignal.");
+    return;
+  }
+
+  const notification = {
+    app_id: ONESIGNAL_APP_ID,
+    include_external_user_ids: userIds,
+    contents: {
+      en: body,
+      ar: body
+    },
+    headings: {
+      en: title,
+      ar: title
+    },
+    web_url: url, // الرابط الذي سيتم فتحه
+    chrome_web_icon: icon, // أيقونة الإشعار (تعمل على كروم)
+    ios_attachments: { // لإظهار الصورة في إشعارات iOS
+        id1: icon
+    },
+    data: { // يمكنك إضافة بيانات إضافية هنا
+        url: url
+    }
+  };
+
+  try {
+    const response = await fetch('https://onesignal.com/api/v1/notifications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Authorization': `Basic ${ONESIGNAL_API_KEY}`
+      },
+      body: JSON.stringify(notification)
+    });
+
+    const responseData = await response.json();
+    if (responseData.errors) {
+        console.error('خطأ من OneSignal API:', responseData.errors);
+    } else {
+        console.log('تم إرسال إشعار OneSignal بنجاح:', responseData);
+    }
+  } catch (error) {
+    console.error('خطأ في إرسال إشعار OneSignal:', error);
+  }
+}
+// ====================================================
+// ====   نهاية كود إعداد OneSignal (الكود الجديد)  ====
+// ====================================================
 
 
 // ----------------------------------------------------------------------------------------------------
@@ -221,7 +287,8 @@ async function createTables(pool) {
             );
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
-// NEW: Create marketing_ads table
+
+        // NEW: Create marketing_ads table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS marketing_ads (
                 id VARCHAR(255) PRIMARY KEY,
@@ -229,13 +296,14 @@ async function createTables(pool) {
                 description TEXT,
                 price VARCHAR(255),
                 image_url VARCHAR(255),
-                is_pinned BOOLEAN DEFAULT FALSE, -- This is the corrected line
-                ad_type VARCHAR(50), 
+                is_promoted BOOLEAN DEFAULT FALSE,
+                ad_type VARCHAR(50), -- e.g., 'product', 'service', 'job', 'offer'
                 timestamp BIGINT NOT NULL,
-                seller_id VARCHAR(255) 
+                seller_id VARCHAR(255) -- Optional: Link to user who posted the ad
             );
         `);
         console.log('تم التأكد من وجود جدول marketing_ads.');
+
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
         if (pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID]) {
@@ -1849,7 +1917,29 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             senderProfileBg: senderProfileBg || null
         };
         
-        // ==== بداية كود إرسال الإشعار ====
+        // =====================================================================
+        // ==== بداية التعديل: استبدال كود الإشعار القديم بكود OneSignal ====
+        // =====================================================================
+        
+        // ==== بداية كود إرسال الإشعار عبر OneSignal (الكود الجديد) ====
+        try {
+            const recipients = chat.participants.filter(pId => pId !== senderId);
+            if (recipients.length > 0) {
+                console.log(`محاولة إرسال إشعار OneSignal إلى المستلمين:`, recipients);
+                await sendOneSignalNotification(
+                    recipients,
+                    `رسالة جديدة من ${senderName}`,
+                    lastMessageText,
+                    `/?chatId=${chatId}`, // الرابط الذي سيتم فتحه
+                    senderProfileBg // صورة المرسل كأيقونة
+                );
+            }
+        } catch (pushError) {
+            console.error("خطأ عام في إرسال إشعارات OneSignal:", pushError);
+        }
+        // ==== نهاية كود إرسال الإشعار عبر OneSignal (الكود الجديد) ====
+
+        /* // ==== بداية كود إرسال الإشعار (الكود القديم - تم تعطيله) ====
         try {
             const recipients = chat.participants.filter(pId => pId !== senderId); // كل المشاركين عدا المرسل
             const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -1859,11 +1949,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
                 if (subResult.rows.length > 0) {
                     const subscription = subResult.rows[0].subscription_info;
                     const payload = JSON.stringify({
-    title: `رسالة جديدة من ${senderName}`,
-    body: lastMessageText,
-    url: `/?chatId=${chatId}`,
-    icon: senderProfileBg // <<<<<< أضف هذا السطر فقط
-});
+                        title: `رسالة جديدة من ${senderName}`,
+                        body: lastMessageText,
+                        url: `/?chatId=${chatId}`,
+                        icon: senderProfileBg // <<<<<< أضف هذا السطر فقط
+                    });
                     
                     webPush.sendNotification(subscription, payload).catch(error => {
                         console.error(`فشل إرسال إشعار إلى ${recipientId}:`, error);
@@ -1878,7 +1968,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         } catch (pushError) {
             console.error("خطأ عام في إرسال الإشعارات:", pushError);
         }
-        // ==== نهاية كود إرسال الإشعار ====
+        */ // ==== نهاية كود إرسال الإشعار (الكود القديم - تم تعطيله) ====
+
+        // =====================================================================
+        // ==== نهاية التعديل ====
+        // =====================================================================
 
         res.status(201).json({ message: 'تم إرسال الرسالة بنجاح.', messageData: newMessage });
     } catch (error) {
