@@ -6,7 +6,7 @@ const webPush = require('web-push');
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
-    // Helper function to get user details from the default project
+    // دالة مساعدة لجلب تفاصيل المستخدم من المشروع الافتراضي
     async function getUserDetailsFromDefaultProject(userId) {
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         if (!defaultPool || !userId) return null;
@@ -21,8 +21,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             return null;
         }
     }
-
-    // Helper to get the correct project context for a user
+    
+    // دالة مساعدة للحصول على سياق المشروع الصحيح للمستخدم
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
@@ -43,13 +43,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         };
     }
 
-    // GET /api/marketing - Fetch all ads with verification info
+    // GET /api/marketing - لجلب كل الإعلانات مع معلومات التوثيق
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                // Select all columns, including the is_pinned column
+                // التأكد من جلب حقل is_pinned والترتيب على أساسه
                 const result = await pool.query('SELECT * FROM marketing_ads ORDER BY is_pinned DESC, timestamp DESC');
                 
                 const enrichedAds = await Promise.all(result.rows.map(async (ad) => {
@@ -63,7 +63,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 }));
                 allAds = allAds.concat(enrichedAds);
             }
-            // Final sort after merging to ensure pinned ads are on top overall
+            // إعادة الترتيب النهائي بعد دمج الإعلانات من كل المشاريع
             allAds.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0) || b.timestamp - a.timestamp);
             res.status(200).json(allAds);
         } catch (error) {
@@ -72,9 +72,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing - Create a new ad
+    // POST /api/marketing - لإنشاء إعلان جديد
     router.post('/', upload.single('image'), async (req, res) => {
-        // --- MODIFIED: Added is_pinned to destructuring ---
+        // تم التعديل: إضافة is_pinned هنا
         const { title, description, price, ad_type, seller_id, is_pinned } = req.body;
         const imageFile = req.file;
 
@@ -82,13 +82,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             return res.status(400).json({ error: "Title, description, type, and seller ID are required." });
         }
         
-        // --- MODIFIED: Convert is_pinned from string ('true'/'false') to boolean ---
+        // تم التعديل: تحويل قيمة is_pinned النصية ('true'/'false') إلى قيمة منطقية (boolean)
         const isPinnedBoolean = is_pinned === 'true';
 
         let imageUrl = null;
         
         try {
-            const { pool, supabase, projectId } = await getUserProjectContext(seller_id);
+            const { pool, supabase } = await getUserProjectContext(seller_id);
 
             if (!pool || !supabase) {
                 throw new Error(`Project context for seller ${seller_id} not found.`);
@@ -113,7 +113,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             const adId = uuidv4();
             const timestamp = Date.now();
 
-            // --- MODIFIED: Added is_pinned to the INSERT statement ---
+            // تم التعديل: إضافة حقل is_pinned إلى جملة INSERT
             await pool.query(
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, seller_id, is_pinned)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -128,7 +128,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // DELETE /api/marketing/:adId - Delete an ad
+    // DELETE /api/marketing/:adId - لحذف إعلان
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
         const { callerUid } = req.body;
@@ -166,7 +166,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing/purchase - Purchase request endpoint
+    // POST /api/marketing/purchase - نقطة نهاية الشراء مع إرسال الإشعار
     router.post('/purchase', async (req, res) => {
         const { sellerId, buyerId, messageText } = req.body;
 
