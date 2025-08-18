@@ -217,32 +217,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             res.status(500).json({ error: "Failed to add point." });
         }
     });
-    
-    // POST /api/marketing/pin/:adId - لتثبيت إعلان
-    router.post('/pin/:adId', async (req, res) => {
-        const { adId } = req.params;
-        const { callerUid } = req.body;
-        // هنا يمكنك إضافة منطق التحقق من الدفع لاحقاً
-        // حالياً سنقوم بالتثبيت مباشرة
-        try {
-             for (const projectId in projectDbPools) {
-                const pool = projectDbPools[projectId];
-                const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
-                if (adResult.rows.length > 0) {
-                    if (adResult.rows[0].seller_id !== callerUid) {
-                        return res.status(403).json({ error: "Unauthorized." });
-                    }
-                    const expiry = Date.now() + (60 * 60 * 1000); // ساعة واحدة
-                    await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
-                    return res.status(200).json({ message: "Ad pinned successfully for 1 hour." });
-                }
-            }
-            return res.status(404).json({ error: "Ad not found." });
-        } catch(error) {
-            console.error("Error pinning ad:", error);
-            res.status(500).json({ error: "Failed to pin ad." });
-        }
-    });
 
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
