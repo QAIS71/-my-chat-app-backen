@@ -11,11 +11,10 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         try {
             // إضافة أعمدة جديدة لجدول الإعلانات إذا لم تكن موجودة
             await pool.query(`
-                ALTER TABLE marketing_ads
-                ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE,
-                ADD COLUMN IF NOT EXISTS pin_expiry BIGINT,
-                ADD COLUMN IF NOT EXISTS is_deal BOOLEAN DEFAULT FALSE,
-                ADD COLUMN IF NOT EXISTS deal_expiry BIGINT;
+           ALTER TABLE marketing_ads DROP COLUMN IF EXISTS is_pinned;
+ALTER TABLE marketing_ads DROP COLUMN IF EXISTS is_deal;
+ALTER TABLE marketing_ads DROP COLUMN IF EXISTS deal_expiry;
+ALTER TABLE marketing_ads DROP COLUMN IF EXISTS pin_expiry;
             `);
             console.log('تم التأكد من وجود أعمدة الإعلانات المثبتة والعروض في جدول marketing_ads.');
 
