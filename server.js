@@ -288,7 +288,7 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
-        // NEW: Create marketing_ads table
+        // NEW: Create marketing_ads table (This is the corrected version)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS marketing_ads (
                 id VARCHAR(255) PRIMARY KEY,
@@ -296,13 +296,17 @@ async function createTables(pool) {
                 description TEXT,
                 price VARCHAR(255),
                 image_url VARCHAR(255),
-                is_promoted BOOLEAN DEFAULT FALSE,
-                ad_type VARCHAR(50), -- e.g., 'product', 'service', 'job', 'offer'
+                ad_type VARCHAR(50),
                 timestamp BIGINT NOT NULL,
-                seller_id VARCHAR(255) -- Optional: Link to user who posted the ad
+                seller_id VARCHAR(255),
+                is_pinned BOOLEAN DEFAULT FALSE,
+                pin_expiry BIGINT,
+                is_deal BOOLEAN DEFAULT FALSE,
+                deal_expiry BIGINT
             );
         `);
         console.log('تم التأكد من وجود جدول marketing_ads.');
+
 
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
