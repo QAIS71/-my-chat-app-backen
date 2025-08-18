@@ -288,8 +288,12 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
-        // NEW: Create marketing_ads table (This is the corrected version)
-        await pool.query(`
+        // server.js
+
+// ... inside the createTables function
+
+        // NEW: Create marketing_ads table with diagnostic logging
+        const createAdsTableQuery = `
             CREATE TABLE IF NOT EXISTS marketing_ads (
                 id VARCHAR(255) PRIMARY KEY,
                 title VARCHAR(255) NOT NULL,
@@ -304,8 +308,20 @@ async function createTables(pool) {
                 is_deal BOOLEAN DEFAULT FALSE,
                 deal_expiry BIGINT
             );
-        `);
+        `;
+
+        // =================================================================
+        // ============== ADD THIS LOGGING CODE ============================
+        console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        console.log("SERVER IS EXECUTING THIS SQL TO CREATE marketing_ads:");
+        console.log(createAdsTableQuery);
+        console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        // =================================================================
+
+        await pool.query(createAdsTableQuery);
         console.log('تم التأكد من وجود جدول marketing_ads.');
+
+// ... rest of the function continues
 
 
 
