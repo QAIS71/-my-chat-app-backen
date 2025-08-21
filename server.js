@@ -24,13 +24,6 @@ webPush.setVapidDetails(
 );
 // ==== نهاية كود إعداد الإشعارات (القديم) ====
 
-
-// ====================================================
-// ====  بداية كود إعداد OneSignal (الكود الجديد) ====
-// ====================================================
-const ONESIGNAL_APP_ID = '4324b057-7a7d-442c-9d51-a42e25d30ca0';
-const ONESIGNAL_API_KEY = 'os_v2_app_imslav32pvcczhkruqxcluymubftejvh6hteweeggrycmpp2o2noghy2yvoiu7bbgcndwxjmoxsig2elbv5gaezp3ljn4nmjq6noely';
-
 /**
  * دالة لإرسال إشعار عبر OneSignal باستخدام REST API
  * @param {string[]} userIds - مصفوفة بمعرفات المستخدمين (external_user_id) لإرسال الإشعار إليهم
@@ -45,9 +38,12 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
     return;
   }
 
+  // هذا هو الكائن الذي تم تعديله ليناسب جميع المنصات
   const notification = {
     app_id: ONESIGNAL_APP_ID,
     include_external_user_ids: userIds,
+    
+    // المحتوى الأساسي للإشعار
     contents: {
       en: body,
       ar: body
@@ -56,12 +52,31 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
       en: title,
       ar: title
     },
-    web_url: url, // الرابط الذي سيتم فتحه
-    chrome_web_icon: icon, // أيقونة الإشعار (تعمل على كروم)
-    ios_attachments: { // لإظهار الصورة في إشعارات iOS
+    
+    // --- التعديلات الهامة هنا ---
+    
+    // (هام جداً لتطبيق APK)
+    // هذا هو الخيار الصحيح لعرض الشعار أو صورة المرسل كأيقونة كبيرة في إشعار الأندرويد.
+    large_icon: icon, 
+    
+    // (اختياري ولكن موصى به)
+    // هذا يحدد الأيقونة الصغيرة التي تظهر في شريط الحالة.
+    // يجب أن يكون اسم الأيقونة موجودًا في موارد تطبيقك. إذا لم تحدده، سيتم استخدام أيقونة افتراضية.
+    // android_small_icon: 'ic_stat_onesignal_default', 
+    
+    // --- الإبقاء على الخيارات القديمة للتوافق مع المنصات الأخرى ---
+    
+    // هذا يعمل فقط على متصفح كروم على الويب
+    chrome_web_icon: icon, 
+    
+    // هذا يعمل فقط على أجهزة iOS
+    ios_attachments: { 
         id1: icon
     },
-    data: { // يمكنك إضافة بيانات إضافية هنا
+    
+    // بيانات إضافية ورابط الفتح
+    web_url: url, 
+    data: { 
         url: url
     }
   };
@@ -86,6 +101,14 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
     console.error('خطأ في إرسال إشعار OneSignal:', error);
   }
 }
+
+// ====================================================
+// ====  بداية كود إعداد OneSignal (الكود الجديد) ====
+// ====================================================
+const ONESIGNAL_APP_ID = '4324b057-7a7d-442c-9d51-a42e25d30ca0';
+const ONESIGNAL_API_KEY = 'os_v2_app_imslav32pvcczhkruqxcluymubftejvh6hteweeggrycmpp2o2noghy2yvoiu7bbgcndwxjmoxsig2elbv5gaezp3ljn4nmjq6noely';
+
+
 // ====================================================
 // ====   نهاية كود إعداد OneSignal (الكود الجديد)  ====
 // ====================================================
