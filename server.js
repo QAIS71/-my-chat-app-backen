@@ -38,7 +38,6 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
     return;
   }
 
-  // هذا هو الكائن الذي تم تعديله ليناسب جميع المنصات
   const notification = {
     app_id: ONESIGNAL_APP_ID,
     include_external_user_ids: userIds,
@@ -53,16 +52,11 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
       ar: title
     },
     
-    // --- التعديلات الهامة هنا ---
+    // --- التعديل الأهم هنا ---
     
     // (هام جداً لتطبيق APK)
     // هذا هو الخيار الصحيح لعرض الشعار أو صورة المرسل كأيقونة كبيرة في إشعار الأندرويد.
     large_icon: icon, 
-    
-    // (اختياري ولكن موصى به)
-    // هذا يحدد الأيقونة الصغيرة التي تظهر في شريط الحالة.
-    // يجب أن يكون اسم الأيقونة موجودًا في موارد تطبيقك. إذا لم تحدده، سيتم استخدام أيقونة افتراضية.
-    // android_small_icon: 'ic_stat_onesignal_default', 
     
     // --- الإبقاء على الخيارات القديمة للتوافق مع المنصات الأخرى ---
     
@@ -82,6 +76,7 @@ async function sendOneSignalNotification(userIds, title, body, url, icon) {
   };
 
   try {
+    console.log(`محاولة إرسال إشعار OneSignal إلى المستلمين:`, userIds); // **إضافة سطر طباعة للتحقق**
     const response = await fetch('https://onesignal.com/api/v1/notifications', {
       method: 'POST',
       headers: {
