@@ -12,6 +12,8 @@ const webPush = require('web-push'); // ==== تمت إضافة هذه المكت
 // تهيئة تطبيق Express
 const app = express();
 const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
+const FRONTEND_URL = "https://watsaligram-frontend-web.netlify.app/"; // <--- غيّر هذا إلى رابط موقعك الفعلي
+
 
 // ==== بداية كود إعداد الإشعارات (القديم) ====
 const publicVapidKey = 'BBlbt3D5lIiDN7xEbe4FfEA7ipXGsv0_fbP5xawOR3-5R7FxT9KNh_tUXklvENkADLYiv_2V8xPmncl8IcaaTIM';
