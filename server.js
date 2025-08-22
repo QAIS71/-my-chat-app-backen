@@ -1964,12 +1964,12 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             const recipients = chat.participants.filter(pId => pId !== senderId);
             if (recipients.length > 0) {
                 console.log(`محاولة إرسال إشعار OneSignal إلى المستلمين:`, recipients);
-                await sendOneSignalNotification(
-                    recipients,
-                    `رسالة جديدة من ${senderName}`,
-                    lastMessageText,
-                    `/?chatId=${chatId}`, // الرابط الذي سيتم فتحه
-                    senderProfileBg // صورة المرسل كأيقونة
+await sendOneSignalNotification(
+    recipients,
+    `رسالة جديدة من ${senderName}`,
+    lastMessageText,
+    `${FRONTEND_URL}/?chatId=${chatId}`, // <<-- تم تعديل هذا السطر
+    senderProfileBg
                 );
             }
         } catch (pushError) {
