@@ -6,10 +6,10 @@ const webPush = require('web-push');
 
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID) {
 
-    // ==== Ø¯Ø§Ù„Ø© Ù„ØªØ¬Ù‡ÙŠØ² Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ù„ÙƒÙ„ Ø§Ù„Ù…ÙŠØ²Ø§Øª Ø§Ù„Ø¬Ø¯ÙŠØ¯Ø© ====
+    // ==== دالة لتجهيز قاعدة البيانات بالميزات الجديدة ====
     async function prepareMarketingDatabase(pool) {
         try {
-            // Ø¥Ø¶Ø§ÙØ© Ø£Ø¹Ù…Ø¯Ø© Ø¬Ø¯ÙŠØ¯Ø© Ù„Ø¬Ø¯ÙˆÙ„ Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª Ø¥Ø°Ø§ Ù„Ù… ØªÙƒÙ† Ù…ÙˆØ¬ÙˆØ¯Ø©
+            // تحديث جدول الإعلانات
             await pool.query(`
                 ALTER TABLE marketing_ads
                 ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE,
@@ -17,9 +17,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 ADD COLUMN IF NOT EXISTS is_deal BOOLEAN DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS deal_expiry BIGINT;
             `);
-            console.log('ØªÙ… Ø§Ù„ØªØ£ÙƒØ¯ Ù…Ù† ÙˆØ¬ÙˆØ¯ Ø£Ø¹Ù…Ø¯Ø© Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª Ø§Ù„Ù…Ø«Ø¨ØªØ© ÙˆØ§Ù„Ø¹Ø±ÙˆØ¶ ÙÙŠ Ø¬Ø¯ÙˆÙ„ marketing_ads.');
+            console.log('تم التأكد من وجود أعمدة الإعلانات المثبتة والعروض.');
 
-            // Ø¥Ù†Ø´Ø§Ø¡ Ø¬Ø¯ÙˆÙ„ Ø¬Ø¯ÙŠØ¯ Ù„Ù†Ù‚Ø§Ø· Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…ÙŠÙ† ÙÙŠ Ø§Ù„Ø£Ù„Ø¹Ø§Ø¨
+            // جدول نقاط المستخدمين
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS user_points (
                     user_id VARCHAR(255) PRIMARY KEY,
@@ -27,20 +27,76 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     last_updated BIGINT
                 );
             `);
-            console.log('ØªÙ… Ø§Ù„ØªØ£ÙƒØ¯ Ù…Ù† ÙˆØ¬ÙˆØ¯ Ø¬Ø¯ÙˆÙ„ user_points.');
+            console.log('تم التأكد من وجود جدول user_points.');
+
+            // --- الجداول الجديدة للنظام المالي ---
+            // جدول محافظ البائعين
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS wallets (
+                    user_id VARCHAR(255) PRIMARY KEY,
+                    pending_balance NUMERIC(10, 2) DEFAULT 0.00,
+                    available_balance NUMERIC(10, 2) DEFAULT 0.00,
+                    currency VARCHAR(10) DEFAULT 'USD'
+                );
+            `);
+            console.log('تم التأكد من وجود جدول wallets.');
+
+            // جدول لتتبع المعاملات المالية
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id VARCHAR(255) PRIMARY KEY,
+                    ad_id VARCHAR(255),
+                    buyer_id VARCHAR(255),
+                    seller_id VARCHAR(255),
+                    amount NUMERIC(10, 2) NOT NULL,
+                    currency VARCHAR(10) NOT NULL,
+                    commission NUMERIC(10, 2) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'pending', -- pending, completed, cancelled
+                    payment_method VARCHAR(50),
+                    created_at BIGINT,
+                    updated_at BIGINT
+                );
+            `);
+            console.log('تم التأكد من وجود جدول transactions.');
 
         } catch (error) {
-            console.error("Ø®Ø·Ø£ ÙÙŠ ØªØ¬Ù‡ÙŠØ² Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØªØ³ÙˆÙŠÙ‚:", error);
+            console.error("خطأ في تجهيز قاعدة بيانات التسويق:", error);
         }
     }
 
-    // ØªØ¬Ù‡ÙŠØ² Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª ÙÙŠ ÙƒÙ„ Ø§Ù„Ù…Ø´Ø§Ø±ÙŠØ¹ Ø¹Ù†Ø¯ Ø¨Ø¯Ø¡ Ø§Ù„ØªØ´ØºÙŠÙ„
+    // تجهيز قاعدة البيانات في كل المشاريع عند بدء التشغيل
     for (const projectId in projectDbPools) {
         prepareMarketingDatabase(projectDbPools[projectId]);
     }
-    // ==== Ù†Ù‡Ø§ÙŠØ© Ø¯Ø§Ù„Ø© ØªØ¬Ù‡ÙŠØ² Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª ====
+
+    // --- وظيفة التنظيف الدورية ---
+    // تعمل كل 5 دقائق لحذف العروض المنتهية وإلغاء تثبيت الإعلانات المنتهية
+    setInterval(async () => {
+        console.log("Running cleanup job for expired deals and pins...");
+        const now = Date.now();
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            try {
+                // حذف العروض المنتهية
+                const deletedDeals = await pool.query('DELETE FROM marketing_ads WHERE ad_type = $1 AND deal_expiry < $2 RETURNING id', ['deal', now]);
+                if (deletedDeals.rows.length > 0) {
+                    console.log(`[Project ${projectId}] Deleted ${deletedDeals.rows.length} expired deals.`);
+                }
+
+                // إلغاء تثبيت الإعلانات المنتهية
+                const unpinnedAds = await pool.query('UPDATE marketing_ads SET is_pinned = FALSE, pin_expiry = NULL WHERE is_pinned = TRUE AND pin_expiry < $1 RETURNING id', [now]);
+                if (unpinnedAds.rows.length > 0) {
+                    console.log(`[Project ${projectId}] Unpinned ${unpinnedAds.rows.length} expired ads.`);
+                }
+            } catch (error) {
+                console.error(`[Project ${projectId}] Error during cleanup job:`, error);
+            }
+        }
+    }, 5 * 60 * 1000); // 300000ms = 5 minutes
+
 
     async function getUserDetailsFromDefaultProject(userId) {
+        // ... الكود الحالي ...
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         if (!defaultPool || !userId) return null;
         try {
@@ -55,8 +111,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // GET /api/marketing - Ø¬Ù„Ø¨ ÙƒÙ„ Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª Ù…Ø¹ ØªØ±ØªÙŠØ¨ Ø§Ù„Ù…Ø«Ø¨Øª Ø£ÙˆÙ„Ø§Ù‹
+    // GET /api/marketing - جلب كل الإعلانات
     router.get('/', async (req, res) => {
+        // ... الكود الحالي ...
         let allAds = [];
         try {
             for (const projectId in projectDbPools) {
@@ -67,7 +124,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
                     return {
                         ...ad,
-                        seller_username: sellerDetails ? sellerDetails.username : 'ØºÙŠØ± Ù…Ø¹Ø±ÙˆÙ',
+                        seller_username: sellerDetails ? sellerDetails.username : 'غير معروف',
                         seller_is_verified: sellerDetails ? sellerDetails.is_verified : false,
                         seller_user_role: sellerDetails ? sellerDetails.user_role : 'normal'
                     };
@@ -86,17 +143,32 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing - Ø¥Ù†Ø´Ø§Ø¡ Ø¥Ø¹Ù„Ø§Ù† Ø¬Ø¯ÙŠØ¯
+    // --- نقطة نهاية جديدة للإعدادات ---
+    router.get('/config', (req, res) => {
+        // في تطبيق حقيقي، يجب جلب هذه البيانات من خدمة خارجية موثوقة
+        const exchangeRates = {
+            "USD": 1.0,
+            "SAR": 3.75,
+            "YER": 250.0,
+            "EGP": 47.5,
+            "AED": 3.67
+        };
+        res.json({ exchangeRates });
+    });
+
+
+    // POST /api/marketing - إنشاء إعلان جديد (مُعدّل)
     router.post('/', upload.single('image'), async (req, res) => {
-        const { title, description, price, ad_type, seller_id } = req.body;
+        const { title, description, price, ad_type, seller_id, deal_duration_hours } = req.body;
         const imageFile = req.file;
-        if (!title || !description || !ad_type || !seller_id) {
+        if (!title || !description || !ad_type || !seller_id || !price) {
             return res.status(400).json({ error: "All fields are required." });
         }
         try {
             const { pool, supabase } = await getUserProjectContext(seller_id);
             let imageUrl = null;
             if (imageFile) {
+                // ... كود رفع الصورة يبقى كما هو ...
                 const bucketName = 'marketing-images';
                 const fileName = `${uuidv4()}.${imageFile.originalname.split('.').pop()}`;
                 const filePath = `${seller_id}/${fileName}`;
@@ -108,7 +180,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             const adId = uuidv4();
             const timestamp = Date.now();
             const is_deal = ad_type === 'deal';
-            const deal_expiry = is_deal ? timestamp + (24 * 60 * 60 * 1000) : null;
+            
+            // --- تعديل منطق انتهاء العرض ---
+            let deal_expiry = null;
+            if (is_deal) {
+                const duration = parseInt(deal_duration_hours, 10) || 1; // ساعة واحدة كافتراضي
+                deal_expiry = timestamp + (duration * 60 * 60 * 1000);
+            }
+
             await pool.query(
                 `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, is_deal, deal_expiry, seller_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
                 [adId, title, description, price, imageUrl, ad_type, timestamp, is_deal, deal_expiry, seller_id]
@@ -120,8 +199,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // DELETE /api/marketing/:adId - Ù„Ø­Ø°Ù Ø¥Ø¹Ù„Ø§Ù†
+    // DELETE /api/marketing/:adId - لحذف إعلان
     router.delete('/:adId', async (req, res) => {
+        // ... الكود الحالي ...
         const { adId } = req.params;
         const { callerUid } = req.body;
         if (!callerUid) { return res.status(401).json({ error: "Unauthorized" }); }
@@ -154,44 +234,176 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing/purchase - Ù†Ù‚Ø·Ø© Ù†Ù‡Ø§ÙŠØ© Ø§Ù„Ø´Ø±Ø§Ø¡
-    router.post('/purchase', async (req, res) => {
-        const { sellerId, buyerId, messageText } = req.body;
-        if (!sellerId || !buyerId || !messageText) {
-            return res.status(400).json({ error: "Missing fields." });
-        }
+    // POST /api/marketing/pin/:adId - لتثبيت إعلان (مُعدّل)
+    router.post('/pin/:adId', async (req, res) => {
+        const { adId } = req.params;
+        const { callerUid, pin_duration_hours } = req.body;
+        
+        // محاكاة عملية الدفع
+        const duration = parseInt(pin_duration_hours) || 1;
+        const cost = duration * 10; // 10$ per hour
+        console.log(`Pinning ad ${adId} for ${duration} hours at a cost of $${cost}. (Payment simulation)`);
+
         try {
-            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-            const sellerData = await getUserDetailsFromDefaultProject(sellerId);
-            const buyerData = await getUserDetailsFromDefaultProject(buyerId);
-            if (!sellerData || !buyerData) {
-                return res.status(404).json({ error: "User not found." });
+             for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
+                if (adResult.rows.length > 0) {
+                    if (adResult.rows[0].seller_id !== callerUid) {
+                        return res.status(403).json({ error: "Unauthorized." });
+                    }
+                    // --- تعديل مدة التثبيت ---
+                    const expiry = Date.now() + (duration * 60 * 60 * 1000);
+                    await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
+                    return res.status(200).json({ message: `Ad pinned successfully for ${duration} hour(s).` });
+                }
             }
-            let chatId;
-            const existingChatResult = await defaultPool.query(`SELECT id FROM chats WHERE type = 'private' AND (participants @> '["${buyerId}"]'::jsonb AND participants @> '["${sellerId}"]'::jsonb)`);
-            if (existingChatResult.rows.length > 0) {
-                chatId = existingChatResult.rows[0].id;
-            } else {
-                chatId = uuidv4();
-                const timestamp = Date.now();
-                await defaultPool.query(`INSERT INTO chats (id, type, participants, contact_names, profile_bg_url, timestamp) VALUES ($1, 'private', $2, $3, $4, $5)`, [chatId, JSON.stringify([buyerId, sellerId]), JSON.stringify({ [buyerId]: sellerData.username, [sellerId]: buyerData.username }), sellerData.profile_bg_url, timestamp]);
-            }
-            const { pool: buyerPool } = await getUserProjectContext(buyerId);
-            await buyerPool.query(`INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type, sender_profile_bg) VALUES ($1, $2, $3, $4, $5, $6, 'text', $7)`, [uuidv4(), chatId, buyerId, buyerData.username, messageText, Date.now(), buyerData.profile_bg_url]);
-            await defaultPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, Date.now(), chatId]);
-            const subResult = await defaultPool.query('SELECT subscription_info FROM push_subscriptions WHERE user_id = $1', [sellerId]);
-            if (subResult.rows.length > 0) {
-                const payload = JSON.stringify({ title: `Ø·Ù„Ø¨ Ø´Ø±Ø§Ø¡ Ø¬Ø¯ÙŠØ¯ Ù…Ù† ${buyerData.username}`, body: messageText, url: `/?chatId=${chatId}`, icon: buyerData.profile_bg_url });
-                webPush.sendNotification(subResult.rows[0].subscription_info, payload).catch(err => console.error(`Failed to send notification to ${sellerId}:`, err.body));
-            }
-            res.status(200).json({ message: "Request sent!", chatId: chatId });
-        } catch (error) {
-            console.error("Error in purchase request:", error);
-            res.status(500).json({ error: "Failed to send request." });
+            return res.status(404).json({ error: "Ad not found." });
+        } catch(error) {
+            console.error("Error pinning ad:", error);
+            res.status(500).json({ error: "Failed to pin ad." });
         }
     });
 
-    // GET /api/marketing/points/:userId - Ø¬Ù„Ø¨ Ù†Ù‚Ø§Ø· Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù…
+    // --- نقاط النهاية الجديدة للنظام المالي ---
+
+    // GET /api/marketing/seller/wallet/:userId - جلب بيانات محفظة البائع
+    router.get('/seller/wallet/:userId', async (req, res) => {
+        const { userId } = req.params;
+        const { pool } = await getUserProjectContext(userId);
+        try {
+            let wallet = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [userId]);
+            if (wallet.rows.length === 0) {
+                // إنشاء محفظة جديدة إذا لم تكن موجودة
+                await pool.query('INSERT INTO wallets (user_id) VALUES ($1)', [userId]);
+                wallet = await pool.query('SELECT * FROM wallets WHERE user_id = $1', [userId]);
+            }
+            res.status(200).json(wallet.rows[0]);
+        } catch (error) {
+            console.error("Error fetching wallet:", error);
+            res.status(500).json({ error: "Failed to fetch wallet." });
+        }
+    });
+
+    // POST /api/marketing/purchase - نقطة نهاية الشراء الجديدة (نظام Escrow)
+    router.post('/purchase', async (req, res) => {
+        const { adId, buyerId, amount, paymentMethod } = req.body;
+        if (!adId || !buyerId || !amount || !paymentMethod) {
+            return res.status(400).json({ error: "Missing required fields." });
+        }
+
+        try {
+            let adInfo = null;
+            let adPool = null;
+
+            // البحث عن الإعلان في جميع المشاريع
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
+                if (result.rows.length > 0) {
+                    adInfo = result.rows[0];
+                    adPool = pool;
+                    break;
+                }
+            }
+
+            if (!adInfo) return res.status(404).json({ error: "Ad not found." });
+            
+            const sellerId = adInfo.seller_id;
+            const isDigital = adInfo.ad_type === 'digital_product';
+            const commission = parseFloat(amount) * 0.02; // عمولة 2%
+            const transactionId = uuidv4();
+            const now = Date.now();
+            
+            // إضافة المعاملة إلى قاعدة البيانات
+            await adPool.query(
+                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, $9, $10)`,
+                [transactionId, adId, buyerId, sellerId, amount, commission, isDigital ? 'completed' : 'pending', paymentMethod, now, now]
+            );
+
+            // تحديث محفظة البائع
+            const sellerWalletPool = (await getUserProjectContext(sellerId)).pool;
+            if (isDigital) {
+                // للمنتجات الرقمية: إضافة المبلغ للرصيد المتاح مباشرة بعد خصم العمولة
+                const netAmount = parseFloat(amount) - commission;
+                await sellerWalletPool.query(
+                    `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2)
+                     ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
+                    [sellerId, netAmount]
+                );
+            } else {
+                // للمنتجات المادية: إضافة المبلغ للرصيد المعلق
+                await sellerWalletPool.query(
+                    `INSERT INTO wallets (user_id, pending_balance) VALUES ($1, $2)
+                     ON CONFLICT (user_id) DO UPDATE SET pending_balance = wallets.pending_balance + $2`,
+                    [sellerId, amount]
+                );
+            }
+            
+            res.status(201).json({ 
+                message: isDigital ? "تم الشراء بنجاح! يمكنك الآن تحميل المنتج." : "تم الدفع بنجاح! المبلغ محجوز لدى المنصة حتى تأكيد الاستلام.",
+                transactionId: transactionId 
+            });
+
+        } catch (error) {
+            console.error("Error during purchase:", error);
+            res.status(500).json({ error: "Failed to process purchase." });
+        }
+    });
+
+    // POST /api/marketing/order/:transactionId/confirm - تأكيد استلام الطلب
+    router.post('/order/:transactionId/confirm', async (req, res) => {
+        const { transactionId } = req.params;
+        const { buyerId } = req.body; // للتأكد من أن المشتري هو من يؤكد
+
+        try {
+            let transaction = null;
+            let transactionPool = null;
+
+            // البحث عن المعاملة في جميع المشاريع
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
+                if (result.rows.length > 0) {
+                    transaction = result.rows[0];
+                    transactionPool = pool;
+                    break;
+                }
+            }
+
+            if (!transaction) return res.status(404).json({ error: "Transaction not found." });
+            if (transaction.buyer_id !== buyerId) return res.status(403).json({ error: "Unauthorized." });
+            if (transaction.status !== 'pending') return res.status(400).json({ error: "Order already confirmed or cancelled." });
+
+            // تحديث حالة المعاملة
+            await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
+
+            // تحويل المبلغ من الرصيد المعلق إلى المتاح للبائع
+            const sellerId = transaction.seller_id;
+            const sellerWalletPool = (await getUserProjectContext(sellerId)).pool;
+            const amount = parseFloat(transaction.amount);
+            const commission = parseFloat(transaction.commission);
+            const netAmount = amount - commission;
+
+            await sellerWalletPool.query(
+                `UPDATE wallets SET 
+                 pending_balance = pending_balance - $1,
+                 available_balance = available_balance + $2
+                 WHERE user_id = $3`,
+                [amount, netAmount, sellerId]
+            );
+
+            res.status(200).json({ message: "تم تأكيد الاستلام بنجاح! تم تحويل المبلغ للبائع." });
+
+        } catch (error) {
+            console.error("Error confirming order:", error);
+            res.status(500).json({ error: "Failed to confirm order." });
+        }
+    });
+
+
+    // --- نقاط نهاية الألعاب تبقى كما هي ---
     router.get('/points/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -204,7 +416,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing/points - Ø¥Ø¶Ø§ÙØ© Ù†Ù‚Ø·Ø©
     router.post('/points', async (req, res) => {
         const { userId } = req.body;
         if (!userId) return res.status(400).json({ error: "User ID required." });
@@ -217,34 +428,9 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             res.status(500).json({ error: "Failed to add point." });
         }
     });
-    
-    // POST /api/marketing/pin/:adId - Ù„ØªØ«Ø¨ÙŠØª Ø¥Ø¹Ù„Ø§Ù†
-    router.post('/pin/:adId', async (req, res) => {
-        const { adId } = req.params;
-        const { callerUid } = req.body;
-        // Ù‡Ù†Ø§ ÙŠÙ…ÙƒÙ†Ùƒ Ø¥Ø¶Ø§ÙØ© Ù…Ù†Ø·Ù‚ Ø§Ù„ØªØ­Ù‚Ù‚ Ù…Ù† Ø§Ù„Ø¯ÙØ¹ Ù„Ø§Ø­Ù‚Ø§Ù‹
-        // Ø­Ø§Ù„ÙŠØ§Ù‹ Ø³Ù†Ù‚ÙˆÙ… Ø¨Ø§Ù„ØªØ«Ø¨ÙŠØª Ù…Ø¨Ø§Ø´Ø±Ø©
-        try {
-             for (const projectId in projectDbPools) {
-                const pool = projectDbPools[projectId];
-                const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
-                if (adResult.rows.length > 0) {
-                    if (adResult.rows[0].seller_id !== callerUid) {
-                        return res.status(403).json({ error: "Unauthorized." });
-                    }
-                    const expiry = Date.now() + (60 * 60 * 1000); // Ø³Ø§Ø¹Ø© ÙˆØ§Ø­Ø¯Ø©
-                    await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
-                    return res.status(200).json({ message: "Ad pinned successfully for 1 hour." });
-                }
-            }
-            return res.status(404).json({ error: "Ad not found." });
-        } catch(error) {
-            console.error("Error pinning ad:", error);
-            res.status(500).json({ error: "Failed to pin ad." });
-        }
-    });
 
     async function getUserProjectContext(userId) {
+        // ... الكود الحالي ...
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
             try {
