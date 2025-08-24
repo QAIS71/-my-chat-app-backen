@@ -340,8 +340,36 @@ async function createTables(pool) {
 
         await pool.query(createAdsTableQuery);
         console.log('تم التأكد من وجود جدول marketing_ads.');
+      
 
-// ... rest of the function continues
+// جدول لمحافظ البائعين
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS wallets (
+        user_id VARCHAR(255) PRIMARY KEY,
+        pending_balance NUMERIC(10, 2) DEFAULT 0.00,
+        available_balance NUMERIC(10, 2) DEFAULT 0.00,
+        currency VARCHAR(10) DEFAULT 'USD'
+    );
+`);
+console.log('تم التأكد من وجود جدول wallets.');
+
+// جدول لتتبع المعاملات المالية
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+        id VARCHAR(255) PRIMARY KEY,
+        ad_id VARCHAR(255),
+        buyer_id VARCHAR(255),
+        seller_id VARCHAR(255),
+        amount NUMERIC(10, 2) NOT NULL,
+        currency VARCHAR(10) NOT NULL,
+        commission NUMERIC(10, 2) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, completed, cancelled
+        payment_method VARCHAR(50),
+        created_at BIGINT,
+        updated_at BIGINT
+    );
+`);
+console.log('تم التأكد من وجود جدول transactions.');
 
 
 
