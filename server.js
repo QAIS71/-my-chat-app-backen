@@ -371,6 +371,15 @@ await pool.query(`
 `);
 console.log('تم التأكد من وجود جدول transactions.');
 
+   // جدول نقاط المستخدمين
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS user_points (
+                    user_id VARCHAR(255) PRIMARY KEY,
+                    points INTEGER DEFAULT 0,
+                    last_updated BIGINT
+                );
+            `);
+            console.log('تم التأكد من وجود جدول user_points.');
 
 
         // التحقق من وجود حساب المدير، وإنشائه إذا لم يكن موجوداً (فقط في المشروع الافتراضي)
