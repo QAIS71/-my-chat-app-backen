@@ -312,36 +312,40 @@ async function createTables(pool) {
 
 // ... inside the createTables function
 
-        // NEW: Create marketing_ads table with diagnostic logging
-        const createAdsTableQuery = `
-            CREATE TABLE IF NOT EXISTS marketing_ads (
-                id VARCHAR(255) PRIMARY KEY,
-                title VARCHAR(255) NOT NULL,
-                description TEXT,
-                price VARCHAR(255),
-                image_url VARCHAR(255),
-                ad_type VARCHAR(50),
-                timestamp BIGINT NOT NULL,
-                seller_id VARCHAR(255),
-                is_pinned BOOLEAN DEFAULT FALSE,
-                pin_expiry BIGINT,
-                is_deal BOOLEAN DEFAULT FALSE,
-                deal_expiry BIGINT
-            );
-        `;
+// بالكود الجديد هذا:
+const createAdsTableQuery = `
+    CREATE TABLE IF NOT EXISTS marketing_ads (
+        id VARCHAR(255) PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        price VARCHAR(255),
+        original_price VARCHAR(255), -- جديد: لإضافة الخصومات
+        image_urls JSONB, -- تعديل: لدعم صور متعددة
+        ad_type VARCHAR(50),
+        digital_product_type VARCHAR(50), -- جديد: لتحديد نوع المنتج الرقمي
+        digital_product_url VARCHAR(255), -- جديد: رابط الملف الرقمي للتحميل
+        shipping_countries TEXT[], -- جديد: لتحديد دول الشحن
+        timestamp BIGINT NOT NULL,
+        seller_id VARCHAR(255),
+        is_pinned BOOLEAN DEFAULT FALSE,
+        pin_expiry BIGINT,
+        is_deal BOOLEAN DEFAULT FALSE,
+        deal_expiry BIGINT
+    );
+`;
 
-        // =================================================================
-        // ============== ADD THIS LOGGING CODE ============================
-        console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        console.log("SERVER IS EXECUTING THIS SQL TO CREATE marketing_ads:");
-        console.log(createAdsTableQuery);
-        console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        // =================================================================
+// =================================================================
+// ============== ADD THIS LOGGING CODE ============================
+console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+console.log("SERVER IS EXECUTING THIS SQL TO CREATE/UPDATE marketing_ads:");
+console.log(createAdsTableQuery);
+console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+// =================================================================
 
-        await pool.query(createAdsTableQuery);
-        console.log('تم التأكد من وجود جدول marketing_ads.');
+await pool.query(createAdsTableQuery);
+console.log('تم التأكد من وجود جدول marketing_ads وتحديثه بالحقول الجديدة.');
+
       
-
 // جدول لمحافظ البائعين
 await pool.query(`
     CREATE TABLE IF NOT EXISTS wallets (
