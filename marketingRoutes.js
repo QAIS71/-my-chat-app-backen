@@ -89,7 +89,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-
     // Periodic cleanup job
     setInterval(async () => {
         console.log("Running cleanup job for expired deals and pins...");
@@ -138,25 +137,47 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // POST /api/marketing - Create new ad
-    router.post('/', upload.single('image'), async (req, res) => {
-        const { title, description, price, ad_type, seller_id, deal_duration_hours } = req.body;
-        const imageFile = req.file;
+    // POST /api/marketing - Create new ad - *** UPDATED FOR MULTIPLE FILES & NEW FIELDS ***
+    const adUploads = upload.fields([
+        { name: 'images', maxCount: 3 },
+        { name: 'digital_product_file', maxCount: 1 }
+    ]);
+    router.post('/', adUploads, async (req, res) => {
+        const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries } = req.body;
+        const imageFiles = req.files.images; // Array of images
+        const digitalFile = req.files.digital_product_file ? req.files.digital_product_file[0] : null; // Single file
+
         if (!title || !description || !ad_type || !seller_id || !price) {
             return res.status(400).json({ error: "All fields are required." });
         }
         try {
             const { pool, supabase } = await getUserProjectContext(seller_id);
-            let imageUrl = null;
-            if (imageFile) {
-                const bucketName = 'marketing-images';
-                const fileName = `${uuidv4()}.${imageFile.originalname.split('.').pop()}`;
-                const filePath = `${seller_id}/${fileName}`;
-                const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, imageFile.buffer, { contentType: imageFile.mimetype });
-                if (uploadError) throw uploadError;
-                const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
-                imageUrl = publicUrlData.publicUrl;
+            let imageUrls = [];
+
+            // --- Handle Multiple Image Uploads ---
+            if (imageFiles && imageFiles.length > 0) {
+                const imageBucket = 'marketing-images'; // Public bucket
+                for (const file of imageFiles) {
+                    const fileName = `${uuidv4()}.${file.originalname.split('.').pop()}`;
+                    const filePath = `${seller_id}/${fileName}`;
+                    const { error: uploadError } = await supabase.storage.from(imageBucket).upload(filePath, file.buffer, { contentType: file.mimetype });
+                    if (uploadError) throw uploadError;
+                    const { data: publicUrlData } = supabase.storage.from(imageBucket).getPublicUrl(filePath);
+                    imageUrls.push(publicUrlData.publicUrl);
+                }
             }
+            
+            // --- Handle Digital Product File Upload ---
+            let digitalFileUrl = null;
+            if (ad_type === 'digital_product' && digitalFile) {
+                const digitalBucket = 'digital-products'; // This should be a PRIVATE bucket in Supabase
+                const fileName = `${uuidv4()}-${digitalFile.originalname}`;
+                const filePath = `${seller_id}/${fileName}`;
+                const { error: uploadError } = await supabase.storage.from(digitalBucket).upload(filePath, digitalFile.buffer, { contentType: digitalFile.mimetype });
+                if (uploadError) throw uploadError;
+                digitalFileUrl = filePath; // Store the path, not the public URL
+            }
+
             const adId = uuidv4();
             const timestamp = Date.now();
             const is_deal = ad_type === 'deal';
@@ -167,9 +188,13 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 deal_expiry = timestamp + (duration * 60 * 60 * 1000);
             }
 
+            // Handle shipping countries (assuming it comes as a comma-separated string from FormData)
+            const countries = shipping_countries ? shipping_countries.split(',') : null;
+
             await pool.query(
-                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, is_deal, deal_expiry, seller_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-                [adId, title, description, price, imageUrl, ad_type, timestamp, is_deal, deal_expiry, seller_id]
+                `INSERT INTO marketing_ads (id, title, description, price, original_price, image_urls, ad_type, digital_product_type, digital_product_url, shipping_countries, timestamp, is_deal, deal_expiry, seller_id) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                [adId, title, description, price, original_price || null, JSON.stringify(imageUrls), ad_type, digital_product_type || null, digitalFileUrl, countries, timestamp, is_deal, deal_expiry, seller_id]
             );
             res.status(201).json({ message: "Ad published successfully." });
         } catch (error) {
@@ -194,12 +219,21 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     if (ad.seller_id !== callerUid && !isAdmin) {
                         return res.status(403).json({ error: "Unauthorized to delete." });
                     }
-                    if (ad.image_url) {
+                    // --- Handle Deletion of Multiple Images ---
+                    if (ad.image_urls && ad.image_urls.length > 0) {
                         const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'marketing-images';
-                        const url = new URL(ad.image_url);
-                        const filePathInBucket = url.pathname.split(`/${bucketName}/`)[1];
-                        await supabase.storage.from(bucketName).remove([filePathInBucket]);
+                        const filePathsInBucket = ad.image_urls.map(url => {
+                             const urlObj = new URL(url);
+                             return urlObj.pathname.split(`/${bucketName}/`)[1];
+                        });
+                        await supabase.storage.from(bucketName).remove(filePathsInBucket);
+                    }
+                     // --- Handle Deletion of Digital Product File ---
+                    if (ad.digital_product_url) {
+                        const supabase = projectSupabaseClients[projectId];
+                        const bucketName = 'digital-products';
+                        await supabase.storage.from(bucketName).remove([ad.digital_product_url]);
                     }
                     await pool.query('DELETE FROM marketing_ads WHERE id = $1', [adId]);
                     return res.status(200).json({ message: 'Ad deleted.' });
@@ -267,12 +301,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         try {
             let adInfo = null;
             let adPool = null;
+            let adProjectId = null;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
                 if (result.rows.length > 0) {
                     adInfo = result.rows[0];
                     adPool = pool;
+                    adProjectId = projectId;
                     break;
                 }
             }
@@ -286,6 +322,15 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             const now = Date.now();
             
             const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
+
+            // --- NEW: Prevent duplicate transactions ---
+            const existingTransaction = await buyerProjectPool.query(
+                'SELECT id FROM transactions WHERE ad_id = $1 AND buyer_id = $2 AND status IN ($3, $4)',
+                [adId, buyerId, 'pending', 'completed']
+            );
+            if (existingTransaction.rows.length > 0) {
+                return res.status(409).json({ error: "لقد قمت بشراء هذا المنتج بالفعل." });
+            }
     
             await buyerProjectPool.query(
                 `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, created_at, updated_at)
@@ -360,7 +405,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query(
-                    `SELECT t.*, a.title as ad_title, a.ad_type
+                    `SELECT t.*, a.title as ad_title, a.ad_type, a.digital_product_url
                      FROM transactions t 
                      JOIN marketing_ads a ON t.ad_id = a.id 
                      WHERE t.buyer_id = $1 ORDER BY t.created_at DESC`, [userId]
@@ -442,6 +487,66 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         } catch (error) {
             console.error("Error confirming order:", error);
             res.status(500).json({ error: "Failed to confirm order." });
+        }
+    });
+
+    // --- NEW: Endpoint to get a download link for a digital product ---
+    router.get('/download/:transactionId', async (req, res) => {
+        const { transactionId } = req.params;
+        const { callerUid } = req.query; // Passed as a query parameter
+
+        if (!callerUid) {
+            return res.status(401).json({ error: "Unauthorized: Missing caller ID." });
+        }
+
+        try {
+            // Step 1: Find the transaction and verify the buyer
+            let transaction = null;
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
+                if (result.rows.length > 0) {
+                    transaction = result.rows[0];
+                    break;
+                }
+            }
+
+            if (!transaction) return res.status(404).json({ error: "Transaction not found." });
+            if (transaction.buyer_id !== callerUid) return res.status(403).json({ error: "Unauthorized: You are not the buyer." });
+            if (transaction.status !== 'completed') return res.status(400).json({ error: "Purchase not completed." });
+
+            // Step 2: Find the ad and its digital file path
+            let adInfo = null;
+            let adProjectId = null;
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT digital_product_url FROM marketing_ads WHERE id = $1', [transaction.ad_id]);
+                if (result.rows.length > 0) {
+                    adInfo = result.rows[0];
+                    adProjectId = projectId;
+                    break;
+                }
+            }
+            
+            if (!adInfo || !adInfo.digital_product_url) {
+                return res.status(404).json({ error: "Digital product file not found for this ad." });
+            }
+
+            // Step 3: Generate a signed URL for the file
+            const supabase = projectSupabaseClients[adProjectId];
+            const bucketName = 'digital-products';
+            const filePath = adInfo.digital_product_url;
+            const { data, error } = await supabase.storage
+                .from(bucketName)
+                .createSignedUrl(filePath, 60 * 5); // URL is valid for 5 minutes
+
+            if (error) throw error;
+
+            res.status(200).json({ downloadUrl: data.signedUrl });
+
+        } catch (error) {
+            console.error("Error generating download link:", error);
+            res.status(500).json({ error: "Failed to generate download link." });
         }
     });
 
