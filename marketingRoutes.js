@@ -139,54 +139,24 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
     });
 
     // POST /api/marketing - Create new ad
-    const multerUpload = upload.fields([
-        { name: 'images', maxCount: 3 },
-        { name: 'digital_file', maxCount: 1 }
-    ]);
-    router.post('/', multerUpload, async (req, res) => {
-        const { 
-            title, description, price, ad_type, seller_id, deal_duration_hours,
-            original_price, digital_product_type, shipping_countries 
-        } = req.body;
-        
-        const imageFiles = req.files['images'] || [];
-        const digitalFile = req.files['digital_file'] ? req.files['digital_file'][0] : null;
-    
+    router.post('/', upload.single('image'), async (req, res) => {
+        const { title, description, price, ad_type, seller_id, deal_duration_hours } = req.body;
+        const imageFile = req.file;
         if (!title || !description || !ad_type || !seller_id || !price) {
             return res.status(400).json({ error: "All fields are required." });
         }
-        if (ad_type === 'digital_product' && !digitalFile) {
-            return res.status(400).json({ error: "Digital file is required for digital products." });
-        }
-    
         try {
             const { pool, supabase } = await getUserProjectContext(seller_id);
-            
-            // Handle Multiple Image Uploads
-            let imageUrls = [];
-            if (imageFiles.length > 0) {
-                const imageBucket = 'marketing-images';
-                for (const file of imageFiles) {
-                    const fileName = `${uuidv4()}.${file.originalname.split('.').pop()}`;
-                    const filePath = `${seller_id}/${fileName}`;
-                    const { error } = await supabase.storage.from(imageBucket).upload(filePath, file.buffer, { contentType: file.mimetype });
-                    if (error) throw error;
-                    const { data } = supabase.storage.from(imageBucket).getPublicUrl(filePath);
-                    imageUrls.push(data.publicUrl);
-                }
-            }
-    
-            // Handle Digital File Upload
-            let digitalFilePath = null;
-            if (digitalFile) {
-                const digitalBucket = 'digital-products'; // Use a different, possibly private bucket
-                const fileName = `${uuidv4()}-${digitalFile.originalname}`;
+            let imageUrl = null;
+            if (imageFile) {
+                const bucketName = 'marketing-images';
+                const fileName = `${uuidv4()}.${imageFile.originalname.split('.').pop()}`;
                 const filePath = `${seller_id}/${fileName}`;
-                const { error } = await supabase.storage.from(digitalBucket).upload(filePath, digitalFile.buffer, { contentType: digitalFile.mimetype });
-                if (error) throw error;
-                digitalFilePath = filePath; // Store the path, not the public URL
+                const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, imageFile.buffer, { contentType: imageFile.mimetype });
+                if (uploadError) throw uploadError;
+                const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+                imageUrl = publicUrlData.publicUrl;
             }
-    
             const adId = uuidv4();
             const timestamp = Date.now();
             const is_deal = ad_type === 'deal';
@@ -196,18 +166,10 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 const duration = parseInt(deal_duration_hours, 10) || 1;
                 deal_expiry = timestamp + (duration * 60 * 60 * 1000);
             }
-    
+
             await pool.query(
-                `INSERT INTO marketing_ads (
-                    id, title, description, price, image_urls, ad_type, timestamp, 
-                    is_deal, deal_expiry, seller_id, original_price, digital_product_type, 
-                    digital_file_path, shipping_countries
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-                [
-                    adId, title, description, price, imageUrls, ad_type, timestamp, is_deal, deal_expiry, seller_id,
-                    original_price === 'null' ? null : original_price, // Handle 'null' string from FormData
-                    digital_product_type, digitalFilePath, JSON.parse(shipping_countries || '[]')
-                ]
+                `INSERT INTO marketing_ads (id, title, description, price, image_url, ad_type, timestamp, is_deal, deal_expiry, seller_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [adId, title, description, price, imageUrl, ad_type, timestamp, is_deal, deal_expiry, seller_id]
             );
             res.status(201).json({ message: "Ad published successfully." });
         } catch (error) {
@@ -215,7 +177,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             res.status(500).json({ error: "Failed to publish ad." });
         }
     });
-
 
     // DELETE /api/marketing/:adId - Delete an ad
     router.delete('/:adId', async (req, res) => {
@@ -233,16 +194,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     if (ad.seller_id !== callerUid && !isAdmin) {
                         return res.status(403).json({ error: "Unauthorized to delete." });
                     }
-                    if (ad.image_urls && ad.image_urls.length > 0) {
+                    if (ad.image_url) {
                         const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'marketing-images';
-                        const filePaths = ad.image_urls.map(url => new URL(url).pathname.split(`/${bucketName}/`)[1]);
-                        await supabase.storage.from(bucketName).remove(filePaths);
-                    }
-                     // Delete digital file if it exists
-                    if(ad.digital_file_path){
-                        const supabase = projectSupabaseClients[projectId];
-                        await supabase.storage.from('digital-products').remove([ad.digital_file_path]);
+                        const url = new URL(ad.image_url);
+                        const filePathInBucket = url.pathname.split(`/${bucketName}/`)[1];
+                        await supabase.storage.from(bucketName).remove([filePathInBucket]);
                     }
                     await pool.query('DELETE FROM marketing_ads WHERE id = $1', [adId]);
                     return res.status(200).json({ message: 'Ad deleted.' });
@@ -485,52 +442,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         } catch (error) {
             console.error("Error confirming order:", error);
             res.status(500).json({ error: "Failed to confirm order." });
-        }
-    });
-    
-    // --- NEW: Secure Download Endpoint ---
-    router.post('/download/:adId/:transactionId', async (req, res) => {
-        const { adId, transactionId } = req.params;
-        const { buyerId } = req.body;
-    
-        if (!buyerId) return res.status(401).json({ error: 'Unauthorized.' });
-    
-        try {
-            let transaction = null;
-            let adInfo = null;
-            let adSupabase = null;
-    
-            // Find the transaction and ad across all projects
-            for (const projectId in projectDbPools) {
-                const pool = projectDbPools[projectId];
-                const transactionResult = await pool.query('SELECT * FROM transactions WHERE id = $1 AND ad_id = $2 AND buyer_id = $3', [transactionId, adId, buyerId]);
-                if (transactionResult.rows.length > 0) {
-                    transaction = transactionResult.rows[0];
-                    const adResult = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
-                    if (adResult.rows.length > 0) {
-                        adInfo = adResult.rows[0];
-                        adSupabase = projectSupabaseClients[projectId];
-                        break;
-                    }
-                }
-            }
-    
-            if (!transaction || !adInfo) return res.status(404).json({ error: 'Order not found or invalid.' });
-            if (transaction.status !== 'completed') return res.status(403).json({ error: 'Payment for this order is not complete.' });
-            if (!adInfo.digital_file_path) return res.status(400).json({ error: 'This is not a digital product.' });
-            
-            // Generate a signed URL valid for a short time (e.g., 60 seconds)
-            const { data, error } = await adSupabase.storage
-                .from('digital-products')
-                .createSignedUrl(adInfo.digital_file_path, 60);
-    
-            if (error) throw error;
-    
-            res.status(200).json({ downloadUrl: data.signedUrl });
-    
-        } catch (error) {
-            console.error("Error generating download link:", error);
-            res.status(500).json({ error: 'Failed to generate download link.' });
         }
     });
 
