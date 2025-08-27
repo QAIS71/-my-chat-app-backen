@@ -221,6 +221,7 @@ async function createTables(pool) {
                 is_verified BOOLEAN DEFAULT FALSE,
                 user_role VARCHAR(50) DEFAULT 'normal',
                 user_project_id VARCHAR(255) -- **جديد: لتخزين معرف المشروع المخصص للمستخدم**
+                can_sell BOOLEAN DEFAULT FALSE
             );
         `);
         // تأكد من وجود العمود user_project_id في جدول users
