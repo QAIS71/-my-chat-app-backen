@@ -2074,6 +2074,63 @@ app.get('/api/chats/:chatId/messages', async (req, res) => {
         res.status(500).json({ error: 'فشل جلب الرسائل.' });
     }
 });
+// ================== الكود الجديد يبدأ هنا ==================
+
+// وظيفة مساعدة لجلب رسالة واحدة من أي مشروع
+async function getMessageFromAnyProject(messageId) {
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const result = await pool.query('SELECT * FROM messages WHERE id = $1', [messageId]);
+            if (result.rows.length > 0) {
+                return { message: result.rows[0], pool: pool, supabase: projectSupabaseClients[projectId], projectId: projectId };
+            }
+        } catch (error) {
+            console.error(`خطأ في البحث عن الرسالة ${messageId} في المشروع ${projectId}:`, error);
+        }
+    }
+    return null; // الرسالة غير موجودة في أي مشروع
+}
+
+// نقطة نهاية لحذف رسالة واحدة (للجميع)
+app.delete('/api/messages/:messageId', async (req, res) => {
+    const { messageId } = req.params;
+    const { callerUid } = req.body;
+
+    // ابحث عن الرسالة في أي مشروع
+    const messageInfo = await getMessageFromAnyProject(messageId);
+    if (!messageInfo) {
+        return res.status(404).json({ error: 'الرسالة غير موجودة.' });
+    }
+    const { message, pool, supabase, projectId } = messageInfo;
+
+    try {
+        // تحقق من أن من يحاول الحذف هو نفسه مرسل الرسالة
+        if (message.sender_id !== callerUid) {
+            return res.status(403).json({ error: 'لا تملك صلاحية حذف هذه الرسالة.' });
+        }
+
+        // إذا كانت الرسالة تحتوي على وسائط، احذفها من التخزين
+        if (message.media_url) {
+            const bucketName = 'chat-media';
+            const url = new URL(message.media_url);
+            const pathSegments = url.pathname.split('/');
+            const filePathInBucket = pathSegments.slice(pathSegments.indexOf(bucketName) + 1).join('/');
+            await supabase.storage.from(bucketName).remove([filePathInBucket]);
+        }
+
+        // احذف الرسالة من قاعدة البيانات
+        await pool.query('DELETE FROM messages WHERE id = $1', [messageId]);
+
+        res.status(200).json({ message: 'تم حذف الرسالة بنجاح.' });
+
+    } catch (error) {
+        console.error('خطأ: فشل حذف الرسالة:', error);
+        res.status(500).json({ error: 'فشل حذف الرسالة.' });
+    }
+});
+
+// ================== الكود الجديد ينتهي هنا ==================
 
 // نقطة نهاية لحذف محادثة لمستخدم معين (في هذا النموذج، حذف من جدول chats)
 // ملاحظة: هذه النقطة ستعمل على المشروع الافتراضي (حيث يتم تخزين معلومات المحادثات)
