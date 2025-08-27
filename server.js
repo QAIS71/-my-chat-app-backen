@@ -291,7 +291,6 @@ async function createTables(pool) {
                 media_url VARCHAR(255),
                 media_type VARCHAR(50),
                 sender_profile_bg VARCHAR(255)
-                can_sell BOOLEAN DEFAULT FALSE
             );
 
             CREATE TABLE IF NOT EXISTS followers (
