@@ -372,6 +372,8 @@ await pool.query(`
         payment_method VARCHAR(50),
         created_at BIGINT,
         updated_at BIGINT
+        points_used INTEGER DEFAULT 0,
+        shipping_address JSONB
     );
 `);
 console.log('تم التأكد من وجود جدول transactions.');
