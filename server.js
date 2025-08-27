@@ -325,7 +325,7 @@ const createAdsTableQuery = `
         ad_type VARCHAR(50),
         digital_product_type VARCHAR(50), -- جديد: لتحديد نوع المنتج الرقمي
         digital_product_url VARCHAR(255), -- جديد: رابط الملف الرقمي للتحميل
-        shipping_countries TEXT[], -- جديد: لتحديد دول الشحن
+        shipping_info JSONB,
         timestamp BIGINT NOT NULL,
         seller_id VARCHAR(255),
         is_pinned BOOLEAN DEFAULT FALSE,
