@@ -308,6 +308,32 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
+      // Add these inside the createTables function in your server.js file
+
+// 1. Add shipping_address column to transactions table
+await pool.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
+`);
+console.log('Ensured shipping_address column exists in transactions table.');
+
+// 2. Add has_active_discount column to wallets table for the 10% discount feature
+await pool.query(`
+    ALTER TABLE wallets ADD COLUMN IF NOT EXISTS has_active_discount BOOLEAN DEFAULT FALSE;
+`);
+console.log('Ensured has_active_discount column exists in wallets table.');
+
+// 3. Create a new table for product submissions
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_submissions (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        product_data JSONB NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
+        created_at BIGINT NOT NULL
+    );
+`);
+console.log('Ensured product_submissions table exists.');
+
         // server.js
 
 // ... inside the createTables function
