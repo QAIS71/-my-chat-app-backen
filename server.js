@@ -376,6 +376,19 @@ await pool.query(`
     );
 `);
 console.log('تم التأكد من وجود جدول transactions.');
+      
+// جدول طلبات الانضمام كبائع
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS seller_applications (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        details TEXT,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, denied
+        created_at BIGINT
+    );
+`);
+console.log('تم التأكد من وجود جدول seller_applications.');
+      
 
    // جدول نقاط المستخدمين
             await pool.query(`
