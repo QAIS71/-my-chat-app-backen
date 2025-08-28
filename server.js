@@ -308,7 +308,50 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
       
+        // داخل دالة createTables(pool)
 
+// أضف هذا الكود مع بقية أكواد إنشاء الجداول
+
+// 1. إضافة عمود is_approved_seller لجدول المستخدمين
+await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved_seller BOOLEAN DEFAULT FALSE;
+`);
+console.log('Ensured is_approved_seller column exists in users table.');
+
+// 2. إنشاء جدول جديد لطلبات البائعين
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS product_submissions (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        submission_data JSONB NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
+        created_at BIGINT NOT NULL
+    );
+`);
+console.log('Ensured product_submissions table exists.');
+
+// 3. إضافة أعمدة الشحن لجدول الإعلانات
+await pool.query(`
+    ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_countries TEXT[];
+`);
+await pool.query(`
+    ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2) DEFAULT 0;
+`);
+console.log('Ensured shipping columns exist in marketing_ads table.');
+
+// 4. إضافة عمود عنوان الشحن لجدول المعاملات
+await pool.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
+`);
+console.log('Ensured shipping_address column exists in transactions table.');
+
+// 5. إضافة عمود خصم العمولة لمحافظ البائعين
+await pool.query(`
+    ALTER TABLE wallets ADD COLUMN IF NOT EXISTS has_active_discount BOOLEAN DEFAULT FALSE;
+`);
+console.log('Ensured has_active_discount column exists in wallets table.');
+      
+      
         // server.js
 
 // ... inside the createTables function
