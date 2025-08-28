@@ -370,6 +370,7 @@ await pool.query(`
         commission NUMERIC(10, 2) NOT NULL,
         status VARCHAR(50) DEFAULT 'pending', -- pending, completed, cancelled
         payment_method VARCHAR(50),
+        points_used INTEGER DEFAULT 0
         created_at BIGINT,
         updated_at BIGINT
     );
