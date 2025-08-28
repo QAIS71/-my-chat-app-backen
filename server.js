@@ -221,6 +221,7 @@ async function createTables(pool) {
                 is_verified BOOLEAN DEFAULT FALSE,
                 user_role VARCHAR(50) DEFAULT 'normal',
                 user_project_id VARCHAR(255) -- **جديد: لتخزين معرف المشروع المخصص للمستخدم**
+                is_seller BOOLEAN DEFAULT FALSE
             );
         `);
         // تأكد من وجود العمود user_project_id في جدول users
@@ -324,7 +325,7 @@ const createAdsTableQuery = `
         ad_type VARCHAR(50),
         digital_product_type VARCHAR(50), -- جديد: لتحديد نوع المنتج الرقمي
         digital_product_url VARCHAR(255), -- جديد: رابط الملف الرقمي للتحميل
-        shipping_countries TEXT[], -- جديد: لتحديد دول الشحن
+        shipping_cost_domestic NUMERIC(10, 2) DEFAULT 0.00, -- جديد: لتحديد دول الشحن
         timestamp BIGINT NOT NULL,
         seller_id VARCHAR(255),
         is_pinned BOOLEAN DEFAULT FALSE,
