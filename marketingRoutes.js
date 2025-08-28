@@ -32,7 +32,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         if (!defaultPool || !userId) return null;
         try {
             const userResult = await defaultPool.query(
-                'SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role FROM users WHERE uid = $1',
+                'SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role, is_approved_seller FROM users WHERE uid = $1',
                 [userId]
             );
             return userResult.rows[0] || null;
@@ -41,11 +41,76 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             return null;
         }
     }
+    
+    // **جديد**: دالة لإرسال إشعار للمدير (مؤسس التطبيق)
+    async function sendAdminNotification(applicantId, applicantUsername, applicationDetails) {
+        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const BOT_UID = 'system-notifications-bot';
+        const BOT_USERNAME = '🔔 إشعارات النظام';
+
+        try {
+            // 1. العثور على المدير
+            const adminResult = await pool.query("SELECT uid FROM users WHERE user_role = 'admin' LIMIT 1");
+            if (adminResult.rows.length === 0) {
+                console.log("لم يتم العثور على حساب المدير لإرسال الإشعار.");
+                return;
+            }
+            const adminId = adminResult.rows[0].uid;
+
+            // 2. العثور على محادثة بين البوت والمدير أو إنشائها
+            let chatResult = await pool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND participants @> $1::jsonb AND participants @> $2::jsonb`,
+                [JSON.stringify([adminId]), JSON.stringify([BOT_UID])]
+            );
+
+            let chatId;
+            if (chatResult.rows.length > 0) {
+                chatId = chatResult.rows[0].id;
+            } else {
+                chatId = uuidv4();
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, contact_names) 
+                     VALUES ($1, 'private', $2, $3, null, $4, $5)`,
+                    [chatId, BOT_USERNAME, JSON.stringify([adminId, BOT_UID]), Date.now(), JSON.stringify({[adminId]: BOT_USERNAME, [BOT_UID]: 'المدير'})]
+                );
+            }
+
+            // 3. إرسال رسالة للمدير
+            const messageText = `
+            🚨 طلب بائع جديد 🚨
+            - المستخدم: ${applicantUsername}
+            - التفاصيل: ${applicationDetails}
+            - معرف المستخدم: ${applicantId}
+            
+            للموافقة، أرسل في محادثة "المساعدة":
+            approve seller ${applicantId}
+            
+            للرفض، أرسل:
+            reject seller ${applicantId}
+            `;
+            const messageId = uuidv4();
+            const timestamp = Date.now();
+            
+            const { pool: adminProjectPool } = await getUserProjectContext(adminId);
+            await adminProjectPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
+                 VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
+                [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
+            );
+            
+            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بائع جديد", timestamp, chatId]);
+            console.log(`تم إرسال إشعار طلب بائع جديد للمدير بخصوص المستخدم ${applicantUsername}`);
+
+        } catch (error) {
+            console.error("خطأ في إرسال إشعار للمدير:", error);
+        }
+    }
+
 
     // Helper function to send a system message to a seller's chat
-    async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle) {
+    async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-        const BOT_UID = 'system-notifications-bot'; // A unique ID for our bot
+        const BOT_UID = 'system-notifications-bot';
         const BOT_USERNAME = '🔔 إشعارات النظام';
 
         try {
@@ -67,8 +132,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 );
             }
 
-            // Send the message to the user's project database
-            const messageText = `🎉 طلب بيع جديد!\nالمنتج: ${adTitle}\nالمشتري: ${buyerUsername}\n\nيرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
+            // **تعديل**: إضافة عنوان الشحن للرسالة
+            const addressText = `
+            عنوان الشحن:
+            - الدولة: ${shippingAddress.country}
+            - المدينة: ${shippingAddress.city}
+            - العنوان: ${shippingAddress.address}
+            `;
+            const messageText = `🎉 طلب بيع جديد!\nالمنتج: ${adTitle}\nالمشتري: ${buyerUsername}\n\n${shippingAddress ? addressText : ''}\nيرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
             const messageId = uuidv4();
             const timestamp = Date.now();
             
@@ -79,7 +150,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
             );
             
-            // Update the last message in the main chat table
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, timestamp, chatId]);
 
             console.log(`Sent order notification to seller ${sellerId} for ad "${adTitle}"`);
@@ -129,11 +199,36 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 }));
                 allAds = allAds.concat(enrichedAds);
             }
-            // Sorting is now handled on the client-side for shuffling
             res.status(200).json(allAds);
         } catch (error) {
             console.error("Error fetching marketing ads:", error);
             res.status(500).json({ error: "Failed to fetch marketing ads." });
+        }
+    });
+    
+    // **جديد**: نقطة نهاية للحصول على حالة البائع
+    router.get('/seller-status/:userId', async (req, res) => {
+        const { userId } = req.params;
+        try {
+            const userDetails = await getUserDetailsFromDefaultProject(userId);
+            if (!userDetails) {
+                return res.status(404).json({ error: "User not found." });
+            }
+            
+            // تحقق من وجود طلب معلق
+            const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const applicationResult = await pool.query(
+                "SELECT status FROM seller_applications WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 1",
+                [userId]
+            );
+
+            res.status(200).json({
+                isApproved: userDetails.is_approved_seller,
+                applicationStatus: applicationResult.rows.length > 0 ? applicationResult.rows[0].status : null
+            });
+        } catch (error) {
+             console.error("Error fetching seller status:", error);
+             res.status(500).json({ error: "Failed to fetch seller status." });
         }
     });
 
@@ -143,20 +238,25 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         { name: 'digital_product_file', maxCount: 1 }
     ]);
     router.post('/', adUploads, async (req, res) => {
-        const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_option, shipping_cost } = req.body;
-        const imageFiles = req.files.images; // Array of images
-        const digitalFile = req.files.digital_product_file ? req.files.digital_product_file[0] : null; // Single file
+        const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_options } = req.body;
+        const imageFiles = req.files.images;
+        const digitalFile = req.files.digital_product_file ? req.files.digital_product_file[0] : null;
 
         if (!title || !description || !ad_type || !seller_id || !price) {
             return res.status(400).json({ error: "All fields are required." });
         }
         try {
+            // **جديد**: التحقق من أن المستخدم بائع معتمد
+            const sellerDetails = await getUserDetailsFromDefaultProject(seller_id);
+            if (!sellerDetails || !sellerDetails.is_approved_seller) {
+                return res.status(403).json({ error: "غير مصرح لك بنشر الإعلانات. يرجى تقديم طلب أولاً." });
+            }
+
             const { pool, supabase } = await getUserProjectContext(seller_id);
             let imageUrls = [];
 
-            // --- Handle Multiple Image Uploads ---
             if (imageFiles && imageFiles.length > 0) {
-                const imageBucket = 'marketing-images'; // Public bucket
+                const imageBucket = 'marketing-images';
                 for (const file of imageFiles) {
                     const fileName = `${uuidv4()}.${file.originalname.split('.').pop()}`;
                     const filePath = `${seller_id}/${fileName}`;
@@ -167,15 +267,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 }
             }
             
-            // --- Handle Digital Product File Upload ---
             let digitalFileUrl = null;
             if (ad_type === 'digital_product' && digitalFile) {
-                const digitalBucket = 'digital-products'; // This should be a PRIVATE bucket in Supabase
+                const digitalBucket = 'digital-products';
                 const fileName = `${uuidv4()}-${digitalFile.originalname}`;
                 const filePath = `${seller_id}/${fileName}`;
                 const { error: uploadError } = await supabase.storage.from(digitalBucket).upload(filePath, digitalFile.buffer, { contentType: digitalFile.mimetype });
                 if (uploadError) throw uploadError;
-                digitalFileUrl = filePath; // Store the path, not the public URL
+                digitalFileUrl = filePath;
             }
 
             const adId = uuidv4();
@@ -188,13 +287,14 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 deal_expiry = timestamp + (duration * 60 * 60 * 1000);
             }
 
-            // Handle shipping countries (assuming it comes as a comma-separated string from FormData)
-            const countries = shipping_countries ? shipping_countries.split(',') : null;
+            const countries = shipping_countries ? shipping_countries.split(',').map(c => c.trim()) : null;
 
+            // **تعديل**: إضافة حقل `shipping_options` إلى قاعدة البيانات
+            // ملاحظة: تأكد من أن جدول `marketing_ads` يحتوي على عمود `shipping_options JSONB`
             await pool.query(
-                `INSERT INTO marketing_ads (id, title, description, price, original_price, image_urls, ad_type, digital_product_type, digital_product_url, shipping_countries, shipping_option, shipping_cost, timestamp, is_deal, deal_expiry, seller_id) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-                [adId, title, description, price, original_price || null, JSON.stringify(imageUrls), ad_type, digital_product_type || null, digitalFileUrl, countries, shipping_option || null, shipping_cost || null, timestamp, is_deal, deal_expiry, seller_id]
+                `INSERT INTO marketing_ads (id, title, description, price, original_price, image_urls, ad_type, digital_product_type, digital_product_url, shipping_countries, shipping_options, timestamp, is_deal, deal_expiry, seller_id) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                [adId, title, description, price, original_price || null, JSON.stringify(imageUrls), ad_type, digital_product_type || null, digitalFileUrl, countries, shipping_options || null, timestamp, is_deal, deal_expiry, seller_id]
             );
             res.status(201).json({ message: "Ad published successfully." });
         } catch (error) {
@@ -219,7 +319,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     if (ad.seller_id !== callerUid && !isAdmin) {
                         return res.status(403).json({ error: "Unauthorized to delete." });
                     }
-                    // --- Handle Deletion of Multiple Images ---
                     if (ad.image_urls && ad.image_urls.length > 0) {
                         const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'marketing-images';
@@ -229,7 +328,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                         });
                         await supabase.storage.from(bucketName).remove(filePathsInBucket);
                     }
-                     // --- Handle Deletion of Digital Product File ---
                     if (ad.digital_product_url) {
                         const supabase = projectSupabaseClients[projectId];
                         const bucketName = 'digital-products';
@@ -292,93 +390,90 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
+    // **تعديل**: نقطة نهاية الشراء لاستقبال عنوان الشحن
     router.post('/purchase', async (req, res) => {
-        const { adId, buyerId, amount, paymentMethod, pointsSpent, shippingAddress } = req.body;
-        if (!adId || !buyerId || amount === null || amount === undefined || !paymentMethod) {
+        const { adId, buyerId, amount, paymentMethod, shippingAddress, usePoints } = req.body;
+        
+        if (!adId || !buyerId || !amount || !paymentMethod) {
             return res.status(400).json({ error: "Missing required fields." });
         }
     
         try {
-            let adInfo = null;
-            let adPool = null;
-            let adProjectId = null;
+            let adInfo = null; let adPool = null;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
                 if (result.rows.length > 0) {
-                    adInfo = result.rows[0];
-                    adPool = pool;
-                    adProjectId = projectId;
-                    break;
+                    adInfo = result.rows[0]; adPool = pool; break;
                 }
             }
     
             if (!adInfo) return res.status(404).json({ error: "Ad not found." });
             
+            // **جديد**: التحقق من إمكانية الشحن للدولة
+            if (adInfo.shipping_countries && adInfo.shipping_countries.length > 0) {
+                if (!shippingAddress || !adInfo.shipping_countries.includes(shippingAddress.country)) {
+                    return res.status(400).json({ error: "عذراً، البائع لا يقوم بالشحن إلى دولتك." });
+                }
+            }
+            
+            const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
+            const existingTransaction = await buyerProjectPool.query(
+                'SELECT id FROM transactions WHERE ad_id = $1 AND buyer_id = $2 AND status IN ($3, $4)',
+                [adId, buyerId, 'pending', 'completed']
+            );
+            if (existingTransaction.rows.length > 0) {
+                return res.status(409).json({ error: "لقد قمت بشراء هذا المنتج بالفعل." });
+            }
+    
+            let finalAmount = parseFloat(amount);
+            let pointsUsed = 0;
+            // **جديد**: منطق استخدام النقاط للخصم
+            if (usePoints) {
+                const pointsResult = await buyerProjectPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+                const currentPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
+                if (currentPoints >= 100) {
+                    finalAmount = finalAmount * 0.90; // خصم 10%
+                    await buyerProjectPool.query('UPDATE user_points SET points = points - 100 WHERE user_id = $1', [buyerId]);
+                    pointsUsed = 100;
+                } else {
+                    return res.status(400).json({ error: 'ليس لديك نقاط كافية للحصول على الخصم.' });
+                }
+            }
+
             const sellerId = adInfo.seller_id;
             const isDigital = adInfo.ad_type === 'digital_product';
-            const commission = parseFloat(amount) * 0.02;
+            const commission = finalAmount * 0.02;
             const transactionId = uuidv4();
             const now = Date.now();
             
-            const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
-
-            // --- NEW: Prevent duplicate transactions for paid items, allow for free items ---
-            if (parseFloat(amount) > 0) {
-                const existingTransaction = await buyerProjectPool.query(
-                    'SELECT id FROM transactions WHERE ad_id = $1 AND buyer_id = $2 AND status IN ($3, $4)',
-                    [adId, buyerId, 'pending', 'completed']
-                );
-                if (existingTransaction.rows.length > 0) {
-                    return res.status(409).json({ error: "لقد قمت بشراء هذا المنتج بالفعل." });
-                }
-            }
-
-            // --- NEW: Spend user points if any ---
-            if (pointsSpent && parseInt(pointsSpent) > 0) {
-                const pointsPool = (await getUserProjectContext(buyerId)).pool;
-                await pointsPool.query(
-                    `UPDATE user_points SET points = points - $1 WHERE user_id = $2 AND points >= $1`,
-                    [pointsSpent, buyerId]
-                );
-            }
-    
             await buyerProjectPool.query(
                 `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at)
                  VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, $9, $10, $11)`,
-                [transactionId, adId, buyerId, sellerId, amount, commission, isDigital || parseFloat(amount) === 0 ? 'completed' : 'pending', paymentMethod, JSON.stringify(shippingAddress || {}), now, now]
+                [transactionId, adId, buyerId, sellerId, finalAmount, commission, isDigital ? 'completed' : 'pending', paymentMethod, JSON.stringify(shippingAddress), now, now]
             );
     
-            // If the item is not free, handle wallet logic
-            if (parseFloat(amount) > 0) {
-                const { pool: sellerWalletPool } = await getUserProjectContext(sellerId);
-                if (isDigital) {
-                    const netAmount = parseFloat(amount) - commission;
-                    await sellerWalletPool.query(
-                        `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2)
-                         ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
-                        [sellerId, netAmount]
-                    );
-                } else {
-                    await sellerWalletPool.query(
-                        `INSERT INTO wallets (user_id, pending_balance) VALUES ($1, $2)
-                         ON CONFLICT (user_id) DO UPDATE SET pending_balance = wallets.pending_balance + $2`,
-                        [sellerId, amount]
-                    );
-                }
+            const { pool: sellerWalletPool } = await getUserProjectContext(sellerId);
+            if (isDigital) {
+                const netAmount = finalAmount - commission;
+                await sellerWalletPool.query(
+                    `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
+                    [sellerId, netAmount]
+                );
+            } else {
+                await sellerWalletPool.query(
+                    `INSERT INTO wallets (user_id, pending_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET pending_balance = wallets.pending_balance + $2`,
+                    [sellerId, finalAmount]
+                );
             }
             
-            // Send notification to seller
             const buyerDetails = await getUserDetailsFromDefaultProject(buyerId);
-            await sendOrderNotificationToSeller(sellerId, buyerDetails.username, adInfo.title);
+            await sendOrderNotificationToSeller(sellerId, buyerDetails.username, adInfo.title, shippingAddress);
             
-            let message = "تم الدفع بنجاح! المبلغ محجوز لدى المنصة حتى تأكيد الاستلام.";
-            if (isDigital) message = "تم الشراء بنجاح! يمكنك الآن تحميل المنتج.";
-            if (parseFloat(amount) === 0) message = "تم الحصول على المنتج بنجاح باستخدام النقاط!";
-
             res.status(201).json({ 
-                message: message,
-                transactionId: transactionId 
+                message: isDigital ? "تم الشراء بنجاح! يمكنك الآن تحميل المنتج." : "تم الدفع بنجاح! المبلغ محجوز لدى المنصة حتى تأكيد الاستلام.",
+                transactionId: transactionId,
+                pointsUsed: pointsUsed
             });
     
         } catch (error) {
@@ -468,15 +563,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         const { buyerId } = req.body; 
 
         try {
-            let transaction = null;
-            let transactionPool = null;
+            let transaction = null; let transactionPool = null;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
                 if (result.rows.length > 0) {
-                    transaction = result.rows[0];
-                    transactionPool = pool;
-                    break;
+                    transaction = result.rows[0]; transactionPool = pool; break;
                 }
             }
 
@@ -508,41 +600,32 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     });
 
-    // --- NEW: Endpoint to get a download link for a digital product ---
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
-        const { callerUid } = req.query; // Passed as a query parameter
+        const { callerUid } = req.query; 
 
         if (!callerUid) {
             return res.status(401).json({ error: "Unauthorized: Missing caller ID." });
         }
 
         try {
-            // Step 1: Find the transaction and verify the buyer
             let transaction = null;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
-                if (result.rows.length > 0) {
-                    transaction = result.rows[0];
-                    break;
-                }
+                if (result.rows.length > 0) { transaction = result.rows[0]; break; }
             }
 
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             if (transaction.buyer_id !== callerUid) return res.status(403).json({ error: "Unauthorized: You are not the buyer." });
             if (transaction.status !== 'completed') return res.status(400).json({ error: "Purchase not completed." });
 
-            // Step 2: Find the ad and its digital file path
-            let adInfo = null;
-            let adProjectId = null;
+            let adInfo = null; let adProjectId = null;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT digital_product_url FROM marketing_ads WHERE id = $1', [transaction.ad_id]);
                 if (result.rows.length > 0) {
-                    adInfo = result.rows[0];
-                    adProjectId = projectId;
-                    break;
+                    adInfo = result.rows[0]; adProjectId = projectId; break;
                 }
             }
             
@@ -550,13 +633,12 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 return res.status(404).json({ error: "Digital product file not found for this ad." });
             }
 
-            // Step 3: Generate a signed URL for the file
             const supabase = projectSupabaseClients[adProjectId];
             const bucketName = 'digital-products';
             const filePath = adInfo.digital_product_url;
             const { data, error } = await supabase.storage
                 .from(bucketName)
-                .createSignedUrl(filePath, 60 * 5); // URL is valid for 5 minutes
+                .createSignedUrl(filePath, 60 * 5); 
 
             if (error) throw error;
 
@@ -565,6 +647,60 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         } catch (error) {
             console.error("Error generating download link:", error);
             res.status(500).json({ error: "Failed to generate download link." });
+        }
+    });
+    
+    // **جديد**: نقطة نهاية لتقديم طلب بائع
+    router.post('/apply-to-sell', upload.array('images', 3), async (req, res) => {
+        const { userId, details } = req.body;
+        const files = req.files;
+        
+        if (!userId || !details) {
+            return res.status(400).json({ error: "User ID and details are required." });
+        }
+
+        try {
+            const { supabase, projectId } = await getUserProjectContext(userId);
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+
+            // التحقق من وجود طلب سابق
+            const existingApp = await defaultPool.query(
+                "SELECT status FROM seller_applications WHERE user_id = $1 AND status = 'pending'",
+                [userId]
+            );
+            if(existingApp.rows.length > 0) {
+                return res.status(409).json({ error: "لديك طلب معلق بالفعل قيد المراجعة." });
+            }
+
+            let imageUrls = [];
+            if (files && files.length > 0) {
+                const bucketName = 'seller-applications'; // يجب أن يكون هذا public
+                for (const file of files) {
+                    const fileName = `${uuidv4()}-${file.originalname}`;
+                    const filePath = `${userId}/${fileName}`;
+                    const { error: uploadError } = await supabase.storage.from(bucketName).upload(filePath, file.buffer, { contentType: file.mimetype });
+                    if (uploadError) throw uploadError;
+                    const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(filePath);
+                    imageUrls.push(publicUrlData.publicUrl);
+                }
+            }
+
+            const appId = uuidv4();
+            const timestamp = Date.now();
+            await defaultPool.query(
+                `INSERT INTO seller_applications (id, user_id, details, image_urls, status, timestamp) VALUES ($1, $2, $3, $4, 'pending', $5)`,
+                [appId, userId, details, JSON.stringify(imageUrls), timestamp]
+            );
+            
+            // إرسال إشعار للمدير
+            const userDetails = await getUserDetailsFromDefaultProject(userId);
+            await sendAdminNotification(userId, userDetails.username, details);
+
+            res.status(201).json({ message: "تم إرسال طلبك بنجاح، سيتم مراجعته من قبل الإدارة." });
+
+        } catch (error) {
+            console.error("Error submitting seller application:", error);
+            res.status(500).json({ error: "Failed to submit application." });
         }
     });
 
