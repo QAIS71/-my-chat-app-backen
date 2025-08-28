@@ -221,6 +221,7 @@ async function createTables(pool) {
                 is_verified BOOLEAN DEFAULT FALSE,
                 user_role VARCHAR(50) DEFAULT 'normal',
                 user_project_id VARCHAR(255) -- **جديد: لتخزين معرف المشروع المخصص للمستخدم**
+                is_approved_seller BOOLEAN DEFAULT FALSE
             );
         `);
         // تأكد من وجود العمود user_project_id في جدول users
@@ -344,7 +345,21 @@ console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
 await pool.query(createAdsTableQuery);
 console.log('تم التأكد من وجود جدول marketing_ads وتحديثه بالحقول الجديدة.');
+      
+// داخل دالة createTables في server.js، بعد جدول users
 
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS seller_applications (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        details TEXT,
+        image_urls JSONB,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
+        timestamp BIGINT NOT NULL
+    );
+`);
+console.log('تم التأكد من وجود جدول seller_applications.');
+      
       
 // جدول لمحافظ البائعين
 await pool.query(`
