@@ -309,38 +309,53 @@ async function createTables(pool) {
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
       // Add these inside the createTables function in your server.js file
+// ==== بداية الكود الذي يجب إضافته يدوياً إلى server.js داخل دالة createTables ====
 
-// أضف هذا الكود مع بقية أكواد إنشاء الجداول في server.js
+try {
+    // 1. إضافة حقل "بائع معتمد" لجدول المستخدمين
+    await pool.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved_seller BOOLEAN DEFAULT FALSE;
+    `);
+    console.log('تم التأكد من وجود حقل is_approved_seller في جدول users.');
 
-// 1. إضافة عمود is_approved_seller لجدول المستخدمين
-await pool.query(`
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved_seller BOOLEAN DEFAULT FALSE;
-`);
-console.log('Ensured is_approved_seller column exists in users table.');
+    // 2. إنشاء جدول جديد لطلبات البائعين
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS seller_submissions (
+            id VARCHAR(255) PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            submission_data JSONB NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending', -- الحالات: pending, approved, rejected
+            created_at BIGINT NOT NULL
+        );
+    `);
+    console.log('تم التأكد من وجود جدول seller_submissions.');
 
-// 2. إنشاء جدول جديد لطلبات البائعين
-await pool.query(`
-    CREATE TABLE IF NOT EXISTS product_submissions (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
-        submission_data JSONB NOT NULL,
-        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
-        created_at BIGINT NOT NULL
-    );
-`);
-console.log('Ensured product_submissions table exists.');
+    // 3. إضافة حقول الشحن لجدول الإعلانات
+    await pool.query(`
+        ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_type VARCHAR(50) DEFAULT 'not_applicable'; -- الخيارات: free, fixed, not_applicable
+    `);
+    await pool.query(`
+        ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2) DEFAULT 0;
+    `);
+    console.log('تم التأكد من وجود حقول الشحن في جدول marketing_ads.');
 
-// 3. إضافة عمود تكلفة الشحن لجدول الإعلانات
-await pool.query(`
-    ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2) DEFAULT 0;
-`);
-console.log('Ensured shipping_cost column exists in marketing_ads table.');
+    // 4. إضافة حقول جديدة لجدول المعاملات
+    await pool.query(`
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
+    `);
+    await pool.query(`
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1;
+    `);
+    await pool.query(`
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10, 2) DEFAULT 0;
+    `);
+    console.log('تم التأكد من وجود حقول عنوان الشحن والكمية والخصم في جدول transactions.');
 
-// 4. إضافة عمود عنوان الشحن لجدول المعاملات
-await pool.query(`
-    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
-`);
-console.log('Ensured shipping_address column exists in transactions table.');
+} catch (alterError) {
+    console.error('حدث خطأ أثناء تعديل جداول قاعدة البيانات للميزات الجديدة:', alterError);
+}
+
+// ==== نهاية الكود الذي يجب إضافته يدوياً إلى server.js ====
 
 // بالكود الجديد هذا:
 const createAdsTableQuery = `
