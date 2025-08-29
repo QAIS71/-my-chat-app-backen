@@ -2031,6 +2031,71 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
         // تحديث آخر رسالة في المحادثة في المشروع الافتراضي
         await chatCheckPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessageText, timestamp, chatId]);
 
+      // ===================================================================
+// ==== بداية منطق الرد التلقائي لبوت المساعدة (الكود الجديد) ====
+// ===================================================================
+try {
+    // ابحث عن معلومات بوت المساعدة من قاعدة البيانات
+    const botUserResult = await chatCheckPool.query(
+        "SELECT uid, username FROM users WHERE user_role = 'bot' AND username = 'المساعدة' LIMIT 1"
+    );
+
+    if (botUserResult.rows.length > 0) {
+        const botUser = botUserResult.rows[0];
+        const botChatResult = await chatCheckPool.query(
+            "SELECT id FROM chats WHERE type = 'private' AND name = 'المساعدة' LIMIT 1"
+        );
+
+        // تحقق مما إذا كانت هذه المحادثة هي محادثة البوت
+        if (botChatResult.rows.length > 0 && botChatResult.rows[0].id === chatId) {
+
+            // 1. استدعاء Gemini API للحصول على رد
+            const userMessageText = text || '';
+            const geminiApiKey = process.env.GEMINI_API_KEY || "";
+            let botResponseText = "عذرًا، حدث خطأ أثناء محاولة الرد.";
+
+            if (geminiApiKey && userMessageText) {
+                const geminiPayload = {
+                    contents: [{ role: "user", parts: [{ text: userMessageText }] }]
+                };
+                const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+
+                const geminiResponse = await fetch(geminiApiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(geminiPayload)
+                });
+
+                if (geminiResponse.ok) {
+                    const result = await geminiResponse.json();
+                    if (result.candidates && result.candidates[0].content.parts[0]) {
+                        botResponseText = result.candidates[0].content.parts[0].text;
+                    }
+                }
+            }
+
+            // 2. حفظ رد البوت كرسالة جديدة في قاعدة البيانات
+            const botMessageId = uuidv4();
+            const botTimestamp = Date.now();
+
+            // سيتم حفظ رسالة البوت في نفس مشروع المستخدم الذي أرسل الرسالة
+            await pool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [botMessageId, chatId, botUser.uid, botUser.username, botResponseText, botTimestamp]
+            );
+
+            // 3. تحديث آخر رسالة في المحادثة لتكون رد البوت
+            await chatCheckPool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [botResponseText, botTimestamp, chatId]);
+        }
+    }
+} catch (botError) {
+    console.error("خطأ في منطق الرد التلقائي للبوت:", botError);
+}
+// ===================================================================
+// ==== نهاية منطق الرد التلقائي لبوت المساعدة (الكود الجديد) ====
+// ===================================================================
+
         const newMessage = {
             id: messageId,
             senderId,
