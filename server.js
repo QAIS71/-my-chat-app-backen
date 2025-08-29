@@ -1953,10 +1953,11 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             console.error(`خطأ: المحادثة ${chatId} غير موجودة.`);
             return res.status(404).json({ error: 'المحادثة غير موجودة.' });
         }
-        if (!chat.participants.includes(senderId)) {
-            console.error(`خطأ: المستخدم ${senderId} ليس عضواً في المحادثة ${chatId}.`);
-            return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
-        }
+        // الكود الجديد الصحيح
+if (!chat.participants.includes(senderId) && chat.name !== 'المساعدة') {
+    console.error(`خطأ: المستخدم ${senderId} ليس عضواً في المحادثة ${chatId}.`);
+    return res.status(403).json({ error: 'المستخدم ليس عضواً في هذه المحادثة.' });
+}
 
         if (chat.type === 'group' && chat.send_permission === 'admins_only') {
             const senderRole = chat.member_roles[senderId];
