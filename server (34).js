@@ -310,9 +310,7 @@ async function createTables(pool) {
 
       // Add these inside the createTables function in your server.js file
 
-// داخل دالة createTables(pool)
-
-// أضف هذا الكود مع بقية أكواد إنشاء الجداول
+// أضف هذا الكود مع بقية أكواد إنشاء الجداول في server.js
 
 // 1. إضافة عمود is_approved_seller لجدول المستخدمين
 await pool.query(`
@@ -332,30 +330,17 @@ await pool.query(`
 `);
 console.log('Ensured product_submissions table exists.');
 
-// 3. إضافة أعمدة الشحن لجدول الإعلانات
-await pool.query(`
-    ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_countries TEXT[];
-`);
+// 3. إضافة عمود تكلفة الشحن لجدول الإعلانات
 await pool.query(`
     ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2) DEFAULT 0;
 `);
-console.log('Ensured shipping columns exist in marketing_ads table.');
+console.log('Ensured shipping_cost column exists in marketing_ads table.');
 
 // 4. إضافة عمود عنوان الشحن لجدول المعاملات
 await pool.query(`
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
 `);
 console.log('Ensured shipping_address column exists in transactions table.');
-
-// 5. إضافة عمود خصم العمولة لمحافظ البائعين
-await pool.query(`
-    ALTER TABLE wallets ADD COLUMN IF NOT EXISTS has_active_discount BOOLEAN DEFAULT FALSE;
-`);
-console.log('Ensured has_active_discount column exists in wallets table.');
-
-        // server.js
-
-// ... inside the createTables function
 
 // بالكود الجديد هذا:
 const createAdsTableQuery = `
