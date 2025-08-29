@@ -42,51 +42,34 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
     
-    // marketingRoutes.js
+    // جديد: دالة لإرسال إشعار طلب بائع للمؤسس
+    async function sendSellerApplicationNotification(applicantUsername, submissionId, info) {
+        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        try {
+            // العثور على المؤسس (admin)
+            const adminResult = await pool.query("SELECT uid FROM users WHERE user_role = 'admin' LIMIT 1");
+            if (adminResult.rows.length === 0) {
+                console.log("لا يوجد حساب مؤسس لإرسال الإشعار إليه.");
+                return;
+            }
+            const adminUid = adminResult.rows[0].uid;
 
-// ❗❗ استبدل الدالة القديمة بهذه الدالة الجديدة ❗❗
-async function sendAdminSystemMessage(adminUid, messageText) {
-    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            // إرسال الإشعار للمؤسس عبر OneSignal
+            await sendOneSignalNotification(
+                [adminUid],
+                " طلب بائع جديد!",
+                `طلب جديد من المستخدم: ${applicantUsername}. للموافقة أو الرفض، استخدم الأوامر في محادثة "المساعدة".`,
+                `https://watsaligram-frontend-web.netlify.app/`, // رابط يفتح التطبيق
+                null // لا توجد صورة للمرسل
+            );
 
-    try {
-        // --- بداية التعديل ---
-        // الخطوة 1: ابحث عن بوت "المساعدة" والمحادثة الخاصة به
-        const botUserResult = await pool.query("SELECT uid FROM users WHERE username = 'المساعدة' AND user_role = 'bot' LIMIT 1");
-        if (botUserResult.rows.length === 0) {
-            console.error("لم يتم العثور على حساب بوت المساعدة.");
-            return;
+            // يمكنك أيضًا إرسال رسالة نظام إلى محادثة المساعدة الخاصة بالمسؤول
+            console.log(`تم إرسال إشعار طلب بائع إلى المؤسس ${adminUid}.`);
+
+        } catch (error) {
+            console.error("خطأ في إرسال إشعار طلب البائع:", error);
         }
-        const BOT_UID = botUserResult.rows[0].uid;
-        const BOT_USERNAME = 'المساعدة';
-
-        const chatResult = await pool.query("SELECT id FROM chats WHERE name = 'المساعدة' AND type = 'private' LIMIT 1");
-        if (chatResult.rows.length === 0) {
-            console.error("لم يتم العثور على محادثة المساعدة.");
-            return;
-        }
-        const chatId = chatResult.rows[0].id;
-        // --- نهاية التعديل ---
-
-        // الخطوة 2: أرسل الرسالة إلى محادثة "المساعدة"
-        const messageId = uuidv4();
-        const timestamp = Date.now();
-        
-        const { pool: adminProjectPool } = await getUserProjectContext(adminUid);
-        await adminProjectPool.query(
-            `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
-             VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
-            [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
-        );
-        
-        // الخطوة 3: تحديث آخر رسالة في محادثة "المساعدة"
-        await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بائع جديد للمراجعة...", timestamp, chatId]);
-
-        console.log(`Sent internal system message to admin ${adminUid} in 'المساعدة' chat.`);
-
-    } catch (error) {
-        console.error("Error sending internal system message to admin:", error);
     }
-}
 
 
     // Periodic cleanup job
