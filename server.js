@@ -308,9 +308,7 @@ async function createTables(pool) {
         `);
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
-      // Add these inside the createTables function in your server.js file
-
-// داخل دالة createTables(pool)
+      // server.js -> inside createTables(pool) function
 
 // أضف هذا الكود مع بقية أكواد إنشاء الجداول
 
@@ -352,10 +350,7 @@ await pool.query(`
     ALTER TABLE wallets ADD COLUMN IF NOT EXISTS has_active_discount BOOLEAN DEFAULT FALSE;
 `);
 console.log('Ensured has_active_discount column exists in wallets table.');
-
-        // server.js
-
-// ... inside the createTables function
+      
 
 // بالكود الجديد هذا:
 const createAdsTableQuery = `
