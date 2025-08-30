@@ -2042,7 +2042,49 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             mediaType: messageMediaType,
             senderProfileBg: senderProfileBg || null
         };
-        
+      
+      // --- بداية الكود الجديد لمعالجة أوامر المدير ---
+        const senderDetails = await getUserDetailsFromDefaultProject(senderId);
+        if (senderDetails && senderDetails.user_role === 'admin' && chat.name === '👑 الإدارة') {
+            
+            const approveMatch = text.match(/^\/approve_seller\s+([a-zA-Z0-9\-]+)/);
+            const rejectMatch = text.match(/^\/reject_seller\s+([a-zA-Z0-9\-]+)/);
+
+            if (approveMatch) {
+                const submissionId = approveMatch[1];
+                try {
+                    const submissionResult = await chatCheckPool.query('SELECT user_id, status FROM seller_submissions WHERE id = $1', [submissionId]);
+                    if (submissionResult.rows.length > 0 && submissionResult.rows[0].status === 'pending') {
+                        const applicantId = submissionResult.rows[0].user_id;
+                        await chatCheckPool.query('UPDATE users SET is_approved_seller = TRUE WHERE uid = $1', [applicantId]);
+                        await chatCheckPool.query('UPDATE seller_submissions SET status = $1 WHERE id = $2', ['approved', submissionId]);
+                        
+                        // إرسال رد للمدير وإشعار للمستخدم
+                        await sendSystemMessage(senderId, `✅ تم الموافقة على طلب البائع بنجاح.`);
+                        await sendSystemMessage(applicantId, `🎉 تهانينا! تمت الموافقة على طلبك كبائع. يمكنك الآن البدء في نشر منتجاتك في قسم التسويق.`);
+                    } else {
+                        await sendSystemMessage(senderId, `⚠️ لم يتم العثور على الطلب أو تمت معالجته مسبقاً.`);
+                    }
+                } catch (e) { console.error(e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الموافقة.`); }
+            
+            } else if (rejectMatch) {
+                const submissionId = rejectMatch[1];
+                try {
+                    const submissionResult = await chatCheckPool.query('SELECT user_id, status FROM seller_submissions WHERE id = $1', [submissionId]);
+                     if (submissionResult.rows.length > 0 && submissionResult.rows[0].status === 'pending') {
+                        const applicantId = submissionResult.rows[0].user_id;
+                        await chatCheckPool.query('UPDATE seller_submissions SET status = $1 WHERE id = $2', ['rejected', submissionId]);
+
+                        // إرسال رد للمدير وإشعار للمستخدم
+                        await sendSystemMessage(senderId, `❌ تم رفض طلب البائع.`);
+                        await sendSystemMessage(applicantId, ` regrettably, your seller application was not approved at this time. Please ensure your details meet our criteria and feel free to re-apply later.`);
+                    } else {
+                        await sendSystemMessage(senderId, `⚠️ لم يتم العثور على الطلب أو تمت معالجته مسبقاً.`);
+                    }
+                } catch (e) { console.error(e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الرفض.`); }
+            }
+        }
+        // --- نهاية الكود الجديد لمعالجة أوامر المدير ---
         // =====================================================================
         // ==== بداية التعديل: استبدال كود الإشعار القديم بكود OneSignal ====
         // =====================================================================
