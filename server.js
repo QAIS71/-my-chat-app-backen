@@ -2042,49 +2042,52 @@ app.post('/api/chats/:chatId/messages', upload.single('mediaFile'), async (req, 
             mediaType: messageMediaType,
             senderProfileBg: senderProfileBg || null
         };
-      
-      // --- بداية الكود الجديد لمعالجة أوامر المدير ---
-        const senderDetails = await getUserDetailsFromDefaultProject(senderId);
-        if (senderDetails && senderDetails.user_role === 'admin' && chat.name === '👑 الإدارة') {
-            
-            const approveMatch = text.match(/^\/approve_seller\s+([a-zA-Z0-9\-]+)/);
-            const rejectMatch = text.match(/^\/reject_seller\s+([a-zA-Z0-9\-]+)/);
+      // --- بداية الكود المحسن لمعالجة أوامر المدير بالمعرف القصير ---
+const senderDetails = await getUserDetailsFromDefaultProject(senderId);
+if (senderDetails && senderDetails.user_role === 'admin' && chat.participants.includes(BOT_UID)) {
 
-            if (approveMatch) {
-                const submissionId = approveMatch[1];
-                try {
-                    const submissionResult = await chatCheckPool.query('SELECT user_id, status FROM seller_submissions WHERE id = $1', [submissionId]);
-                    if (submissionResult.rows.length > 0 && submissionResult.rows[0].status === 'pending') {
-                        const applicantId = submissionResult.rows[0].user_id;
-                        await chatCheckPool.query('UPDATE users SET is_approved_seller = TRUE WHERE uid = $1', [applicantId]);
-                        await chatCheckPool.query('UPDATE seller_submissions SET status = $1 WHERE id = $2', ['approved', submissionId]);
-                        
-                        // إرسال رد للمدير وإشعار للمستخدم
-                        await sendSystemMessage(senderId, `✅ تم الموافقة على طلب البائع بنجاح.`);
-                        await sendSystemMessage(applicantId, `🎉 تهانينا! تمت الموافقة على طلبك كبائع. يمكنك الآن البدء في نشر منتجاتك في قسم التسويق.`);
-                    } else {
-                        await sendSystemMessage(senderId, `⚠️ لم يتم العثور على الطلب أو تمت معالجته مسبقاً.`);
-                    }
-                } catch (e) { console.error(e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الموافقة.`); }
-            
-            } else if (rejectMatch) {
-                const submissionId = rejectMatch[1];
-                try {
-                    const submissionResult = await chatCheckPool.query('SELECT user_id, status FROM seller_submissions WHERE id = $1', [submissionId]);
-                     if (submissionResult.rows.length > 0 && submissionResult.rows[0].status === 'pending') {
-                        const applicantId = submissionResult.rows[0].user_id;
-                        await chatCheckPool.query('UPDATE seller_submissions SET status = $1 WHERE id = $2', ['rejected', submissionId]);
+    // Regex جديد للبحث عن الأمر مع المعرف المكون من 8 أرقام
+    const approveMatch = text.match(/^\/(?:approve_seller|موافقة_بائع)\s+(\d{8})/);
+    const rejectMatch = text.match(/^\/(?:reject_seller|رفض_بائع)\s+(\d{8})/);
 
-                        // إرسال رد للمدير وإشعار للمستخدم
-                        await sendSystemMessage(senderId, `❌ تم رفض طلب البائع.`);
-                        await sendSystemMessage(applicantId, ` regrettably, your seller application was not approved at this time. Please ensure your details meet our criteria and feel free to re-apply later.`);
-                    } else {
-                        await sendSystemMessage(senderId, `⚠️ لم يتم العثور على الطلب أو تمت معالجته مسبقاً.`);
-                    }
-                } catch (e) { console.error(e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الرفض.`); }
+    if (approveMatch) {
+        const customId = approveMatch[1]; // هذا هو المعرف القصير (8 أرقام)
+        try {
+            // البحث عن المستخدم باستخدام المعرف القصير
+            const userResult = await chatCheckPool.query('SELECT uid FROM users WHERE custom_id = $1', [customId]);
+            if (userResult.rows.length > 0) {
+                const applicantId = userResult.rows[0].uid;
+                // تحديث جدول المستخدمين مباشرة
+                await chatCheckPool.query('UPDATE users SET is_approved_seller = TRUE WHERE uid = $1', [applicantId]);
+                // تحديث حالة آخر طلب للمستخدم (اختياري لكن جيد)
+                await chatCheckPool.query(`UPDATE seller_submissions SET status = 'approved' WHERE user_id = $1 AND status = 'pending'`, [applicantId]);
+
+                await sendSystemMessage(senderId, `✅ تم الموافقة على البائع صاحب المعرف ${customId}.`);
+                await sendSystemMessage(applicantId, `🎉 تهانينا! تمت الموافقة على طلبك كبائع. يمكنك الآن البدء في نشر منتجاتك.`);
+            } else {
+                await sendSystemMessage(senderId, `⚠️ لم يتم العثور على مستخدم بالمعرف ${customId}.`);
             }
-        }
-        // --- نهاية الكود الجديد لمعالجة أوامر المدير ---
+        } catch (e) { console.error("Admin Command Error:", e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الموافقة.`); }
+
+    } else if (rejectMatch) {
+        const customId = rejectMatch[1]; // هذا هو المعرف القصير
+        try {
+            const userResult = await chatCheckPool.query('SELECT uid FROM users WHERE custom_id = $1', [customId]);
+            if (userResult.rows.length > 0) {
+                const applicantId = userResult.rows[0].uid;
+                // تحديث حالة آخر طلب للمستخدم
+                await chatCheckPool.query(`UPDATE seller_submissions SET status = 'rejected' WHERE user_id = $1 AND status = 'pending'`, [applicantId]);
+
+                await sendSystemMessage(senderId, `❌ تم رفض طلب البائع صاحب المعرف ${customId}.`);
+                await sendSystemMessage(applicantId, `للأسف، لم تتم الموافقة على طلبك كبائع في الوقت الحالي.`);
+            } else {
+                await sendSystemMessage(senderId, `⚠️ لم يتم العثور على مستخدم بالمعرف ${customId}.`);
+            }
+        } catch (e) { console.error("Admin Command Error:", e); await sendSystemMessage(senderId, `حدث خطأ فني أثناء الرفض.`); }
+    }
+}
+// --- نهاية الكود المحسن ---
+
         // =====================================================================
         // ==== بداية التعديل: استبدال كود الإشعار القديم بكود OneSignal ====
         // =====================================================================
