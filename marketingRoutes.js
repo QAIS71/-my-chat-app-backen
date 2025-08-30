@@ -180,14 +180,15 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             if (admin.rows.length > 0) {
                 const adminId = admin.rows[0].uid;
                 const messageForAdmin = `
-                🔔 طلب بائع جديد من: ${applicant.username} (ID: ${applicant.custom_id})
-                التفاصيل: ${details}
-                ---
-                للموافقة، أرسل: /approve_seller ${submissionId}
-                للرفض، أرسل: /reject_seller ${submissionId}
-                `;
-                await sendSystemMessage(adminId, messageForAdmin);
-            }
+🔔 طلب بائع جديد من: ${applicant.username} (ID: ${applicant.custom_id})
+التفاصيل: ${details}
+---
+للموافقة، أرسل:
+/موافقة_بائع ${applicant.custom_id}
+
+للرفض، أرسل:
+/رفض_بائع ${applicant.custom_id}
+`;
             
             res.status(201).json({ message: "Application submitted successfully." });
         } catch (error) {
