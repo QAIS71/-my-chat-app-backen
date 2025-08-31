@@ -335,9 +335,6 @@ await pool.query(`
 // 4. إضافة عمود عنوان الشحن لجدول المعاملات
 await pool.query(`
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
-`);// 1. إضافة عمود is_approved_seller لجدول المستخدمين
-await pool.query(`
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved_seller BOOLEAN DEFAULT FALSE;
 `);
 
 // 2. إنشاء جدول جديد لطلبات البائعين
