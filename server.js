@@ -309,32 +309,9 @@ async function createTables(pool) {
         console.log(`تم إنشاء الجداول بنجاح (إذا لم تكن موجودة بالفعل) للمشروع: ${pool === projectDbPools[BACKEND_DEFAULT_PROJECT_ID] ? 'الافتراضي' : 'غير الافتراضي'}.`);
 
       // Add these inside the createTables function in your server.js file
-
 // 1. إضافة عمود is_approved_seller لجدول المستخدمين
 await pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved_seller BOOLEAN DEFAULT FALSE;
-`);
-
-// 2. إنشاء جدول جديد لطلبات البائعين
-await pool.query(`
-    CREATE TABLE IF NOT EXISTS seller_applications (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
-        details TEXT,
-        image_urls JSONB,
-        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
-        created_at BIGINT NOT NULL
-    );
-`);
-
-// 3. إضافة أعمدة الشحن لجدول الإعلانات
-await pool.query(`
-    ALTER TABLE marketing_ads ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2) DEFAULT 0;
-`);
-
-// 4. إضافة عمود عنوان الشحن لجدول المعاملات
-await pool.query(`
-    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
 `);
 
 // 2. إنشاء جدول جديد لطلبات البائعين
