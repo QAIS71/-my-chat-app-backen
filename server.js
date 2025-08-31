@@ -828,22 +828,35 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// نقطة نهاية للحصول على معلومات المستخدم بواسطة customId
-app.get('/api/user/by-custom-id/:customId', async (req, res) => {
-    const { customId } = req.params;
-    // نستخدم Pool المشروع الافتراضي لجلب معلومات المستخدم (لأن المستخدمين موجودون هنا)
+// نقطة نهاية جديدة لجلب ملف المستخدم المحدث بالكامل
+app.get('/api/user/profile/:userId', async (req, res) => {
+    const { userId } = req.params;
+    // نستخدم Pool المشروع الافتراضي لأن معلومات المستخدمين موجودة هنا
     const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
     try {
-        const result = await pool.query('SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role, user_project_id FROM users WHERE custom_id = $1', [customId]);
+        const result = await pool.query(
+            'SELECT uid, username, custom_id, profile_bg_url, is_verified, user_role, is_approved_seller FROM users WHERE uid = $1',
+            [userId]
+        );
         const user = result.rows[0];
         if (user) {
-            res.status(200).json({ uid: user.uid, username: user.username, customId: user.custom_id, profileBg: user.profile_bg_url, isVerified: user.is_verified, userRole: user.user_role, userProjectId: user.user_project_id });
+            // أعدنا تسمية الحقول لتتوافق مع ما يتوقعه الكود في الواجهة الأمامية
+            const userProfile = {
+                uid: user.uid,
+                username: user.username,
+                customId: user.custom_id,
+                profileBg: user.profile_bg_url,
+                isVerified: user.is_verified,
+                userRole: user.user_role,
+                is_approved_seller: user.is_approved_seller // الأهم هنا
+            };
+            res.status(200).json(userProfile);
         } else {
             res.status(404).json({ error: 'المستخدم غير موجود.' });
         }
     } catch (error) {
-        console.error('خطأ: فشل جلب معلومات المستخدم بواسطة المعرف المخصص:', error);
-        res.status(500).json({ error: 'فشل جلب معلومات المستخدم.' });
+        console.error('خطأ: فشل جلب ملف المستخدم:', error);
+        res.status(500).json({ error: 'فشل جلب ملف المستخدم.' });
     }
 });
 
