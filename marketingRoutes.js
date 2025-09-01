@@ -43,8 +43,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // --- NEW HELPER ---
-    // دالة جديدة لإرسال رسالة نظامية للمؤسس بطلب البائع الجديد
+    // --- تعديل: تم تحديث هذه الدالة لإضافة صور الطلب ---
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         try {
@@ -74,9 +73,20 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                     [chatId, 'private', BOT_USERNAME, JSON.stringify([founderId, BOT_UID]), null, Date.now()]
                 );
             }
+
+            // --- إضافة جديدة: جلب صور الطلب ---
+            const appResult = await pool.query("SELECT image_urls FROM seller_applications WHERE id = $1", [applicationId]);
+            const imageUrls = (appResult.rows.length > 0 && appResult.rows[0].image_urls) ? appResult.rows[0].image_urls : [];
+            let imageUrlsText = "";
+            if (imageUrls.length > 0) {
+                // سيقوم الفرونت بتحويل هذه الروابط لنصوص قابلة للنقر
+                imageUrlsText = "\n\n🖼️ صور مرفقة:\n" + imageUrls.join("\n");
+            }
             
+            // --- تعديل: تحديث نص الرسالة ليشمل الصور ---
             const messageText = `
-طلب جديد للانضمام كبائع من المستخدم: ${userDetails.username} (المعرف: ${userDetails.custom_id}).
+طلب جديد للانضمام كبائع من المستخدم: ${userDetails.username} (المعرف: ${userDetails.custom_id}).${imageUrlsText}
+
 [SYSTEM_ACTION:SELLER_APP,APP_ID:${applicationId},USER_ID:${userDetails.uid}]
             `;
             const messageId = uuidv4();
@@ -107,8 +117,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // Helper function to send a system message to a seller's chat (Original function)
-    async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle) {
+    // --- تعديل: تم تحديث هذه الدالة لإضافة عنوان الشحن ---
+    async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot'; 
         const BOT_USERNAME = '🔔 إشعارات النظام';
@@ -131,7 +141,23 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 );
             }
 
-            const messageText = `🎉 طلب بيع جديد!\nالمنتج: ${adTitle}\nالمشتري: ${buyerUsername}\n\nيرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
+            // --- إضافة جديدة: بناء نص عنوان الشحن ---
+            let shippingDetailsText = "";
+            if (shippingAddress) {
+                shippingDetailsText = `
+\n🚚 عنوان الشحن:
+الدولة: ${shippingAddress.country || 'غير محدد'}
+المدينة: ${shippingAddress.city || 'غير محدد'}
+العنوان: ${shippingAddress.address || 'غير محدد'}
+`;
+            }
+
+            // --- تعديل: تحديث نص الرسالة ليشمل العنوان ---
+            const messageText = `🎉 طلب بيع جديد!
+المنتج: ${adTitle}
+المشتري: ${buyerUsername}${shippingDetailsText}
+
+يرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
             const messageId = uuidv4();
             const timestamp = Date.now();
             
@@ -142,7 +168,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
             );
             
-            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [messageText, timestamp, chatId]);
+            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بيع جديد", timestamp, chatId]);
 
             console.log(`Sent order notification to seller ${sellerId} for ad "${adTitle}"`);
 
@@ -481,12 +507,11 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 const originalPrice = parseFloat(adInfo.price);
                 const calculatedDiscountedAmount = originalPrice * 0.90;
 
-                // Security check: ensure amount from client is very close to server-calculated amount
                 if (Math.abs(finalAmount - calculatedDiscountedAmount) > 0.01) {
                     console.warn(`Potential price tampering detected for user ${buyerId}. Client price: ${finalAmount}, Server price: ${calculatedDiscountedAmount}`);
                     return res.status(400).json({ error: "Price mismatch on discount." });
                 }
-                finalAmount = calculatedDiscountedAmount; // Use server-calculated price
+                finalAmount = calculatedDiscountedAmount;
             }
 
             const commission = finalAmount * 0.02;
@@ -522,7 +547,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             }
             
             const buyerDetails = await getUserDetailsFromDefaultProject(buyerId);
-            await sendOrderNotificationToSeller(sellerId, buyerDetails.username, adInfo.title);
+            // --- تعديل: تمرير عنوان الشحن إلى دالة الإشعار ---
+            await sendOrderNotificationToSeller(sellerId, buyerDetails.username, adInfo.title, shipping_address);
             
             res.status(201).json({ 
                 message: isDigital ? "تم الشراء بنجاح! يمكنك الآن تحميل المنتج." : "تم الدفع بنجاح! المبلغ محجوز لدى المنصة حتى تأكيد الاستلام.",
