@@ -40,11 +40,10 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // --- MODIFIED: Chat name changed to "الاداره 😎" ---
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
-        const BOT_USERNAME = '😎 الاداره'; // MODIFIED NAME
+        const BOT_USERNAME = '😎 الاداره'; 
 
         try {
             const founderResult = await pool.query("SELECT uid FROM users WHERE user_role = 'admin' LIMIT 1");
@@ -97,11 +96,10 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // --- MODIFIED: Chat name changed to "تسويق وتسليجرم" ---
     async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot'; 
-        const BOT_USERNAME = '🛒 تسويق وتسليجرم'; // MODIFIED NAME
+        const BOT_USERNAME = '🛒 تسويق وتسليجرم'; 
 
         try {
             let chatResult = await pool.query(
@@ -152,12 +150,11 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
-    // --- NEW: Function to send problem reports to the founder ---
     async function sendProblemReportToFounder(reportDetails) {
         const { transaction, reporter, role, description } = reportDetails;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
-        const BOT_USERNAME = '🚨 سجل المشاكل'; // NEW CHAT NAME
+        const BOT_USERNAME = '🚨 سجل المشاكل'; 
 
         try {
             const founderResult = await pool.query("SELECT uid, profile_bg_url FROM users WHERE user_role = 'admin' LIMIT 1");
@@ -220,7 +217,6 @@ ${description}
     }
 
     setInterval(async () => {
-        console.log("Running cleanup job for expired deals and pins...");
         const now = Date.now();
         for (const projectId in projectDbPools) {
             const pool = projectDbPools[projectId];
@@ -432,6 +428,7 @@ ${description}
     router.post('/purchase', async (req, res) => {
         const { adId, buyerId, amount, paymentMethod, shipping_address, used_points_discount } = req.body;
         if (!adId || !buyerId || !amount || !paymentMethod) return res.status(400).json({ error: "Missing required fields." });
+        
         try {
             let adInfo = null;
             for (const projectId in projectDbPools) {
@@ -439,10 +436,22 @@ ${description}
                 if (result.rows.length > 0) { adInfo = result.rows[0]; break; }
             }
             if (!adInfo) return res.status(404).json({ error: "Ad not found." });
-            if (!isDigital && (!shipping_address || !shipping_address.country)) return res.status(400).json({ error: "Shipping address is required." });
-            if (adInfo.shipping_countries && adInfo.shipping_countries.length > 0 && !adInfo.shipping_countries.includes(shipping_address.country)) return res.status(400).json({ error: `Sorry, seller does not ship to ${shipping_address.country}.` });
             
+            // --- FIX IS HERE ---
+            // Define isDigital BEFORE using it.
             const isDigital = adInfo.ad_type === 'digital_product';
+    
+            // Now the check can safely use the 'isDigital' variable.
+            if (!isDigital && (!shipping_address || !shipping_address.country)) {
+                 return res.status(400).json({ error: "Shipping address is required for this product." });
+            }
+            if (!isDigital && adInfo.shipping_countries && adInfo.shipping_countries.length > 0) {
+                if (!adInfo.shipping_countries.includes(shipping_address.country)) {
+                    return res.status(400).json({ error: `Sorry, the seller does not ship to ${shipping_address.country}.` });
+                }
+            }
+            // --- END OF FIX ---
+
             let finalAmount = parseFloat(amount);
             if (used_points_discount) {
                 const { pool: buyerPointsPool } = await getUserProjectContext(buyerId);
@@ -476,7 +485,6 @@ ${description}
         }
     });
     
-    // --- MODIFIED: Added shipping_address to the SELECT statement ---
     router.get('/seller/orders/:userId', async (req, res) => {
         const { userId } = req.params;
         let allOrders = [];
@@ -568,14 +576,13 @@ ${description}
         }
     });
     
-    // --- NEW ENDPOINT: Report a Problem ---
     router.post('/report-problem', async (req, res) => {
         const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
         if (!transactionId || !reporterId || !reporterRole || !problemDescription) {
             return res.status(400).json({ error: "Missing required fields for problem report." });
         }
         try {
-            let transaction, transactionPool;
+            let transaction;
             for (const projectId in projectDbPools) {
                 const result = await projectDbPools[projectId].query('SELECT t.*, a.title as ad_title FROM transactions t JOIN marketing_ads a ON t.ad_id = a.id WHERE t.id = $1', [transactionId]);
                 if (result.rows.length > 0) { transaction = result.rows[0]; break; }
@@ -591,9 +598,8 @@ ${description}
         }
     });
 
-    // --- NEW ENDPOINT: Resolve a Dispute (Admin Only) ---
     router.post('/resolve-dispute', async (req, res) => {
-        const { transactionId, callerUid, resolutionAction } = req.body; // resolutionAction: 'REFUND_BUYER' or 'PAY_SELLER'
+        const { transactionId, callerUid, resolutionAction } = req.body; 
         try {
             const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
             if (!callerDetails || callerDetails.user_role !== 'admin') {
