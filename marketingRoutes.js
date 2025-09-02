@@ -336,7 +336,7 @@ ${description}
             let digitalFileUrl = null;
             if (ad_type === 'digital_product' && digitalFile) {
                 const digitalBucket = 'digital-products';
-                const fileName = `${uuidv4()}-${digitalFile.originalname}`;
+                const fileName = `${uuidv4()}.${digitalFile.originalname.split('.').pop()}`;
                 const { error } = await supabase.storage.from(digitalBucket).upload(`${seller_id}/${fileName}`, digitalFile.buffer, { contentType: digitalFile.mimetype });
                 if (error) throw error;
                 digitalFileUrl = `${seller_id}/${fileName}`;
