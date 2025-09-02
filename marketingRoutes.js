@@ -172,7 +172,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             } else {
                 chatId = uuidv4();
                 await pool.query(
-                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+
                     [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now()]
                 );
             }
