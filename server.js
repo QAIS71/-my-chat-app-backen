@@ -457,7 +457,7 @@ console.log('تم التأكد من وجود جدول transactions.');
                 await pool.query(
                     `INSERT INTO chats (id, type, name, admin_id, participants, member_roles, last_message, timestamp, profile_bg_url, contact_names, send_permission)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-                    [botChatId, 'private', 'المساعدة', null, JSON.stringify(participantsArray), JSON.stringify({}), null, timestamp, null, JSON.stringify(contactNamesObject), 'all']
+                    [botChatId, 'private', 'المساعدة', null, JSON.stringify(participantsArray), JSON.stringify({}), null, timestamp, "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/file_00000000056c61f9ab8433154adb0630.png", JSON.stringify(contactNamesObject), 'all']
                 );
                 console.log('تم إنشاء محادثة "المساعدة" (البوت) بمعرف UID:', botUid, 'معرف المحادثة:', botChatId);
             } else {
