@@ -606,27 +606,57 @@ router.get('/buyer/orders/:userId', async (req, res) => {
         }
     });
     
-    router.post('/report-problem', async (req, res) => {
-        const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
-        if (!transactionId || !reporterId || !reporterRole || !problemDescription) {
-            return res.status(400).json({ error: "Missing required fields for problem report." });
-        }
-        try {
-            let transaction;
-            for (const projectId in projectDbPools) {
-                const result = await projectDbPools[projectId].query('SELECT t.*, a.title as ad_title FROM transactions t JOIN marketing_ads a ON t.ad_id = a.id WHERE t.id = $1', [transactionId]);
-                if (result.rows.length > 0) { transaction = result.rows[0]; break; }
+    // ===== استبدل الكود القديم بالكامل بهذا الكود =====
+router.post('/report-problem', async (req, res) => {
+    const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
+    if (!transactionId || !reporterId || !reporterRole || !problemDescription) {
+        return res.status(400).json({ error: "Missing required fields for problem report." });
+    }
+    try {
+        // الخطوة 1: البحث عن المعاملة في أي مشروع
+        let transaction = null;
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
+            if (result.rows.length > 0) {
+                transaction = result.rows[0];
+                break; // وجدنا المعاملة، نخرج من البحث
             }
-            if (!transaction) return res.status(404).json({ error: "Transaction not found." });
-            const reporterDetails = await getUserDetailsFromDefaultProject(reporterId);
-            if (!reporterDetails) return res.status(404).json({ error: "Reporter not found." });
-            await sendProblemReportToFounder({ transaction, reporter: reporterDetails, role: reporterRole, description: problemDescription });
-            res.status(200).json({ message: "تم إرسال بلاغك إلى الإدارة بنجاح." });
-        } catch (error) {
-            console.error("Error reporting problem:", error);
-            res.status(500).json({ error: "Failed to report problem." });
         }
-    });
+
+        // إذا لم يتم العثور على المعاملة بعد البحث في كل المشاريع
+        if (!transaction) {
+            return res.status(404).json({ error: "Transaction not found." });
+        }
+
+        // الخطوة 2: الآن بعد أن وجدنا المعاملة، نبحث عن الإعلان المرتبط بها في أي مشروع
+        const adDetails = await getAdFromAnyProject(transaction.ad_id);
+
+        // الخطوة 3: دمج بيانات المعاملة مع بيانات الإعلان
+        const fullTransactionDetails = {
+            ...transaction,
+            ad_title: adDetails ? adDetails.title : 'إعلان محذوف'
+        };
+
+        const reporterDetails = await getUserDetailsFromDefaultProject(reporterId);
+        if (!reporterDetails) {
+            return res.status(404).json({ error: "Reporter not found." });
+        }
+
+        // الخطوة 4: إرسال البلاغ إلى المؤسس بالبيانات المكتملة
+        await sendProblemReportToFounder({
+            transaction: fullTransactionDetails,
+            reporter: reporterDetails,
+            role: reporterRole,
+            description: problemDescription
+        });
+
+        res.status(200).json({ message: "تم إرسال بلاغك إلى الإدارة بنجاح." });
+    } catch (error) {
+        console.error("Error reporting problem:", error);
+        res.status(500).json({ error: "Failed to report problem." });
+    }
+});
 
     router.post('/resolve-dispute', async (req, res) => {
         const { transactionId, callerUid, resolutionAction } = req.body; 
