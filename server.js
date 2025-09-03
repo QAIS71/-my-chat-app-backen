@@ -2047,7 +2047,7 @@ await sendOneSignalNotification(
     recipients,
     `رسالة جديدة من ${senderName}`,
     lastMessageText,
-    `${FRONTEND_URL}/?chatId=${chatId}`, // <<-- تم تعديل هذا السطر
+    `${FRONTEND_URL}/?chatId=${chatId}`,
     senderProfileBg
                 );
             }
