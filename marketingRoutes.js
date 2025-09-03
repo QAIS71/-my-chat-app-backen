@@ -40,6 +40,24 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
 
+    // ===== أضف هذا الكود =====
+async function getAdFromAnyProject(adId) {
+    if (!adId) return null;
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const adResult = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
+            if (adResult.rows.length > 0) {
+                return adResult.rows[0];
+            }
+        } catch (error) {
+            console.error(`Error searching for ad ${adId} in project ${projectId}:`, error);
+        }
+    }
+    return null;
+}
+// ===== نهاية الكود المضاف =====
+
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
@@ -485,57 +503,69 @@ ${description}
         }
     });
     
-    router.get('/seller/orders/:userId', async (req, res) => {
-        const { userId } = req.params;
-        let allOrders = [];
-        try {
-            for (const projectId in projectDbPools) {
-                const pool = projectDbPools[projectId];
-                const result = await pool.query(
-                    `SELECT t.*, a.title as ad_title 
-                     FROM transactions t 
-                     JOIN marketing_ads a ON t.ad_id = a.id 
-                     WHERE t.seller_id = $1 ORDER BY t.created_at DESC`, [userId]
-                );
-                const enrichedOrders = await Promise.all(result.rows.map(async (order) => {
-                    const buyerDetails = await getUserDetailsFromDefaultProject(order.buyer_id);
-                    return { ...order, buyer_username: buyerDetails ? buyerDetails.username : 'N/A' };
-                }));
-                allOrders = allOrders.concat(enrichedOrders);
-            }
-            allOrders.sort((a,b) => b.created_at - a.created_at);
-            res.status(200).json(allOrders);
-        } catch (error) {
-            console.error("Error fetching seller orders:", error);
-            res.status(500).json({ error: "Failed to fetch seller orders." });
+    // ===== استبدل الكود القديم بهذا الكود =====
+router.get('/seller/orders/:userId', async (req, res) => {
+    const { userId } = req.params;
+    let allOrders = [];
+    try {
+        // Step 1: Fetch all transactions for this seller from all projects
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            const result = await pool.query(`SELECT * FROM transactions WHERE seller_id = $1`, [userId]);
+            allOrders.push(...result.rows);
         }
-    });
 
-    router.get('/buyer/orders/:userId', async (req, res) => {
-        const { userId } = req.params;
-        let allOrders = [];
-        try {
-            for (const projectId in projectDbPools) {
-                const pool = projectDbPools[projectId];
-                const result = await pool.query(
-                    `SELECT t.*, a.title as ad_title, a.ad_type, a.digital_product_url
-                     FROM transactions t 
-                     JOIN marketing_ads a ON t.ad_id = a.id 
-                     WHERE t.buyer_id = $1 ORDER BY t.created_at DESC`, [userId]
-                );
-                const enrichedOrders = await Promise.all(result.rows.map(async (order) => {
-                    const sellerDetails = await getUserDetailsFromDefaultProject(order.seller_id);
-                    return { ...order, seller_username: sellerDetails ? sellerDetails.username : 'N/A' };
-                }));
-                allOrders = allOrders.concat(enrichedOrders);
-            }
-            allOrders.sort((a,b) => b.created_at - a.created_at);
-            res.status(200).json(allOrders);
-        } catch (error) {
-            console.error("Error fetching buyer orders:", error);
-            res.status(500).json({ error: "Failed to fetch buyer orders." });
+        // Step 2: Enrich each transaction with ad and buyer details
+        const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
+            const adDetails = await getAdFromAnyProject(order.ad_id);
+            const buyerDetails = await getUserDetailsFromDefaultProject(order.buyer_id);
+            return { 
+                ...order, 
+                ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
+                buyer_username: buyerDetails ? buyerDetails.username : 'N/A' 
+            };
+        }));
+
+        enrichedOrders.sort((a,b) => b.created_at - a.created_at);
+        res.status(200).json(enrichedOrders);
+    } catch (error) {
+        console.error("Error fetching seller orders:", error);
+        res.status(500).json({ error: "Failed to fetch seller orders." });
+    }
+});
+
+    // ===== استبدل الكود القديم بهذا الكود =====
+router.get('/buyer/orders/:userId', async (req, res) => {
+    const { userId } = req.params;
+    let allOrders = [];
+    try {
+        // Step 1: Fetch all transactions for this buyer from all projects
+        for (const projectId in projectDbPools) {
+            const pool = projectDbPools[projectId];
+            const result = await pool.query(`SELECT * FROM transactions WHERE buyer_id = $1`, [userId]);
+            allOrders.push(...result.rows);
         }
-    });
+
+        // Step 2: Enrich each transaction with ad and seller details
+        const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
+            const adDetails = await getAdFromAnyProject(order.ad_id);
+            const sellerDetails = await getUserDetailsFromDefaultProject(order.seller_id);
+            return { 
+                ...order, 
+                ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
+                ad_type: adDetails ? adDetails.ad_type : null,
+                digital_product_url: adDetails ? adDetails.digital_product_url : null,
+                seller_username: sellerDetails ? sellerDetails.username : 'N/A' 
+            };
+        }));
+
+        enrichedOrders.sort((a,b) => b.created_at - a.created_at);
+        res.status(200).json(enrichedOrders);
+    } catch (error) {
+        console.error("Error fetching buyer orders:", error);
+        res.status(500).json({ error: "Failed to fetch buyer orders." });
+    }
+});
     
     router.get('/seller/notifications/count/:userId', async (req, res) => {
         const { userId } = req.params;
