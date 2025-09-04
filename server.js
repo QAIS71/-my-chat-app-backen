@@ -828,6 +828,55 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// ==========================================================
+// ===== أضف هذا الكود المحذوف المسؤول عن بدء المحادثات =====
+// ==========================================================
+app.post('/api/chats/private', async (req, res, next) => {
+    const { user1Id, user2Id, user1Name, user2Name, contactName } = req.body;
+    // نستخدم Pool المشروع الافتراضي لإنشاء محادثة فردية
+    const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+
+    if (!user1Id || !user2Id || !user1Name || !user2Name || !contactName) {
+        return res.status(400).json({ error: 'بيانات المستخدمين مطلوبة لإنشاء محادثة.' });
+    }
+
+    try {
+        const existingChatResult = await pool.query(`
+            SELECT id FROM chats
+            WHERE type = 'private'
+            AND (participants @> to_jsonb(ARRAY[$1]::VARCHAR[]) AND participants @> to_jsonb(ARRAY[$2]::VARCHAR[]))
+        `, [user1Id, user2Id]);
+
+        if (existingChatResult.rows.length > 0) {
+            const existingChatId = existingChatResult.rows[0].id;
+            return res.status(200).json({ message: 'المحادثة موجودة بالفعل.', chatId: existingChatId });
+        }
+
+        const newChatId = uuidv4();
+        const timestamp = Date.now();
+        const participantsArray = [user1Id, user2Id];
+        const contactNamesObject = {
+            [user1Id]: contactName,
+            [user2Id]: user1Name
+        };
+
+        const user2Profile = await pool.query('SELECT profile_bg_url FROM users WHERE uid = $1', [user2Id]);
+        const chatProfileBg = user2Profile.rows[0] ? user2Profile.rows[0].profile_bg_url : null;
+
+        await pool.query(
+            `INSERT INTO chats (id, type, participants, last_message, timestamp, contact_names, profile_bg_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [newChatId, 'private', JSON.stringify(participantsArray), null, timestamp, JSON.stringify(contactNamesObject), chatProfileBg]
+        );
+
+        console.log('تم إنشاء محادثة فردية جديدة:', newChatId);
+        res.status(201).json({ message: 'تم إنشاء المحادثة.', chatId: newChatId });
+    } catch (error) {
+        // تمرير الخطأ إلى معالج الأخطاء العام
+        next(error);
+    }
+});
+
 // نقطة نهاية جديدة لجلب ملف المستخدم المحدث بالكامل
 app.get('/api/user/profile/:userId', async (req, res) => {
     const { userId } = req.params;
