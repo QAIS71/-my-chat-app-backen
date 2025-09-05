@@ -496,6 +496,7 @@ ${description}
             
             const buyerDetails = await getUserDetailsFromDefaultProject(buyerId);
             await sendOrderNotificationToSeller(adInfo.seller_id, buyerDetails.username, adInfo.title, shipping_address);
+await sendAdminNewOrderNotification(adInfo, buyerDetails);
             res.status(201).json({ message: isDigital ? "تم الشراء بنجاح!" : "تم الدفع بنجاح!", transactionId: transactionId });
         } catch (error) {
             console.error("Error during purchase:", error);
