@@ -107,7 +107,7 @@ async function getAdFromAnyProject(adId) {
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["طلب بائع جديد", timestamp, chatId]);
             
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `/?chatId=${chatId}`, userDetails.profile_bg_url);
+               await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `${FRONTEND_URL}/?chatId=${chatId}`, userDetails.profile_bg_url); 
             }
         } catch (error) {
             console.error("Error sending seller application notification:", error);
@@ -241,7 +241,7 @@ ${description}
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["بلاغ مشكلة جديد", timestamp, chatId]);
             
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `/?chatId=${chatId}`, founder.profile_bg_url);
+                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `${FRONTEND_URL}/?chatId=${chatId}`, founder.profile_bg_url);
             }
         } catch (error) {
             console.error("Error sending problem report notification:", error);
