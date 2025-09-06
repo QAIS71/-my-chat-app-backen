@@ -168,6 +168,22 @@ async function getAdFromAnyProject(adId) {
         }
     }
 
+    // << أضف هذا الكود في نهاية دالة sendOrderNotificationToSeller >>
+
+if (sendOneSignalNotification) {
+    const buyerDetails = await getUserDetailsFromDefaultProject(buyerUsername); // نحتاج جلب تفاصيل المشتري
+    const sellerDetails = await getUserDetailsFromDefaultProject(sellerId); // تفاصيل البائع
+    
+    // إرسال الإشعار
+    await sendOneSignalNotification(
+        [sellerId], 
+        '🎉 طلب بيع جديد!', 
+        `لقد قام ${buyerUsername} بشراء "${adTitle}" منك.`, 
+        `/?open=chats`, // رابط يفتح التطبيق على صفحة المحادثات
+        "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png" // أيقونة بوت التسويق
+    );
+}
+
     async function sendProblemReportToFounder(reportDetails) {
         const { transaction, reporter, role, description } = reportDetails;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -502,23 +518,7 @@ ${description}
             res.status(500).json({ error: "Failed to process purchase." });
         }
     });
-
-    // << أضف هذا الكود في نهاية دالة sendOrderNotificationToSeller >>
-
-if (sendOneSignalNotification) {
-    const buyerDetails = await getUserDetailsFromDefaultProject(buyerUsername); // نحتاج جلب تفاصيل المشتري
-    const sellerDetails = await getUserDetailsFromDefaultProject(sellerId); // تفاصيل البائع
     
-    // إرسال الإشعار
-    await sendOneSignalNotification(
-        [sellerId], 
-        '🎉 طلب بيع جديد!', 
-        `لقد قام ${buyerUsername} بشراء "${adTitle}" منك.`, 
-        `/?open=chats`, // رابط يفتح التطبيق على صفحة المحادثات
-        "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png" // أيقونة بوت التسويق
-    );
-}
-
     // ===== استبدل الكود القديم بهذا الكود =====
 router.get('/seller/orders/:userId', async (req, res) => {
     const { userId } = req.params;
