@@ -61,7 +61,9 @@ async function getAdFromAnyProject(adId) {
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
-        const BOT_USERNAME = '😎 الاداره'; 
+        const BOT_USERNAME = '😎 الاداره';
+        // -- تم تعريف رابط الشعار هنا لضمان تطابقه
+        const BOT_ICON_URL = "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/file_00000000aa7061f98f0e2efc79e076f2.png";
 
         try {
             const founderResult = await pool.query("SELECT uid FROM users WHERE user_role = 'admin' LIMIT 1");
@@ -79,16 +81,16 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [chatId, 'private', BOT_USERNAME, JSON.stringify([founderId, BOT_UID]), null, Date.now(), "https://i.ibb.co/FbfVv7k/1.png"]
-);
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founderId, BOT_UID]), null, Date.now(), BOT_ICON_URL] // استخدام المتغير هنا
+                );
             }
 
             const appResult = await pool.query("SELECT image_urls FROM seller_applications WHERE id = $1", [applicationId]);
             const imageUrls = (appResult.rows.length > 0 && appResult.rows[0].image_urls) ? appResult.rows[0].image_urls : [];
             let imageUrlsText = (imageUrls.length > 0) ? "\n\n🖼️ صور مرفقة:\n" + imageUrls.join("\n") : "";
-            
+
             const messageText = `
 طلب جديد للانضمام كبائع من المستخدم: ${userDetails.username} (المعرف: ${userDetails.custom_id}).${imageUrlsText}
 
@@ -105,9 +107,10 @@ async function getAdFromAnyProject(adId) {
             );
 
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["طلب بائع جديد", timestamp, chatId]);
-            
+
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `/?chatId=${chatId}`, userDetails.profile_bg_url);
+                // ✅✅✅ التصحيح الأول: تم تغيير userDetails.profile_bg_url إلى BOT_ICON_URL
+                await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `/?chatId=${chatId}`, BOT_ICON_URL);
             }
         } catch (error) {
             console.error("Error sending seller application notification:", error);
@@ -116,8 +119,10 @@ async function getAdFromAnyProject(adId) {
 
     async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-        const BOT_UID = 'system-notifications-bot'; 
-        const BOT_USERNAME = '🛒 تسويق وتسليجرم'; 
+        const BOT_UID = 'system-notifications-bot';
+        const BOT_USERNAME = '🛒 تسويق وتسليجرم';
+        // -- تم تعريف رابط الشعار هنا لضمان تطابقه
+        const BOT_ICON_URL = "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/325546-200.png";
 
         try {
             let chatResult = await pool.query(
@@ -131,10 +136,10 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), "https://i.ibb.co/xJmB4Tj/2.png"]
-);
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), BOT_ICON_URL] // استخدام المتغير هنا
+                );
             }
 
             let shippingDetailsText = "";
@@ -154,15 +159,26 @@ async function getAdFromAnyProject(adId) {
 يرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
             const messageId = uuidv4();
             const timestamp = Date.now();
-            
+
             const { pool: sellerProjectPool } = await getUserProjectContext(sellerId);
             await sellerProjectPool.query(
-                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type)
                  VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
                 [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
             );
-            
+
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بيع جديد", timestamp, chatId]);
+
+            // ✅✅✅ الإضافة: تم إضافة كود إرسال الإشعار الذي كان ناقصاً
+            if (sendOneSignalNotification) {
+                await sendOneSignalNotification(
+                    [sellerId],
+                    BOT_USERNAME,
+                    `🎉 طلب بيع جديد للمنتج: ${adTitle}`,
+                    `/?chatId=${chatId}`,
+                    BOT_ICON_URL
+                );
+            }
         } catch (error) {
             console.error("Error sending system notification to seller:", error);
         }
@@ -172,7 +188,9 @@ async function getAdFromAnyProject(adId) {
         const { transaction, reporter, role, description } = reportDetails;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
-        const BOT_USERNAME = '🚨 سجل المشاكل'; 
+        const BOT_USERNAME = '🚨 سجل المشاكل';
+        // -- تم تعريف رابط الشعار هنا لضمان تطابقه
+        const BOT_ICON_URL = "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images%20(1).jpeg";
 
         try {
             const founderResult = await pool.query("SELECT uid, profile_bg_url FROM users WHERE user_role = 'admin' LIMIT 1");
@@ -190,9 +208,9 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), "https://i.ibb.co/Q8b5QzW/3.png"]
-);
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), BOT_ICON_URL] // استخدام المتغير هنا
+                );
             }
 
             const seller = await getUserDetailsFromDefaultProject(transaction.seller_id);
@@ -225,9 +243,10 @@ ${description}
             );
 
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["بلاغ مشكلة جديد", timestamp, chatId]);
-            
+
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `/?chatId=${chatId}`, founder.profile_bg_url);
+                // ✅✅✅ التصحيح الثاني: تم تغيير founder.profile_bg_url إلى BOT_ICON_URL
+                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `/?chatId=${chatId}`, BOT_ICON_URL);
             }
         } catch (error) {
             console.error("Error sending problem report notification:", error);
@@ -253,7 +272,7 @@ ${description}
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
                 const result = await pool.query('SELECT * FROM marketing_ads');
-                
+
                 const enrichedAds = await Promise.all(result.rows.map(async (ad) => {
                     const sellerDetails = await getUserDetailsFromDefaultProject(ad.seller_id);
                     return { ...ad, seller_username: sellerDetails ? sellerDetails.username : 'غير معروف', seller_is_verified: sellerDetails ? sellerDetails.is_verified : false, seller_user_role: sellerDetails ? sellerDetails.user_role : 'normal' };
@@ -301,7 +320,7 @@ ${description}
 
     router.post('/applications/:appId/action', async (req, res) => {
         const { appId } = req.params;
-        const { action, callerUid } = req.body; 
+        const { action, callerUid } = req.body;
         if (!callerUid || !action || !['approve', 'reject'].includes(action)) {
              return res.status(400).json({ error: "Missing or invalid parameters." });
         }
@@ -329,7 +348,7 @@ ${description}
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
     router.post('/', adUploads, async (req, res) => {
         const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_cost } = req.body;
-        const imageFiles = req.files.images; 
+        const imageFiles = req.files.images;
         const digitalFile = req.files.digital_product_file ? req.files.digital_product_file[0] : null;
 
         if (!title || !description || !ad_type || !seller_id || !price) {
@@ -446,7 +465,7 @@ ${description}
     router.post('/purchase', async (req, res) => {
         const { adId, buyerId, amount, paymentMethod, shipping_address, used_points_discount } = req.body;
         if (!adId || !buyerId || !amount || !paymentMethod) return res.status(400).json({ error: "Missing required fields." });
-        
+
         try {
             let adInfo = null;
             for (const projectId in projectDbPools) {
@@ -454,12 +473,9 @@ ${description}
                 if (result.rows.length > 0) { adInfo = result.rows[0]; break; }
             }
             if (!adInfo) return res.status(404).json({ error: "Ad not found." });
-            
-            // --- FIX IS HERE ---
-            // Define isDigital BEFORE using it.
+
             const isDigital = adInfo.ad_type === 'digital_product';
-    
-            // Now the check can safely use the 'isDigital' variable.
+
             if (!isDigital && (!shipping_address || !shipping_address.country)) {
                  return res.status(400).json({ error: "Shipping address is required for this product." });
             }
@@ -468,7 +484,6 @@ ${description}
                     return res.status(400).json({ error: `Sorry, the seller does not ship to ${shipping_address.country}.` });
                 }
             }
-            // --- END OF FIX ---
 
             let finalAmount = parseFloat(amount);
             if (used_points_discount) {
@@ -479,21 +494,21 @@ ${description}
                 if (Math.abs(finalAmount - calculatedDiscountedAmount) > 0.01) return res.status(400).json({ error: "Price mismatch." });
                 finalAmount = calculatedDiscountedAmount;
             }
-            
+
             const commission = finalAmount * 0.02;
             const transactionId = uuidv4();
             const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
             await buyerProjectPool.query(`INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, $9, $10, $11)`, [transactionId, adId, buyerId, adInfo.seller_id, finalAmount, commission, isDigital ? 'completed' : 'pending', paymentMethod, isDigital ? null : JSON.stringify(shipping_address), Date.now(), Date.now()]);
-            
+
             if (used_points_discount) await (await getUserProjectContext(buyerId)).pool.query("UPDATE user_points SET points = points - 100 WHERE user_id = $1", [buyerId]);
-            
+
             const { pool: sellerWalletPool } = await getUserProjectContext(adInfo.seller_id);
             if (isDigital) {
                 await sellerWalletPool.query(`INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`, [adInfo.seller_id, finalAmount - commission]);
             } else {
                 await sellerWalletPool.query(`INSERT INTO wallets (user_id, pending_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET pending_balance = wallets.pending_balance + $2`, [adInfo.seller_id, finalAmount]);
             }
-            
+
             const buyerDetails = await getUserDetailsFromDefaultProject(buyerId);
             await sendOrderNotificationToSeller(adInfo.seller_id, buyerDetails.username, adInfo.title, shipping_address);
             res.status(201).json({ message: isDigital ? "تم الشراء بنجاح!" : "تم الدفع بنجاح!", transactionId: transactionId });
@@ -502,7 +517,7 @@ ${description}
             res.status(500).json({ error: "Failed to process purchase." });
         }
     });
-    
+
     // ===== استبدل الكود القديم بهذا الكود =====
 router.get('/seller/orders/:userId', async (req, res) => {
     const { userId } = req.params;
@@ -519,10 +534,10 @@ router.get('/seller/orders/:userId', async (req, res) => {
         const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
             const adDetails = await getAdFromAnyProject(order.ad_id);
             const buyerDetails = await getUserDetailsFromDefaultProject(order.buyer_id);
-            return { 
-                ...order, 
+            return {
+                ...order,
                 ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
-                buyer_username: buyerDetails ? buyerDetails.username : 'N/A' 
+                buyer_username: buyerDetails ? buyerDetails.username : 'N/A'
             };
         }));
 
@@ -550,12 +565,12 @@ router.get('/buyer/orders/:userId', async (req, res) => {
         const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
             const adDetails = await getAdFromAnyProject(order.ad_id);
             const sellerDetails = await getUserDetailsFromDefaultProject(order.seller_id);
-            return { 
-                ...order, 
+            return {
+                ...order,
                 ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
                 ad_type: adDetails ? adDetails.ad_type : null,
                 digital_product_url: adDetails ? adDetails.digital_product_url : null,
-                seller_username: sellerDetails ? sellerDetails.username : 'N/A' 
+                seller_username: sellerDetails ? sellerDetails.username : 'N/A'
             };
         }));
 
@@ -566,7 +581,7 @@ router.get('/buyer/orders/:userId', async (req, res) => {
         res.status(500).json({ error: "Failed to fetch buyer orders." });
     }
 });
-    
+
     router.get('/seller/notifications/count/:userId', async (req, res) => {
         const { userId } = req.params;
         let totalCount = 0;
@@ -585,7 +600,7 @@ router.get('/buyer/orders/:userId', async (req, res) => {
 
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
-        const { buyerId } = req.body; 
+        const { buyerId } = req.body;
         try {
             let transaction, transactionPool;
             for (const projectId in projectDbPools) {
@@ -605,7 +620,7 @@ router.get('/buyer/orders/:userId', async (req, res) => {
             res.status(500).json({ error: "Failed to confirm order." });
         }
     });
-    
+
     // ===== استبدل الكود القديم بالكامل بهذا الكود =====
 router.post('/report-problem', async (req, res) => {
     const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
@@ -659,7 +674,7 @@ router.post('/report-problem', async (req, res) => {
 });
 
     router.post('/resolve-dispute', async (req, res) => {
-        const { transactionId, callerUid, resolutionAction } = req.body; 
+        const { transactionId, callerUid, resolutionAction } = req.body;
         try {
             const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
             if (!callerDetails || callerDetails.user_role !== 'admin') {
@@ -696,7 +711,7 @@ router.post('/report-problem', async (req, res) => {
 
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
-        const { callerUid } = req.query; 
+        const { callerUid } = req.query;
         if (!callerUid) return res.status(401).json({ error: "Unauthorized." });
         try {
             let transaction;
@@ -716,7 +731,7 @@ router.post('/report-problem', async (req, res) => {
             if (!adInfo || !adInfo.digital_product_url) return res.status(404).json({ error: "Digital file not found." });
 
             const supabase = projectSupabaseClients[adProjectId];
-            const { data, error } = await supabase.storage.from('digital-products').createSignedUrl(adInfo.digital_product_url, 300); 
+            const { data, error } = await supabase.storage.from('digital-products').createSignedUrl(adInfo.digital_product_url, 300);
             if (error) throw error;
             res.status(200).json({ downloadUrl: data.signedUrl });
         } catch (error) {
