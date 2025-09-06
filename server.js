@@ -2679,8 +2679,7 @@ app.delete('/api/group/:groupId/leave', async (req, res) => {
 
 // NEW: Import and use marketing routes
 const marketingRoutes = require('./marketingRoutes'); 
-app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID));
-
+app.use('/api/marketing', marketingRoutes(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification));
 
 // ==== بداية كود نقطة نهاية حفظ اشتراك الإشعارات ====
 app.post('/api/subscribe', async (req, res) => {
