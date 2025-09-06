@@ -227,7 +227,7 @@ ${description}
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["بلاغ مشكلة جديد", timestamp, chatId]);
             
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `/?chatId=${chatId}`, founder.profile_bg_url);
+                await sendOneSignalNotification([founder.uid], BOT_USERNAME, `بلاغ جديد بخصوص مشكلة من ${reporter.username}.`, `/?chatId=${chatId}`, "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images%20(1).jpeg"); 
             }
         } catch (error) {
             console.error("Error sending problem report notification:", error);
