@@ -494,7 +494,7 @@ ${description}
                 await sellerWalletPool.query(`INSERT INTO wallets (user_id, pending_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET pending_balance = wallets.pending_balance + $2`, [adInfo.seller_id, finalAmount]);
             }
             
-            const buyerDetails = await getUserDetailsFromDefaultProject(buyerId);
+            await sendOrderNotificationToSeller(adInfo.seller_id, buyerDetails.username, adInfo.title, shipping_address); // لا تغيير هنا، ولكن تأكد من أن buyerDetails.username هو الاسم الصحيح
             await sendOrderNotificationToSeller(adInfo.seller_id, buyerDetails.username, adInfo.title, shipping_address);
             res.status(201).json({ message: isDigital ? "تم الشراء بنجاح!" : "تم الدفع بنجاح!", transactionId: transactionId });
         } catch (error) {
@@ -502,7 +502,23 @@ ${description}
             res.status(500).json({ error: "Failed to process purchase." });
         }
     });
+
+    // << أضف هذا الكود في نهاية دالة sendOrderNotificationToSeller >>
+
+if (sendOneSignalNotification) {
+    const buyerDetails = await getUserDetailsFromDefaultProject(buyerUsername); // نحتاج جلب تفاصيل المشتري
+    const sellerDetails = await getUserDetailsFromDefaultProject(sellerId); // تفاصيل البائع
     
+    // إرسال الإشعار
+    await sendOneSignalNotification(
+        [sellerId], 
+        '🎉 طلب بيع جديد!', 
+        `لقد قام ${buyerUsername} بشراء "${adTitle}" منك.`, 
+        `/?open=chats`, // رابط يفتح التطبيق على صفحة المحادثات
+        "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png" // أيقونة بوت التسويق
+    );
+}
+
     // ===== استبدل الكود القديم بهذا الكود =====
 router.get('/seller/orders/:userId', async (req, res) => {
     const { userId } = req.params;
