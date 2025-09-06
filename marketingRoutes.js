@@ -163,9 +163,23 @@ async function getAdFromAnyProject(adId) {
             );
             
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بيع جديد", timestamp, chatId]);
-        } catch (error) {
-            console.error("Error sending system notification to seller:", error);
+        if (sendOneSignalNotification) {
+            const sellerDetails = await getUserDetailsFromDefaultProject(sellerId);
+            const sellerProfileBg = sellerDetails ? sellerDetails.profile_bg_url : "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png";
+
+            await sendOneSignalNotification(
+                [sellerId],
+                BOT_USERNAME,
+                `🎉 لديك طلب بيع جديد للمنتج: ${adTitle}`,
+                `/?chatId=${chatId}`,
+                sellerProfileBg
+            );
         }
+        // =========================================================
+
+    } catch (error) {
+        console.error("Error sending system notification to seller:", error);
+    }
     }
 
     async function sendProblemReportToFounder(reportDetails) {
