@@ -107,7 +107,7 @@ async function getAdFromAnyProject(adId) {
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["طلب بائع جديد", timestamp, chatId]);
             
             if (sendOneSignalNotification) {
-                await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `/?chatId=${chatId}`, userDetails.profile_bg_url);
+                await sendOneSignalNotification([founderId], BOT_USERNAME, `لديك طلب بائع جديد من ${userDetails.username}.`, `/?chatId=${chatId}`, "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/file_00000000aa7061f98f0e2efc79e076f2.png");
             }
         } catch (error) {
             console.error("Error sending seller application notification:", error);
