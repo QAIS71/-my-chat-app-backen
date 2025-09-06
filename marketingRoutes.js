@@ -3,8 +3,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 
-module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification) {
-
+module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification, FRONTEND_URL) {
+    
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
