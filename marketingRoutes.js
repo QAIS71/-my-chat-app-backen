@@ -168,12 +168,12 @@ async function getAdFromAnyProject(adId) {
             const sellerProfileBg = sellerDetails ? sellerDetails.profile_bg_url : "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png";
 
             await sendOneSignalNotification(
-                [sellerId],
-                BOT_USERNAME,
-                `🎉 لديك طلب بيع جديد للمنتج: ${adTitle}`,
-                `/?chatId=${chatId}`,
-                sellerProfileBg
-            );
+    [sellerId],
+    BOT_USERNAME,
+    `🎉 لديك طلب بيع جديد للمنتج: ${adTitle}`,
+    `${FRONTEND_URL}/?chatId=${chatId}`, // <--- تم إصلاحها
+    sellerProfileBg
+);
         }
         // =========================================================
 
