@@ -79,10 +79,10 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founderId, BOT_UID]), null, Date.now(), "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/file_00000000aa7061f98f0e2efc79e076f2.png"]
-                );
+    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [chatId, 'private', BOT_USERNAME, JSON.stringify([founderId, BOT_UID]), null, Date.now(), "https://i.ibb.co/FbfVv7k/1.png"]
+);
             }
 
             const appResult = await pool.query("SELECT image_urls FROM seller_applications WHERE id = $1", [applicationId]);
@@ -131,10 +131,10 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png"]
-                );
+    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), "https://i.ibb.co/xJmB4Tj/2.png"]
+);
             }
 
             let shippingDetailsText = "";
@@ -190,9 +190,9 @@ async function getAdFromAnyProject(adId) {
             } else {
                 chatId = uuidv4();
                 await pool.query(
-                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images%20(1).jpeg"]
-                );
+    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), "https://i.ibb.co/Q8b5QzW/3.png"]
+);
             }
 
             const seller = await getUserDetailsFromDefaultProject(transaction.seller_id);
