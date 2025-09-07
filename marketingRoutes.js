@@ -3,6 +3,158 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 
+// في بداية الملف، بعد const router = express.Router();
+const crypto = require('crypto'); // سنحتاجها لإنشاء معرفات فريدة
+
+// ==========================================================
+// ✅ أضف هذه النقاط النهائية الجديدة داخل الدالة المصدرة
+// module.exports = function(...) { ... هنا ... }
+// ==========================================================
+
+    // --- نقاط نهاية جديدة للدفع والسحب ---
+
+    // قاعدة بيانات مؤقتة في الذاكرة لتتبع عمليات الدفع بالعملات الرقمية
+    // في بيئة الإنتاج، يجب استخدام قاعدة بيانات حقيقية مثل Redis أو PostgreSQL
+    const pendingCryptoPayments = new Map();
+
+    // 1. إنشاء طلب دفع بالعملات الرقمية
+    router.post('/create-crypto-payment', async (req, res) => {
+        const { adId, buyerId, amount } = req.body;
+        // TODO: في بيئة الإنتاج، يجب استدعاء Binance API هنا لإنشاء عنوان إيداع جديد
+        // حاليًا، سنقوم بمحاكاة العملية
+        const paymentId = crypto.randomBytes(16).toString('hex');
+        const depositAddress = "TYourSimulatedTRC20Address" + paymentId.substring(0, 10); // عنوان فريد للمحاكاة
+        
+        pendingCryptoPayments.set(paymentId, {
+            adId,
+            buyerId,
+            amount,
+            address: depositAddress,
+            network: "TRC20 (Tron)",
+            status: 'pending',
+            createdAt: Date.now()
+        });
+
+        // TODO: يمكنك هنا تشغيل Webhook أو آلية لمراقبة هذا العنوان على البلوك تشين
+        console.log(`Created pending payment ${paymentId} for address ${depositAddress}`);
+
+        res.status(201).json({
+            paymentId: paymentId,
+            address: depositAddress,
+            network: "TRC20 (Tron)",
+            amount: parseFloat(amount).toFixed(6) // الدقة مهمة في العملات الرقمية
+        });
+    });
+
+    // 2. التحقق من حالة الدفع
+    router.get('/check-crypto-payment/:paymentId', (req, res) => {
+        const { paymentId } = req.params;
+        const payment = pendingCryptoPayments.get(paymentId);
+
+        if (!payment) {
+            return res.status(404).json({ error: 'Payment request not found.' });
+        }
+        
+        // TODO: هنا يتم التحقق الفعلي من البلوك تشين إذا كان المبلغ قد وصل
+        // حاليًا، سنقوم بمحاكاة التأكيد بعد فترة زمنية
+        if (payment.status === 'pending' && (Date.now() - payment.createdAt > 30000)) { // محاكاة بعد 30 ثانية
+            payment.status = 'completed';
+            // هنا يتم إكمال عملية الشراء في قاعدة البيانات (كما في دالة /purchase)
+            console.log(`Payment ${paymentId} confirmed (simulated).`);
+        }
+
+        res.status(200).json({ status: payment.status });
+    });
+
+    // 3. إرسال طلب سحب
+    router.post('/withdraw', async (req, res) => {
+        const { userId, amount, method, address } = req.body;
+        const { pool } = await getUserProjectContext(userId);
+
+        try {
+            const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1", [userId]);
+            const availableBalance = walletResult.rows[0] ? parseFloat(walletResult.rows[0].available_balance) : 0;
+            
+            if (amount > availableBalance) {
+                return res.status(400).json({ error: "رصيد السحب أكبر من رصيدك المتاح." });
+            }
+
+            // خصم المبلغ من الرصيد المتاح ووضعه في الرصيد المعلق مؤقتًا
+            await pool.query(
+                `UPDATE wallets SET available_balance = available_balance - $1, pending_balance = pending_balance + $1 WHERE user_id = $2`,
+                [amount, userId]
+            );
+
+            // حفظ طلب السحب في قاعدة البيانات
+            const withdrawalId = uuidv4();
+            await pool.query(
+                `INSERT INTO withdrawals (id, user_id, amount, method, address, status, created_at) VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
+                [withdrawalId, userId, amount, method, address, Date.now()]
+            );
+
+            // TODO: إرسال إشعار للمؤسس
+            // await sendWithdrawalRequestToFounder(withdrawalId, ...);
+            
+            res.status(201).json({ message: "تم إرسال طلب السحب بنجاح، ستتم مراجعته خلال 48 ساعة." });
+
+        } catch (error) {
+            console.error("Error creating withdrawal request:", error);
+            res.status(500).json({ error: "Failed to create withdrawal request." });
+        }
+    });
+
+    // 4. جلب سجل عمليات السحب
+    router.get('/withdrawals/:userId', async (req, res) => {
+        const { userId } = req.params;
+        const { pool } = await getUserProjectContext(userId);
+        try {
+            const result = await pool.query("SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
+            res.status(200).json(result.rows);
+        } catch (error) {
+            console.error("Error fetching withdrawals:", error);
+            res.status(500).json({ error: "Failed to fetch withdrawals." });
+        }
+    });
+
+    // 5. موافقة المؤسس على السحب
+    router.post('/withdrawals/:withdrawalId/approve', async (req, res) => {
+        const { withdrawalId } = req.params;
+        const { callerUid } = req.body;
+        
+        try {
+            const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
+            if (!callerDetails || callerDetails.user_role !== 'admin') {
+                return res.status(403).json({ error: "Unauthorized." });
+            }
+            // يجب البحث في جميع المشاريع للعثور على طلب السحب
+            // (منطق معقد، حاليًا نفترض أنه في نفس مشروع المؤسس)
+            const { pool } = await getUserProjectContext(callerUid);
+
+            const withdrawalResult = await pool.query("SELECT * FROM withdrawals WHERE id = $1 AND status = 'pending'", [withdrawalId]);
+            if (withdrawalResult.rows.length === 0) {
+                return res.status(404).json({ error: "Withdrawal request not found or already processed." });
+            }
+            const withdrawal = withdrawalResult.rows[0];
+
+            // TODO: هنا يتم استدعاء Stripe Payout API أو إرسال العملات الرقمية يدويًا
+            // بعد التأكد من نجاح العملية، يتم تحديث قاعدة البيانات
+
+            // تحديث حالة الطلب
+            await pool.query("UPDATE withdrawals SET status = 'completed' WHERE id = $1", [withdrawalId]);
+
+            // خصم المبلغ من الرصيد المعلق
+            await pool.query("UPDATE wallets SET pending_balance = pending_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.user_id]);
+
+            // TODO: إرسال إشعار للبائع بنجاح العملية
+            
+            res.status(200).json({ message: "Withdrawal approved and processed." });
+
+        } catch (error) {
+            console.error("Error approving withdrawal:", error);
+            res.status(500).json({ error: "Failed to approve withdrawal." });
+        }
+    });
+
 // ===== ملاحظة هامة لك: =====
 // هذا هو الكود النهائي للمسارات مع كل الإضافات التي طلبتها.
 // تذكر أنه يجب عليك إضافة الجداول والأعمدة الجديدة إلى قاعدة بياناتك.
