@@ -8,6 +8,8 @@ const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
 const webPush = require('web-push'); // ==== تمت إضافة هذه المكتبة للإشعارات ====
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // لم обработка платежей Stripe
+const axios = require('axios'); // لإجراء طلبات HTTP (سنحتاجها لـ Binance)
 
 // تهيئة تطبيق Express
 const app = express();
@@ -337,19 +339,21 @@ await pool.query(`
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
 `);
 
-  // 1. جدول جديد لتسجيل طلبات السحب
+// داخل دالة createTables في server.js، مع بقية استعلامات CREATE TABLE
 await pool.query(`
     CREATE TABLE IF NOT EXISTS withdrawals (
         id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) NOT NULL,
+        seller_id VARCHAR(255) NOT NULL,
         amount NUMERIC(10, 2) NOT NULL,
-        method VARCHAR(50) NOT NULL, -- 'crypto' or 'stripe'
-        details JSONB NOT NULL, -- لبيانات عنوان المحفظة أو البطاقة
-        status VARCHAR(50) DEFAULT 'pending', -- pending, completed, rejected
+        method VARCHAR(50) NOT NULL, -- 'stripe' or 'crypto'
+        status VARCHAR(50) DEFAULT 'pending', -- pending, approved, rejected
+        withdrawal_details JSONB, -- لتخزين عنوان المحفظة أو بيانات الحساب البنكي
         created_at BIGINT NOT NULL,
-        updated_at BIGINT NOT NULL
+        updated_at BIGINT
     );
 `);
+console.log('تم التأكد من وجود جدول withdrawals.');
+
 
 // 2. تعديل جدول wallets لإضافة الرصيد قيد السحب
 await pool.query(`
