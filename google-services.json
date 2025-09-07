@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "447199486639",
+    "project_id": "watsaligram-4733d",
+    "storage_bucket": "watsaligram-4733d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:447199486639:android:920b537fe31c0c1926aa5a",
+        "android_client_info": {
+          "package_name": "com.watsaligram.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD3vs7QZjd6wM3L7_mJQB4qcOU4Ai3HeWo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
