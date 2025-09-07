@@ -2728,6 +2728,77 @@ app.post('/api/subscribe', async (req, res) => {
     }
 });
 // ==== نهاية كود نقطة نهاية حفظ اشتراك الإشعارات ====
+// في ملف server.js، قبل app.listen
+// Webhook endpoint for Stripe to confirm payments
+// This endpoint needs to be outside the /api/* middleware to handle raw body
+app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    let event;
+
+    try {
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+        console.error(`❌ Stripe webhook signature error:`, err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const { transaction_id, ad_id, pin_details } = session.metadata;
+
+        console.log(`✅ Stripe payment successful for session: ${session.id}`);
+
+        // Handle successful payment
+        if (transaction_id) {
+            // It's a product purchase
+            try {
+                // Find which project the transaction belongs to
+                let transaction, transactionPool;
+                for (const projectId in projectDbPools) {
+                    const pool = projectDbPools[projectId];
+                    const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transaction_id]);
+                    if (result.rows.length > 0) {
+                        transaction = result.rows[0];
+                        transactionPool = pool;
+                        break;
+                    }
+                }
+
+                if (transaction && transaction.status === 'awaiting_payment') {
+                    await transactionPool.query('UPDATE transactions SET status = $1 WHERE id = $2', ['pending', transaction_id]);
+                    // Logic to update wallet (move from pending to available) can be added here if needed
+                    console.log(`Transaction ${transaction_id} updated to 'pending' after Stripe payment.`);
+                }
+            } catch (error) {
+                console.error(`Error updating transaction status for ${transaction_id}:`, error);
+            }
+        } else if (pin_details) {
+            // It's an ad pinning payment
+            const { adId, hours } = JSON.parse(pin_details);
+             try {
+                let adPool;
+                for (const projectId in projectDbPools) {
+                    const pool = projectDbPools[projectId];
+                    const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
+                     if (adResult.rows.length > 0) {
+                        adPool = pool;
+                        break;
+                    }
+                }
+                 if (adPool) {
+                    const expiry = Date.now() + (parseInt(hours, 10) * 3600000);
+                    await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
+                    console.log(`Ad ${adId} has been pinned for ${hours} hours via Stripe payment.`);
+                }
+            } catch (error) {
+                console.error(`Error pinning ad ${adId} after Stripe payment:`, error);
+            }
+        }
+    }
+
+    res.json({received: true});
+});
 
 
 // بدء تشغيل الخادم
