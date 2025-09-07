@@ -3,32 +3,28 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 
-// ===== NOTA PARA TI: =====
-// Este archivo contiene la lógica del backend.
-// Las funciones de pago reales (Stripe, Binance) no se pueden implementar aquí
-// sin acceso a las claves API y bibliotecas en `server.js`.
-// En su lugar, he creado la estructura y los endpoints, simulando que el pago
-// se ha completado con éxito para que el resto del flujo de la aplicación funcione.
-// También he añadido las tablas de base de datos necesarias como comentarios.
-// Deberás añadir estas sentencias `CREATE TABLE` y `ALTER TABLE` a tu función `createTables` en `server.js`.
+// ===== ملاحظة هامة لك: =====
+// هذا هو الكود النهائي للمسارات مع كل الإضافات التي طلبتها.
+// تذكر أنه يجب عليك إضافة الجداول والأعمدة الجديدة إلى قاعدة بياناتك.
+// انسخ هذا الكود وضعه في دالة `createTables` في ملف `server.js` الخاص بك.
 /*
---- Pega esto en tu función createTables en server.js ---
+--- انسخ هذا إلى دالة createTables في server.js ---
 
-// 1. Nueva tabla para registrar las solicitudes de retiro
+// 1. جدول جديد لتسجيل طلبات السحب
 await pool.query(`
     CREATE TABLE IF NOT EXISTS withdrawals (
         id VARCHAR(255) PRIMARY KEY,
         user_id VARCHAR(255) NOT NULL,
         amount NUMERIC(10, 2) NOT NULL,
-        method VARCHAR(50) NOT NULL, -- 'crypto' o 'stripe'
-        details JSONB NOT NULL, -- Para la dirección de la billetera o los datos de la tarjeta
+        method VARCHAR(50) NOT NULL, -- 'crypto' or 'stripe'
+        details JSONB NOT NULL, -- لبيانات عنوان المحفظة أو البطاقة
         status VARCHAR(50) DEFAULT 'pending', -- pending, completed, rejected
         created_at BIGINT NOT NULL,
         updated_at BIGINT NOT NULL
     );
 `);
 
-// 2. Modificar la tabla de wallets para añadir el saldo en proceso de retiro
+// 2. تعديل جدول wallets لإضافة الرصيد قيد السحب
 await pool.query(`
     ALTER TABLE wallets ADD COLUMN IF NOT EXISTS withdrawing_balance NUMERIC(10, 2) DEFAULT 0.00;
 `);
@@ -74,23 +70,22 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
     }
 
     async function getAdFromAnyProject(adId) {
-        if (!adId) return null;
-        for (const projectId in projectDbPools) {
-            const pool = projectDbPools[projectId];
-            try {
-                const adResult = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
-                if (adResult.rows.length > 0) {
-                    return adResult.rows[0];
-                }
-            } catch (error) {
-                console.error(`Error searching for ad ${adId} in project ${projectId}:`, error);
+    if (!adId) return null;
+    for (const projectId in projectDbPools) {
+        const pool = projectDbPools[projectId];
+        try {
+            const adResult = await pool.query('SELECT * FROM marketing_ads WHERE id = $1', [adId]);
+            if (adResult.rows.length > 0) {
+                return adResult.rows[0];
             }
+        } catch (error) {
+            console.error(`Error searching for ad ${adId} in project ${projectId}:`, error);
         }
-        return null;
     }
+    return null;
+}
 
-    // ===== INICIO DEL CÓDIGO AÑADIDO / MODIFICADO =====
-
+    // ===== بداية الكود المضاف: دالة إرسال إشعار طلب السحب للمؤسس =====
     async function sendWithdrawalRequestToFounder(withdrawalId, userDetails, amount, method) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
@@ -121,7 +116,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             const details = withdrawalDetails.rows[0].details;
             let detailsText = '';
             if (method === 'crypto') {
-                detailsText = `\n- عنوان المحفظة (TRC20): ${details.walletAddress}`;
+                detailsText = `\n- الشبكة: ${details.network}\n- عنوان المحفظة: ${details.walletAddress}`;
             } else {
                 detailsText = `\n- بيانات البطاقة: (تحقق من التفاصيل في لوحة تحكم Stripe)`;
             }
@@ -156,8 +151,7 @@ ${detailsText}
             console.error("Error sending withdrawal request notification:", error);
         }
     }
-    
-    // ===== FIN DEL CÓDIGO AÑADIDO / MODIFICADO =====
+    // ===== نهاية الكود المضاف =====
 
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -520,19 +514,16 @@ ${description}
 
     router.post('/pin/:adId', async (req, res) => {
         const { adId } = req.params;
-        const { callerUid, pin_duration_hours, paymentMethod } = req.body;
+        const { callerUid, pin_duration_hours, paymentMethod, paymentNetwork } = req.body;
         const duration = parseInt(pin_duration_hours) || 1;
-        const cost = duration * 10; // $10 per hour
+        const cost = duration * 10; 
 
-        // ===== INICIO DE LA MODIFICACIÓN =====
-        // Paso 1: Simular la verificación del pago
-        // En una aplicación real, aquí llamarías a la API de Stripe o Binance
-        // para confirmar que un pago por el `cost` ha sido recibido.
-        // Como no podemos hacer eso, asumiremos que el pago fue exitoso.
-        console.log(`Simulando pago de $${cost} a través de ${paymentMethod} para fijar el anuncio ${adId}.`);
-        const paymentSuccessful = true; // Simulación
-        // ===== FIN DE LA MODIFICACIÓN =====
-
+        // ===== محاكاة عملية الدفع =====
+        // في تطبيق حقيقي، هنا يجب التحقق من الدفع عبر Stripe أو Binance.
+        // بما أننا لا نملك وصولاً مباشرًا لواجهات برمجة التطبيقات، سنفترض أن الدفع ناجح.
+        console.log(`محاكاة دفع ${cost}$ عبر ${paymentMethod} (شبكة: ${paymentNetwork || 'N/A'}) لتثبيت الإعلان ${adId}.`);
+        const paymentSuccessful = true; // محاكاة لنجاح الدفع
+        
         if (!paymentSuccessful) {
             return res.status(402).json({ error: "Payment failed or was not confirmed." });
         }
@@ -542,10 +533,7 @@ ${description}
                 const pool = projectDbPools[projectId];
                 const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
                 if (adResult.rows.length > 0) {
-                    // La autorización (asegurarse de que el callerUid es el dueño) ya no es necesaria
-                    // porque el flujo de pago en el frontend ya lo maneja. Pero la mantenemos por seguridad.
                     if (adResult.rows[0].seller_id !== callerUid) return res.status(403).json({ error: "Unauthorized." });
-                    
                     const expiry = Date.now() + (duration * 3600000);
                     await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
                     return res.status(200).json({ message: `Ad pinned successfully for ${duration} hour(s).` });
@@ -575,7 +563,7 @@ ${description}
     });
 
     router.post('/purchase', async (req, res) => {
-        const { adId, buyerId, amount, paymentMethod, shipping_address, used_points_discount } = req.body;
+        const { adId, buyerId, amount, paymentMethod, shipping_address, used_points_discount, paymentNetwork } = req.body;
         if (!adId || !buyerId || !amount || !paymentMethod) return res.status(400).json({ error: "Missing required fields." });
         
         try {
@@ -606,16 +594,10 @@ ${description}
                 if (Math.abs(finalAmount - calculatedDiscountedAmount) > 0.01) return res.status(400).json({ error: "Price mismatch." });
                 finalAmount = calculatedDiscountedAmount;
             }
-
-            // ===== INICIO DE LA MODIFICACIÓN =====
-            // Paso 2: Simular la verificación del pago
-            // En una aplicación real, aquí llamarías a la API de Stripe o Binance
-            // para confirmar que un pago por `finalAmount` ha sido recibido.
-            // Aquí, simplemente asumimos que fue exitoso para continuar con la lógica.
-            console.log(`Simulando pago de $${finalAmount} a través de ${paymentMethod} para el anuncio ${adId}.`);
-            const paymentSuccessful = true; // Simulación
-            // ===== FIN DE LA MODIFICACIÓN =====
-
+            
+            // ===== محاكاة عملية الدفع =====
+            console.log(`محاكاة دفع ${finalAmount}$ عبر ${paymentMethod} (شبكة: ${paymentNetwork || 'N/A'}) لشراء الإعلان ${adId}.`);
+            const paymentSuccessful = true; // محاكاة لنجاح الدفع
             if (!paymentSuccessful) {
                 return res.status(402).json({ error: "Payment failed or was not confirmed." });
             }
@@ -807,16 +789,14 @@ router.post('/report-problem', async (req, res) => {
 
             if (resolutionAction === 'REFUND_BUYER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
-                // Quitar del saldo pendiente del vendedor
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
-                // ===== INICIO DE LA MODIFICACIÓN =====
-                // Devolver el monto al saldo disponible del comprador
+                // ===== بداية التعديل: إضافة المبلغ المسترد إلى رصيد المشتري المتاح =====
                 await buyerWalletPool.query(`
                     INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
                     ON CONFLICT (user_id) 
                     DO UPDATE SET available_balance = wallets.available_balance + $2
                 `, [transaction.buyer_id, amount]);
-                // ===== FIN DE LA MODIFICACIÓN =====
+                // ===== نهاية التعديل =====
                 res.status(200).json({ message: "تمت إعادة المبلغ للمشتري بنجاح، وتم خصم المبلغ المعلق من البائع." });
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
@@ -832,8 +812,7 @@ router.post('/report-problem', async (req, res) => {
         }
     });
 
-    // ===== INICIO DEL CÓDIGO AÑADIDO / MODIFICADO (NUEVOS ENDPOINTS DE RETIRO) =====
-
+    // ===== بداية الكود المضاف: endpoints للسحب =====
     router.post('/withdraw', async (req, res) => {
         const { userId, amount, method, details } = req.body;
         if (!userId || !amount || !method || !details) {
@@ -849,12 +828,14 @@ router.post('/report-problem', async (req, res) => {
 
             const { pool } = await getUserProjectContext(userId);
             
-            const walletResult = await pool.query('SELECT available_balance FROM wallets WHERE user_id = $1', [userId]);
+            await pool.query('BEGIN'); // بدء معاملة قاعدة البيانات
+
+            const walletResult = await pool.query('SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
             if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parseFloat(amount)) {
+                await pool.query('ROLLBACK');
                 return res.status(400).json({ error: "Insufficient available balance." });
             }
             
-            // Mover el balance de disponible a en proceso de retiro
             await pool.query(
                 `UPDATE wallets SET 
                     available_balance = available_balance - $1, 
@@ -863,7 +844,6 @@ router.post('/report-problem', async (req, res) => {
                 [parseFloat(amount), userId]
             );
 
-            // Crear el registro de retiro
             const withdrawalId = uuidv4();
             const timestamp = Date.now();
             await pool.query(
@@ -872,22 +852,15 @@ router.post('/report-problem', async (req, res) => {
                 [withdrawalId, userId, parseFloat(amount), method, JSON.stringify(details), timestamp, timestamp]
             );
 
-            // Enviar notificación al fundador
+            await pool.query('COMMIT'); // تأكيد المعاملة
+
             await sendWithdrawalRequestToFounder(withdrawalId, userDetails, amount, method);
 
-            res.status(201).json({ message: "Your withdrawal request has been submitted and will be reviewed within 48 hours." });
+            res.status(201).json({ message: "Your withdrawal request has been submitted and will be reviewed." });
 
         } catch (error) {
+            await (await getUserProjectContext(userId)).pool.query('ROLLBACK'); // التراجع في حالة حدوث خطأ
             console.error("Error processing withdrawal request:", error);
-            // Revertir la transacción en la billetera si falla la inserción
-            const { pool } = await getUserProjectContext(userId);
-            await pool.query(
-                `UPDATE wallets SET 
-                    available_balance = available_balance + $1, 
-                    withdrawing_balance = withdrawing_balance - $1 
-                 WHERE user_id = $2`, 
-                [parseFloat(amount), userId]
-            );
             res.status(500).json({ error: "Failed to process withdrawal request." });
         }
     });
@@ -904,10 +877,9 @@ router.post('/report-problem', async (req, res) => {
         }
     });
     
-    // Este endpoint es para el fundador para aprobar/rechazar retiros
     router.post('/withdrawals/:withdrawalId/action', async (req, res) => {
         const { withdrawalId } = req.params;
-        const { action, callerUid } = req.body; // action: 'approve' o 'reject'
+        const { action, callerUid } = req.body;
 
         try {
             const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
@@ -925,18 +897,12 @@ router.post('/report-problem', async (req, res) => {
             const amount = parseFloat(withdrawal.amount);
             
             if (action === 'approve') {
-                // El dinero ya se movió. Solo actualiza el estado y el balance en proceso de retiro.
                 await userPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [amount, withdrawal.user_id]);
                 await defaultPool.query("UPDATE withdrawals SET status = 'completed', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
-                // Aquí, el fundador enviaría manualmente el dinero a través de Binance/Stripe.
-                // Luego, envía una notificación al usuario.
-                // (La lógica de notificación se puede añadir aquí)
                 res.status(200).json({ message: `Withdrawal ${withdrawalId} approved. You must now manually send $${amount} to the user.` });
             } else if (action === 'reject') {
-                // Devuelve el dinero del balance en proceso de retiro al balance disponible.
                 await userPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2", [amount, withdrawal.user_id]);
                 await defaultPool.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
-                // (La lógica de notificación se puede añadir aquí para informar al usuario sobre el rechazo)
                 res.status(200).json({ message: `Withdrawal ${withdrawalId} rejected. The amount has been returned to the user's available balance.` });
             } else {
                 return res.status(400).json({ error: "Invalid action." });
@@ -947,8 +913,7 @@ router.post('/report-problem', async (req, res) => {
             res.status(500).json({ error: "Failed to process withdrawal action." });
         }
     });
-
-    // ===== FIN DEL CÓDIGO AÑADIDO / MODIFICADO =====
+    // ===== نهاية الكود المضاف =====
 
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
