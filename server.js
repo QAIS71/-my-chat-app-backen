@@ -337,6 +337,25 @@ await pool.query(`
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address JSONB;
 `);
 
+  // 1. جدول جديد لتسجيل طلبات السحب
+await pool.query(`
+    CREATE TABLE IF NOT EXISTS withdrawals (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL,
+        method VARCHAR(50) NOT NULL, -- 'crypto' or 'stripe'
+        details JSONB NOT NULL, -- لبيانات عنوان المحفظة أو البطاقة
+        status VARCHAR(50) DEFAULT 'pending', -- pending, completed, rejected
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+    );
+`);
+
+// 2. تعديل جدول wallets لإضافة الرصيد قيد السحب
+await pool.query(`
+    ALTER TABLE wallets ADD COLUMN IF NOT EXISTS withdrawing_balance NUMERIC(10, 2) DEFAULT 0.00;
+`);
+
 // بالكود الجديد هذا:
 const createAdsTableQuery = `
     CREATE TABLE IF NOT EXISTS marketing_ads (
