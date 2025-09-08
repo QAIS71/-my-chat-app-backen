@@ -55,6 +55,62 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
         return null;
     }
+    
+    // START: NEW HELPER FUNCTION - Send withdrawal status notification to seller
+    async function sendWithdrawalStatusNotificationToSeller(sellerId, status, amount) {
+        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const BOT_UID = 'system-notifications-bot';
+        const BOT_USERNAME = '💰 المحفظة المالية';
+
+        try {
+            let chatResult = await pool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`,
+                [BOT_USERNAME, JSON.stringify([sellerId])]
+            );
+
+            let chatId;
+            if (chatResult.rows.length > 0) {
+                chatId = chatResult.rows[0].id;
+            } else {
+                chatId = uuidv4();
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, participants, timestamp, profile_bg_url)
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]
+                );
+            }
+
+            const statusText = status === 'approved' 
+                ? `✅ تم تأكيد طلب السحب الخاص بك بمبلغ ${amount} USD. قد يستغرق وصول المبلغ بضع ساعات.`
+                : `❌ تم رفض طلب السحب الخاص بك بمبلغ ${amount} USD. تم إرجاع المبلغ إلى رصيدك المتاح.`;
+            
+            const messageId = uuidv4();
+            const timestamp = Date.now();
+            const { pool: sellerProjectPool } = await getUserProjectContext(sellerId);
+            await sellerProjectPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
+                 VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
+                [messageId, chatId, BOT_UID, BOT_USERNAME, statusText, timestamp]
+            );
+
+            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [statusText, timestamp, chatId]);
+            
+            if (sendOneSignalNotification) {
+                const sellerDetails = await getUserDetailsFromDefaultProject(sellerId);
+                const sellerProfileBg = sellerDetails ? sellerDetails.profile_bg_url : null;
+                await sendOneSignalNotification(
+                    [sellerId],
+                    BOT_USERNAME,
+                    statusText,
+                    `${FRONTEND_URL}`,
+                    sellerProfileBg
+                );
+            }
+        } catch (error) {
+            console.error("Error sending withdrawal status notification to seller:", error);
+        }
+    }
+    // END: NEW HELPER FUNCTION
 
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -245,7 +301,7 @@ ${description}
         }
     }
     
-    // START: NEW FUNCTION - Send Withdrawal Request to Founder
+    // START: MODIFIED FUNCTION - Send Withdrawal Request to Founder
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
         const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -256,7 +312,6 @@ ${description}
             const founderResult = await pool.query("SELECT uid, profile_bg_url FROM users WHERE user_role = 'admin' LIMIT 1");
             if (founderResult.rows.length === 0) return;
             const founder = founderResult.rows[0];
-
             const sellerDetails = await getUserDetailsFromDefaultProject(seller_id);
 
             let chatResult = await pool.query(
@@ -270,8 +325,8 @@ ${description}
             } else {
                 chatId = uuidv4();
                 await pool.query(
-                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]
+                    `INSERT INTO chats (id, type, name, participants, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]
                 );
             }
 
@@ -284,6 +339,7 @@ ${description}
                 detailsText = `- **البريد الإلكتروني لـ Stripe:** ${withdrawal_details.email}`;
             }
 
+            // MODIFICATION: Add approve and reject buttons
             const messageText = `
 💰 طلب سحب جديد!
 ---
@@ -294,7 +350,8 @@ ${description}
 ${detailsText}
 ---
 **الإجراءات (للمؤسس فقط):**
-[SYSTEM_ACTION:APPROVE_WITHDRAWAL,ID:${id}]
+[SYSTEM_ACTION:PROCESS_WITHDRAWAL,ID:${id},ACTION:approve]
+[SYSTEM_ACTION:PROCESS_WITHDRAWAL,ID:${id},ACTION:reject]
             `;
             
             const messageId = uuidv4();
@@ -313,7 +370,7 @@ ${detailsText}
             console.error("Error sending withdrawal notification to founder:", error);
         }
     }
-    // END: NEW FUNCTION
+    // END: MODIFIED FUNCTION
 
     setInterval(async () => {
         const now = Date.now();
@@ -408,6 +465,55 @@ ${detailsText}
             res.status(500).json({ error: "Failed to process action." });
         }
     });
+    
+    // START: NEW ENDPOINT - Process withdrawal request
+    router.post('/process-withdrawal', async (req, res) => {
+        const { withdrawalId, action, callerUid } = req.body;
+        if (!withdrawalId || !action || !['approve', 'reject'].includes(action) || !callerUid) {
+            return res.status(400).json({ error: "Missing required parameters." });
+        }
+        
+        const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        try {
+            const callerDetails = await getUserDetailsFromDefaultProject(callerUid);
+            if (!callerDetails || callerDetails.user_role !== 'admin') {
+                return res.status(403).json({ error: "Unauthorized." });
+            }
+
+            const withdrawalResult = await defaultPool.query("SELECT * FROM withdrawals WHERE id = $1 AND status = 'pending'", [withdrawalId]);
+            if (withdrawalResult.rows.length === 0) {
+                return res.status(404).json({ error: "Withdrawal request not found or already processed." });
+            }
+            const withdrawal = withdrawalResult.rows[0];
+            const { pool: sellerWalletPool } = await getUserProjectContext(withdrawal.seller_id);
+            const amount = parseFloat(withdrawal.amount);
+
+            if (action === 'approve') {
+                // In a real app, this is where you would call the Stripe Payouts API or send crypto.
+                // Here, we simulate success by updating the database.
+                await defaultPool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
+                await sellerWalletPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [amount, withdrawal.seller_id]);
+                
+                await sendWithdrawalStatusNotificationToSeller(withdrawal.seller_id, 'approved', amount);
+                res.status(200).json({ message: "Withdrawal approved successfully." });
+
+            } else { // action === 'reject'
+                await defaultPool.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
+                // Return money from withdrawing back to available
+                await sellerWalletPool.query(
+                    "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
+                    [amount, withdrawal.seller_id]
+                );
+                
+                await sendWithdrawalStatusNotificationToSeller(withdrawal.seller_id, 'rejected', amount);
+                res.status(200).json({ message: "Withdrawal rejected successfully." });
+            }
+        } catch (error) {
+            console.error("Error processing withdrawal:", error);
+            res.status(500).json({ error: "Failed to process withdrawal." });
+        }
+    });
+    // END: NEW ENDPOINT
 
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
     router.post('/', adUploads, async (req, res) => {
@@ -498,10 +604,6 @@ ${detailsText}
                 const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
                 if (adResult.rows.length > 0) {
                     if (adResult.rows[0].seller_id !== callerUid) return res.status(403).json({ error: "Unauthorized." });
-                    // THIS LOGIC IS NOW HANDLED BY THE PAYMENT FLOW
-                    // const expiry = Date.now() + (duration * 3600000);
-                    // await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
-                    // For now, we just acknowledge the request. Payment will confirm it.
                     return res.status(200).json({ message: `Pinning request for ${duration} hour(s) received. Proceed to payment.` });
                 }
             }
@@ -528,40 +630,55 @@ ${detailsText}
         }
     });
     
-    // START: NEW - WITHDRAWAL ROUTE
+    // START: MODIFIED - WITHDRAWAL ROUTE
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
         if (!sellerId || !amount || !method || !details) return res.status(400).json({ error: "Missing withdrawal information." });
 
         const { pool } = await getUserProjectContext(sellerId);
         try {
-            const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1", [sellerId]);
-            if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parseFloat(amount)) {
-                return res.status(400).json({ error: "Insufficient available balance." });
+            // Use a transaction to ensure atomicity
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                
+                const walletResult = await client.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
+                if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parseFloat(amount)) {
+                    throw new Error("Insufficient available balance.");
+                }
+
+                // Move from available to withdrawing balance and create withdrawal request
+                await client.query(
+                    "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2",
+                    [amount, sellerId]
+                );
+                
+                const withdrawalId = uuidv4();
+                const now = Date.now();
+                const withdrawalResult = await client.query(
+                    `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
+                     VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
+                    [withdrawalId, sellerId, amount, method, JSON.stringify(details), now, now]
+                );
+                
+                await client.query('COMMIT');
+
+                await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+                res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
+
+            } catch (err) {
+                await client.query('ROLLBACK');
+                throw err;
+            } finally {
+                client.release();
             }
-
-            // Deduct from available balance and create withdrawal request
-            await pool.query("UPDATE wallets SET available_balance = available_balance - $1 WHERE user_id = $2", [amount, sellerId]);
-            
-            const withdrawalId = uuidv4();
-            const now = Date.now();
-            const withdrawalResult = await pool.query(
-                `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
-                [withdrawalId, sellerId, amount, method, JSON.stringify(details), now, now]
-            );
-            
-            await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
-
-            res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
         } catch (error) {
             console.error("Error processing withdrawal:", error);
-            res.status(500).json({ error: "Failed to process withdrawal." });
+            res.status(500).json({ error: `Failed to process withdrawal: ${error.message}` });
         }
     });
-    // END: NEW - WITHDRAWAL ROUTE
+    // END: MODIFIED - WITHDRAWAL ROUTE
 
-    // START: NEW - GET SELLER WITHDRAWALS
     router.get('/seller/withdrawals/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -573,9 +690,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to fetch withdrawal history." });
         }
     });
-    // END: NEW - GET SELLER WITHDRAWALS
 
-    // This is a conceptual route. The purchase logic is now handled in payment routes.
     router.post('/purchase', async (req, res) => {
         res.status(400).json({error: "This endpoint is deprecated. Use specific payment endpoints."});
     });
@@ -710,6 +825,7 @@ ${detailsText}
         }
     });
 
+    // START: MODIFIED - Resolve Dispute Endpoint
     router.post('/resolve-dispute', async (req, res) => {
         const { transactionId, callerUid, resolutionAction } = req.body; 
         try {
@@ -730,8 +846,10 @@ ${detailsText}
 
             if (resolutionAction === 'REFUND_BUYER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
-                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
-                // START: NEW - REFUND TO BUYER'S WALLET
+                // Deduct from seller's PENDING balance
+                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
+                
+                // Refund to buyer's AVAILABLE balance
                 const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
                 await buyerWalletPool.query(
                     `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
@@ -739,11 +857,11 @@ ${detailsText}
                     [transaction.buyer_id, amount]
                 );
                 res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
-                // END: NEW
+                
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
                 const netAmount = amount - parseFloat(transaction.commission);
-                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
+                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
                 res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
             } else {
                 return res.status(400).json({ error: "Invalid resolution action." });
@@ -753,6 +871,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to resolve dispute." });
         }
     });
+    // END: MODIFIED - Resolve Dispute Endpoint
 
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
@@ -810,7 +929,6 @@ ${detailsText}
         }
     });
 
-    // START: NEW SUPPORT CHAT ENDPOINT
     router.post('/support/start', async (req, res) => {
         const { userId } = req.body;
         const supportAgentCustomId = '88939087';
@@ -850,9 +968,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to start support chat." });
         }
     });
-    // END: NEW SUPPORT CHAT ENDPOINT
     
-    // START: NEW PAYMENT ENDPOINTS
     router.post('/payment/stripe/create-checkout', async (req, res) => {
         const { items, buyerId, adId, shippingAddress, isPinning, pinHours } = req.body;
         
@@ -866,8 +982,6 @@ ${detailsText}
             const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
 
             if (isPinning) {
-                // For pinning, we don't create a transaction, we just pin the ad
-                // We assume payment is successful. In a real app, a webhook would confirm this.
                 let adPool;
                 for (const projectId in projectDbPools) {
                     const pool = projectDbPools[projectId];
@@ -892,7 +1006,6 @@ ${detailsText}
                     [transactionId, adId, buyerId, adInfo.seller_id, totalAmount, commission, isDigital ? 'completed' : 'pending', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
                  );
                  
-                 // Wallet update logic... (same as in /purchase)
                  res.json({ message: "Purchase successful (simulated).", url: `${FRONTEND_URL}` });
             }
 
@@ -903,20 +1016,16 @@ ${detailsText}
 
     router.post('/payment/binance/create-order', async (req, res) => {
          const { amount, buyerId, adId, isPinning, pinHours, shippingAddress } = req.body;
-         // In a real app, you would call the Binance Pay API here to create an order.
-         // This returns a `prepayId` which you use to get payment details.
-         // For now, we will simulate this by creating a pending transaction and returning a static wallet address.
         
          try {
             const transactionId = uuidv4();
             const { pool } = await getUserProjectContext(buyerId);
-            const status = 'awaiting_payment'; // New status
+            const status = 'awaiting_payment';
             
-            // For both pinning and purchasing, create a transaction record to track the payment
             const adInfo = await getAdFromAnyProject(adId);
             if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
             
-            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id; // Payments for pinning go to the platform
+            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
             const commission = isPinning ? 0 : amount * 0.02;
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
@@ -948,10 +1057,6 @@ ${detailsText}
             }
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             
-            // This is where you would check the blockchain or Binance API for the payment.
-            // For now, we will manually update it for demonstration.
-            // In a real app, a webhook would change the status from 'awaiting_payment' to 'pending' or 'completed'.
-            // For simulation, let's assume if it's not 'awaiting_payment', it's paid.
             const isPaid = transaction.status !== 'awaiting_payment';
             
             res.status(200).json({ status: isPaid ? 'PAID' : 'UNPAID' });
@@ -959,8 +1064,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to check payment status." });
         }
     });
-
-    // END: NEW PAYMENT ENDPOINTS
 
     return router;
 };
