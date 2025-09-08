@@ -8,7 +8,7 @@ const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
 const webPush = require('web-push'); // ==== تمت إضافة هذه المكتبة للإشعارات ====
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // لم обработка платежей Stripe
+const stripe = require('stripe')("pk_test_51RzcJEKfxowK7TQOtMB2dtyR5W9Rlp2mdHPpJUTLZSK9wFVtkX3lieENYq2Iag9X0JS72v52qycHCRumnrwFhHUo00oUourK1x");
 const axios = require('axios'); // لإجراء طلبات HTTP (سنحتاجها لـ Binance)
 
 // تهيئة تطبيق Express
