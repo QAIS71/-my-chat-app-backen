@@ -1,14 +1,9 @@
-// marketingRoutes.js (MODIFIED)
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 
-// NEW: Add Stripe instance here to create Payment Intents
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification, FRONTEND_URL) {
     
-    // Helper function to get user's specific database and Supabase client
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
@@ -29,7 +24,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         };
     }
 
-    // Helper function to get user details from the main user table
     async function getUserDetailsFromDefaultProject(userId) {
         const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         if (!defaultPool || !userId) return null;
@@ -45,7 +39,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
     
-    // Helper function to find an ad across all projects
     async function getAdFromAnyProject(adId) {
         if (!adId) return null;
         for (const projectId in projectDbPools) {
@@ -61,54 +54,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
         return null;
     }
-    
-    // =================================================================
-    // =========== NEW & MODIFIED SYSTEM NOTIFICATION FUNCTIONS ========
-    // =================================================================
-
-    // Function to send a system message to a user
-    async function sendSystemMessage(recipientId, chatName, messageText, botAvatarUrl) {
-        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-        const BOT_UID = 'system-notifications-bot';
-
-        let chatResult = await pool.query(
-            `SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`,
-            [chatName, JSON.stringify([recipientId])]
-        );
-
-        let chatId;
-        if (chatResult.rows.length > 0) {
-            chatId = chatResult.rows[0].id;
-        } else {
-            chatId = uuidv4();
-            await pool.query(
-                `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
-                 VALUES ($1, $2, $3, $4, null, $5, $6)`,
-                [chatId, 'private', chatName, JSON.stringify([recipientId, BOT_UID]), Date.now(), botAvatarUrl]
-            );
-        }
-        const messageId = uuidv4();
-        const timestamp = Date.now();
-        const { pool: recipientProjectPool } = await getUserProjectContext(recipientId);
-        await recipientProjectPool.query(
-            `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
-             VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
-            [messageId, chatId, BOT_UID, chatName, messageText, timestamp]
-        );
-        await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك إشعار جديد", timestamp, chatId]);
-        
-        if (sendOneSignalNotification) {
-            const recipientDetails = await getUserDetailsFromDefaultProject(recipientId);
-            await sendOneSignalNotification(
-                [recipientId],
-                chatName,
-                messageText.split('\n')[0], // Use first line as body
-                `${FRONTEND_URL}/?chatId=${chatId}`,
-                recipientDetails ? recipientDetails.profile_bg_url : botAvatarUrl
-            );
-        }
-    }
-
 
     async function sendSellerApplicationToFounder(applicationId, userDetails) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -167,16 +112,70 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
     }
 
     async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
-        const messageText = `🎉 طلب بيع جديد!
-المنتج: ${adTitle}
-المشتري: ${buyerUsername}
-${shippingAddress ? `\n🚚 عنوان الشحن:
+        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const BOT_UID = 'system-notifications-bot'; 
+        const BOT_USERNAME = '🛒 تسويق وتسليجرم'; 
+
+        try {
+            let chatResult = await pool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`,
+                [BOT_USERNAME, JSON.stringify([sellerId])]
+            );
+
+            let chatId;
+            if (chatResult.rows.length > 0) {
+                chatId = chatResult.rows[0].id;
+            } else {
+                chatId = uuidv4();
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png"]
+                );
+            }
+
+            let shippingDetailsText = "";
+            if (shippingAddress) {
+                shippingDetailsText = `
+\n🚚 عنوان الشحن:
 الدولة: ${shippingAddress.country || 'غير محدد'}
 المدينة: ${shippingAddress.city || 'غير محدد'}
-العنوان: ${shippingAddress.address || 'غير محدد'}` : ''}
+العنوان: ${shippingAddress.address || 'غير محدد'}
+`;
+            }
+
+            const messageText = `🎉 طلب بيع جديد!
+المنتج: ${adTitle}
+المشتري: ${buyerUsername}${shippingDetailsText}
 
 يرجى مراجعة "طلبات البيع" في لوحة التحكم المالية الخاصة بك.`;
-        await sendSystemMessage(sellerId, '🛒 تسويق وتسليجرم', messageText, "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png");
+            const messageId = uuidv4();
+            const timestamp = Date.now();
+            
+            const { pool: sellerProjectPool } = await getUserProjectContext(sellerId);
+            await sellerProjectPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) 
+                 VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
+                [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
+            );
+            
+            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["لديك طلب بيع جديد", timestamp, chatId]);
+        if (sendOneSignalNotification) {
+            const sellerDetails = await getUserDetailsFromDefaultProject(sellerId);
+            const sellerProfileBg = sellerDetails ? sellerDetails.profile_bg_url : "https://kdbtusugpqboxsaosaci.supabase.co/storage/v1/object/public/system-avatars/images.png";
+
+            await sendOneSignalNotification(
+                [sellerId],
+                BOT_USERNAME,
+                `🎉 لديك طلب بيع جديد للمنتج: ${adTitle}`,
+                `${FRONTEND_URL}`,
+                sellerProfileBg
+            );
+        }
+
+    } catch (error) {
+        console.error("Error sending system notification to seller:", error);
+    }
     }
 
     async function sendProblemReportToFounder(reportDetails) {
@@ -245,7 +244,7 @@ ${description}
         }
     }
     
-    // MODIFIED: Function to send withdrawal request to founder with action buttons
+    // MODIFIED: Function to include action buttons
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
         const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -258,23 +257,32 @@ ${description}
             const founder = founderResult.rows[0];
             const sellerDetails = await getUserDetailsFromDefaultProject(seller_id);
 
-            let chatResult = await pool.query(`SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`, [BOT_USERNAME, JSON.stringify([founder.uid])]);
+            let chatResult = await pool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`,
+                [BOT_USERNAME, JSON.stringify([founder.uid])]
+            );
+
             let chatId;
             if (chatResult.rows.length > 0) {
                 chatId = chatResult.rows[0].id;
             } else {
                 chatId = uuidv4();
-                await pool.query(`INSERT INTO chats (id, type, name, participants, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6)`, [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]);
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([founder.uid, BOT_UID]), null, Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]
+                );
             }
 
             let detailsText = '';
             if (method === 'crypto') {
-                detailsText = `- **الشبكة:** ${withdrawal_details.network}\n- **العنوان:** ${withdrawal_details.address}`;
+                detailsText = `
+- **الشبكة:** ${withdrawal_details.network}
+- **العنوان:** ${withdrawal_details.address}`;
             } else if (method === 'stripe') {
                 detailsText = `- **البريد الإلكتروني لـ Stripe:** ${withdrawal_details.email}`;
             }
 
-            // NEW: Added action buttons to the message
+            // NEW: Added system action for approve/reject buttons
             const messageText = `
 💰 طلب سحب جديد!
 ---
@@ -285,29 +293,85 @@ ${description}
 ${detailsText}
 ---
 **الإجراءات (للمؤسس فقط):**
-[SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:approve]
-[SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:reject]
+[SYSTEM_ACTION:PROCESS_WITHDRAWAL,ID:${id},ACTION:approve]
+[SYSTEM_ACTION:PROCESS_WITHDRAWAL,ID:${id},ACTION:reject]
             `;
             
             const messageId = uuidv4();
             const timestamp = Date.now();
             const { pool: founderProjectPool } = await getUserProjectContext(founder.uid);
-            await founderProjectPool.query(`INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'text')`, [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]);
+            await founderProjectPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
+                [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
+            );
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["طلب سحب جديد", timestamp, chatId]);
-            
             if (sendOneSignalNotification) {
                 await sendOneSignalNotification([founder.uid], BOT_USERNAME, `طلب سحب جديد بقيمة ${amount}$ من ${sellerDetails.username}.`, `${FRONTEND_URL}`, founder.profile_bg_url);
             }
+
         } catch (error) {
             console.error("Error sending withdrawal notification to founder:", error);
         }
     }
     
-    // =================================================================
-    // =========== END OF SYSTEM NOTIFICATION FUNCTIONS ================
-    // =================================================================
+    // NEW: Function to notify seller about withdrawal status
+    async function sendWithdrawalStatusToSeller(sellerId, amount, status) {
+        const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+        const BOT_UID = 'system-notifications-bot';
+        const BOT_USERNAME = '💰 تحديثات السحب';
 
-    // Cleanup job for expired deals, pins, and payments
+        try {
+            let chatResult = await pool.query(
+                `SELECT id FROM chats WHERE type = 'private' AND name = $1 AND participants @> $2::jsonb`,
+                [BOT_USERNAME, JSON.stringify([sellerId])]
+            );
+
+            let chatId;
+            if (chatResult.rows.length > 0) {
+                chatId = chatResult.rows[0].id;
+            } else {
+                chatId = uuidv4();
+                await pool.query(
+                    `INSERT INTO chats (id, type, name, participants, last_message, timestamp, profile_bg_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [chatId, 'private', BOT_USERNAME, JSON.stringify([sellerId, BOT_UID]), null, Date.now(), "https://placehold.co/100x100/1e88e5/ffffff?text=W"]
+                );
+            }
+            
+            let messageText = '';
+            let lastMessage = '';
+            if (status === 'approved') {
+                messageText = `✅ تمت الموافقة على طلب السحب الخاص بك بمبلغ ${amount} USD. يتم الآن معالجة الدفعة.`;
+                lastMessage = 'تمت الموافقة على طلب السحب';
+            } else { // rejected
+                messageText = `❌ تم رفض طلب السحب الخاص بك بمبلغ ${amount} USD. تم إعادة المبلغ إلى رصيدك المتاح للسحب.`;
+                lastMessage = 'تم رفض طلب السحب';
+            }
+
+            const messageId = uuidv4();
+            const timestamp = Date.now();
+            const { pool: sellerProjectPool } = await getUserProjectContext(sellerId);
+            await sellerProjectPool.query(
+                `INSERT INTO messages (id, chat_id, sender_id, sender_name, text, timestamp, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'text')`,
+                [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
+            );
+            await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', [lastMessage, timestamp, chatId]);
+        
+            if (sendOneSignalNotification) {
+                const sellerDetails = await getUserDetailsFromDefaultProject(sellerId);
+                await sendOneSignalNotification(
+                    [sellerId],
+                    BOT_USERNAME,
+                    messageText,
+                    `${FRONTEND_URL}`,
+                    sellerDetails.profile_bg_url
+                );
+            }
+        } catch (error) {
+            console.error(`Error sending withdrawal status to seller ${sellerId}:`, error);
+        }
+    }
+
+
     setInterval(async () => {
         const now = Date.now();
         for (const projectId in projectDbPools) {
@@ -322,7 +386,6 @@ ${detailsText}
         }
     }, 5 * 60 * 1000);
 
-    // Get all marketing ads
     router.get('/', async (req, res) => {
         let allAds = [];
         try {
@@ -343,7 +406,6 @@ ${detailsText}
         }
     });
 
-    // Submit a seller application
     const applicationUploads = upload.array('application_images', 3);
     router.post('/seller-application', applicationUploads, async(req, res) => {
         const { userId, details } = req.body;
@@ -376,7 +438,6 @@ ${detailsText}
         }
     });
 
-    // Founder action on a seller application
     router.post('/applications/:appId/action', async (req, res) => {
         const { appId } = req.params;
         const { action, callerUid } = req.body; 
@@ -404,7 +465,6 @@ ${detailsText}
         }
     });
 
-    // Publish a new ad
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
     router.post('/', adUploads, async (req, res) => {
         const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_cost } = req.body;
@@ -450,7 +510,6 @@ ${detailsText}
         }
     });
 
-    // Delete an ad
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
         const { callerUid } = req.body;
@@ -484,8 +543,27 @@ ${detailsText}
             res.status(500).json({ error: "Failed to delete ad." });
         }
     });
-    
-    // Get seller's wallet
+
+    router.post('/pin/:adId', async (req, res) => {
+        const { adId } = req.params;
+        const { callerUid, pin_duration_hours } = req.body;
+        const duration = parseInt(pin_duration_hours) || 1;
+        try {
+             for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
+                if (adResult.rows.length > 0) {
+                    if (adResult.rows[0].seller_id !== callerUid) return res.status(403).json({ error: "Unauthorized." });
+                    return res.status(200).json({ message: `Pinning request for ${duration} hour(s) received. Proceed to payment.` });
+                }
+            }
+            return res.status(404).json({ error: "Ad not found." });
+        } catch(error) {
+            console.error("Error pinning ad:", error);
+            res.status(500).json({ error: "Failed to pin ad." });
+        }
+    });
+
     router.get('/seller/wallet/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -502,50 +580,43 @@ ${detailsText}
         }
     });
     
-    // MODIFIED: Request a withdrawal
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
         if (!sellerId || !amount || !method || !details) return res.status(400).json({ error: "Missing withdrawal information." });
 
         const { pool } = await getUserProjectContext(sellerId);
-        const client = await pool.connect();
         try {
-            await client.query('BEGIN');
-            const walletResult = await client.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
+            const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
             if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parseFloat(amount)) {
-                throw new Error("Insufficient available balance.");
+                return res.status(400).json({ error: "Insufficient available balance." });
             }
 
-            // MODIFIED LOGIC: Move amount from available to withdrawing balance
-            await client.query("UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", [amount, sellerId]);
+            await pool.query("UPDATE wallets SET available_balance = available_balance - $1 WHERE user_id = $2", [amount, sellerId]);
             
             const withdrawalId = uuidv4();
             const now = Date.now();
-            const withdrawalResult = await client.query(
+            const withdrawalResult = await pool.query(
                 `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
                 [withdrawalId, sellerId, amount, method, JSON.stringify(details), now, now]
             );
             
-            await client.query('COMMIT');
-            
             await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+
             res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
         } catch (error) {
-            await client.query('ROLLBACK');
             console.error("Error processing withdrawal:", error);
-            res.status(500).json({ error: error.message || "Failed to process withdrawal." });
-        } finally {
-            client.release();
+            res.status(500).json({ error: "Failed to process withdrawal." });
         }
     });
-    
-    // NEW: Founder action on a withdrawal request
-    router.post('/withdrawals/:id/action', async (req, res) => {
-        const { id } = req.params;
+
+    // NEW ENDPOINT: To process withdrawal actions from founder
+    router.post('/withdrawals/:withdrawalId/action', async (req, res) => {
+        const { withdrawalId } = req.params;
         const { action, callerUid } = req.body;
+
         if (!callerUid || !action || !['approve', 'reject'].includes(action)) {
-             return res.status(400).json({ error: "Missing or invalid parameters." });
+            return res.status(400).json({ error: "Missing or invalid parameters." });
         }
 
         try {
@@ -557,50 +628,38 @@ ${detailsText}
             let withdrawal, withdrawalPool;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                const result = await pool.query('SELECT * FROM withdrawals WHERE id = $1', [id]);
-                if (result.rows.length > 0) { 
-                    withdrawal = result.rows[0]; 
-                    withdrawalPool = pool; 
-                    break; 
+                const result = await pool.query('SELECT * FROM withdrawals WHERE id = $1', [withdrawalId]);
+                if (result.rows.length > 0) {
+                    withdrawal = result.rows[0];
+                    withdrawalPool = pool;
+                    break;
                 }
             }
             if (!withdrawal) return res.status(404).json({ error: "Withdrawal request not found." });
-            if (withdrawal.status !== 'pending') return res.status(400).json({ error: "Withdrawal already processed." });
+            if (withdrawal.status !== 'pending') return res.status(400).json({ error: "This request has already been processed." });
+            
+            const newStatus = action === 'approve' ? 'approved' : 'rejected';
+            await withdrawalPool.query("UPDATE withdrawals SET status = $1, updated_at = $2 WHERE id = $3", [newStatus, Date.now(), withdrawalId]);
 
-            const client = await withdrawalPool.connect();
-            try {
-                await client.query('BEGIN');
-                let notificationMessage = '';
-                if (action === 'approve') {
-                    await client.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), id]);
-                    // Clear the amount from withdrawing_balance as it's now considered "paid"
-                    await client.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
-                    notificationMessage = `✅ تمت الموافقة على طلب السحب الخاص بك بمبلغ ${withdrawal.amount} USD.`;
-                } else { // reject
-                    await client.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), id]);
-                    // Return the amount from withdrawing_balance back to available_balance
-                    await client.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
-                    notificationMessage = `❌ تم رفض طلب السحب الخاص بك بمبلغ ${withdrawal.amount} USD. تم إعادة المبلغ إلى رصيدك المتاح.`;
-                }
-                await client.query('COMMIT');
-                
-                // Send notification to seller
-                await sendSystemMessage(withdrawal.seller_id, '💰 إشعارات السحب', notificationMessage, "https://placehold.co/100x100/1e88e5/ffffff?text=W");
-
-                res.status(200).json({ message: `Withdrawal has been ${action}d.` });
-            } catch (dbError) {
-                await client.query('ROLLBACK');
-                throw dbError;
-            } finally {
-                client.release();
+            // If rejected, refund the amount to the seller's available balance
+            if (action === 'reject') {
+                const { pool: sellerWalletPool } = await getUserProjectContext(withdrawal.seller_id);
+                await sellerWalletPool.query(
+                    "UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2",
+                    [withdrawal.amount, withdrawal.seller_id]
+                );
             }
+            
+            // Notify the seller
+            await sendWithdrawalStatusToSeller(withdrawal.seller_id, withdrawal.amount, newStatus);
+            
+            res.status(200).json({ message: `Withdrawal request has been ${newStatus}.` });
         } catch (error) {
             console.error("Error processing withdrawal action:", error);
             res.status(500).json({ error: "Failed to process withdrawal action." });
         }
     });
 
-    // Get seller withdrawal history
     router.get('/seller/withdrawals/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -613,7 +672,6 @@ ${detailsText}
         }
     });
 
-    // Get seller's sales orders
     router.get('/seller/orders/:userId', async (req, res) => {
         const { userId } = req.params;
         let allOrders = [];
@@ -626,7 +684,11 @@ ${detailsText}
             const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
                 const adDetails = await getAdFromAnyProject(order.ad_id);
                 const buyerDetails = await getUserDetailsFromDefaultProject(order.buyer_id);
-                return { ...order, ad_title: adDetails ? adDetails.title : 'إعلان محذوف', buyer_username: buyerDetails ? buyerDetails.username : 'N/A' };
+                return { 
+                    ...order, 
+                    ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
+                    buyer_username: buyerDetails ? buyerDetails.username : 'N/A' 
+                };
             }));
             enrichedOrders.sort((a,b) => b.created_at - a.created_at);
             res.status(200).json(enrichedOrders);
@@ -636,7 +698,6 @@ ${detailsText}
         }
     });
 
-    // Get buyer's purchase history
     router.get('/buyer/orders/:userId', async (req, res) => {
         const { userId } = req.params;
         let allOrders = [];
@@ -649,7 +710,13 @@ ${detailsText}
             const enrichedOrders = await Promise.all(allOrders.map(async (order) => {
                 const adDetails = await getAdFromAnyProject(order.ad_id);
                 const sellerDetails = await getUserDetailsFromDefaultProject(order.seller_id);
-                return { ...order, ad_title: adDetails ? adDetails.title : 'إعلان محذوف', ad_type: adDetails ? adDetails.ad_type : null, digital_product_url: adDetails ? adDetails.digital_product_url : null, seller_username: sellerDetails ? sellerDetails.username : 'N/A' };
+                return { 
+                    ...order, 
+                    ad_title: adDetails ? adDetails.title : 'إعلان محذوف',
+                    ad_type: adDetails ? adDetails.ad_type : null,
+                    digital_product_url: adDetails ? adDetails.digital_product_url : null,
+                    seller_username: sellerDetails ? sellerDetails.username : 'N/A' 
+                };
             }));
             enrichedOrders.sort((a,b) => b.created_at - a.created_at);
             res.status(200).json(enrichedOrders);
@@ -659,7 +726,6 @@ ${detailsText}
         }
     });
     
-    // Get seller's unread notification count
     router.get('/seller/notifications/count/:userId', async (req, res) => {
         const { userId } = req.params;
         let totalCount = 0;
@@ -676,7 +742,6 @@ ${detailsText}
         }
     });
 
-    // Buyer confirms receipt of an order
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
         const { buyerId } = req.body; 
@@ -688,31 +753,18 @@ ${detailsText}
             }
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             if (transaction.buyer_id !== buyerId) return res.status(403).json({ error: "Unauthorized." });
-            if (transaction.status !== 'pending') return res.status(400).json({ error: "Order already confirmed or cancelled." });
-
+            if (transaction.status !== 'pending') return res.status(400).json({ error: "Order already confirmed." });
+            await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
-            const client = await sellerWalletPool.connect();
-            try {
-                await client.query('BEGIN');
-                await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
-                const netAmount = parseFloat(transaction.amount) - parseFloat(transaction.commission);
-                // Move amount from pending to available for the seller
-                await client.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [parseFloat(transaction.amount), netAmount, transaction.seller_id]);
-                await client.query('COMMIT');
-                res.status(200).json({ message: "تم تأكيد الاستلام بنجاح!" });
-            } catch (dbError) {
-                await client.query('ROLLBACK');
-                throw dbError;
-            } finally {
-                client.release();
-            }
+            const netAmount = parseFloat(transaction.amount) - parseFloat(transaction.commission);
+            await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [parseFloat(transaction.amount), netAmount, transaction.seller_id]);
+            res.status(200).json({ message: "تم تأكيد الاستلام بنجاح!" });
         } catch (error) {
             console.error("Error confirming order:", error);
             res.status(500).json({ error: "Failed to confirm order." });
         }
     });
     
-    // User reports a problem with a transaction
     router.post('/report-problem', async (req, res) => {
         const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
         if (!transactionId || !reporterId || !reporterRole || !problemDescription) {
@@ -721,16 +773,20 @@ ${detailsText}
         try {
             let transaction = null;
             for (const projectId in projectDbPools) {
-                const result = await projectDbPools[projectId].query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
-                if (result.rows.length > 0) { transaction = result.rows[0]; break; }
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transactionId]);
+                if (result.rows.length > 0) {
+                    transaction = result.rows[0];
+                    break;
+                }
             }
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             const adDetails = await getAdFromAnyProject(transaction.ad_id);
+            const fullTransactionDetails = { ...transaction, ad_title: adDetails ? adDetails.title : 'إعلان محذوف' };
             const reporterDetails = await getUserDetailsFromDefaultProject(reporterId);
             if (!reporterDetails) return res.status(404).json({ error: "Reporter not found." });
-            
             await sendProblemReportToFounder({
-                transaction: { ...transaction, ad_title: adDetails ? adDetails.title : 'إعلان محذوف' },
+                transaction: fullTransactionDetails,
                 reporter: reporterDetails,
                 role: reporterRole,
                 description: problemDescription
@@ -742,7 +798,7 @@ ${detailsText}
         }
     });
 
-    // MODIFIED: Founder resolves a dispute
+    // MODIFIED: Added refund to buyer's wallet
     router.post('/resolve-dispute', async (req, res) => {
         const { transactionId, callerUid, resolutionAction } = req.body; 
         try {
@@ -759,45 +815,25 @@ ${detailsText}
             if (transaction.status !== 'pending') return res.status(400).json({ error: "Dispute already resolved." });
 
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
-            const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
             const amount = parseFloat(transaction.amount);
 
             if (resolutionAction === 'REFUND_BUYER') {
-                const client = await buyerWalletPool.connect();
-                try {
-                    await client.query('BEGIN');
-                    // Mark transaction as refunded
-                    await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
-                    // Remove amount from seller's pending balance
-                    await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
-                    // Add amount to buyer's available balance
-                    await client.query(`INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`, [transaction.buyer_id, amount]);
-                    await client.query('COMMIT');
-                    await sendSystemMessage(transaction.seller_id, '🚨 إشعارات الطلبات', `تم إرجاع المبلغ للمشتري في الطلب رقم ${transactionId}.`, "https://placehold.co/100x100/f44336/ffffff?text=!");
-                    res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
-                } catch(dbError) {
-                    await client.query('ROLLBACK');
-                    throw dbError;
-                } finally {
-                    client.release();
-                }
+                await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
+                // Deduct from seller's pending balance
+                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
+                // Refund to buyer's available balance
+                const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
+                await buyerWalletPool.query(
+                    `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
+                     ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
+                    [transaction.buyer_id, amount]
+                );
+                res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
             } else if (resolutionAction === 'PAY_SELLER') {
-                // This is the same logic as confirming receipt
-                const client = await sellerWalletPool.connect();
-                try {
-                    await client.query('BEGIN');
-                    await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
-                    const netAmount = amount - parseFloat(transaction.commission);
-                    await client.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
-                    await client.query('COMMIT');
-                    await sendSystemMessage(transaction.seller_id, '🛒 إشعارات الطلبات', `تم تأكيد الدفع لك في الطلب رقم ${transactionId} بقرار من الإدارة.`, "https://placehold.co/100x100/4caf50/ffffff?text=!");
-                    res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
-                } catch(dbError) {
-                    await client.query('ROLLBACK');
-                    throw dbError;
-                } finally {
-                    client.release();
-                }
+                await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
+                const netAmount = amount - parseFloat(transaction.commission);
+                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
+                res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
             } else {
                 return res.status(400).json({ error: "Invalid resolution action." });
             }
@@ -807,7 +843,6 @@ ${detailsText}
         }
     });
 
-    // Get download link for a digital product
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
         const { callerUid } = req.query; 
@@ -839,7 +874,6 @@ ${detailsText}
         }
     });
 
-    // Get user points
     router.get('/points/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -852,7 +886,6 @@ ${detailsText}
         }
     });
 
-    // Add points to a user
     router.post('/points', async (req, res) => {
         const { userId } = req.body;
         if (!userId) return res.status(400).json({ error: "User ID required." });
@@ -866,7 +899,6 @@ ${detailsText}
         }
     });
 
-    // Start a support chat with an agent
     router.post('/support/start', async (req, res) => {
         const { userId } = req.body;
         const supportAgentCustomId = '88939087';
@@ -907,63 +939,26 @@ ${detailsText}
         }
     });
     
-    // =================================================================
-    // =========== NEW & MODIFIED PAYMENT ENDPOINTS ====================
-    // =================================================================
-
-    // MODIFIED: Create Stripe Payment Intent (for in-app payment)
-    router.post('/payment/stripe/create-payment-intent', async (req, res) => {
+    router.post('/payment/stripe/create-checkout', async (req, res) => {
+        const { items, buyerId, adId, shippingAddress, isPinning, pinHours } = req.body;
+        // This is a placeholder for real Stripe integration.
+        // The logic for handling success is now based on redirect URLs you must configure.
         try {
-            const { amount, buyerId, adId, isPinning, pinHours, shippingAddress } = req.body;
-            if (!amount || !buyerId || !adId) return res.status(400).json({error: "Amount, buyerId and adId are required"});
-
-            const adInfo = await getAdFromAnyProject(adId);
-            if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
-
-            const transactionId = uuidv4();
-            
-            // Create a PaymentIntent with the order amount and currency
-            const paymentIntent = await stripe.paymentIntents.create({
-                amount: Math.round(amount * 100), // Amount in cents
-                currency: "usd",
-                automatic_payment_methods: { enabled: true },
-                metadata: {
-                    transaction_id: transactionId,
-                    is_pinning: isPinning,
-                    ad_id: adId,
-                    pin_hours: pinHours,
-                }
-            });
-
-            // Before sending the client secret, create the transaction in our database with 'awaiting_payment' status
-            const { pool } = await getUserProjectContext(buyerId);
-            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-            const commission = isPinning ? 0 : amount * 0.02;
-            const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
-
-            await pool.query(
-                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, 'stripe', $8, $9, $10)`,
-                 [transactionId, adId, buyerId, sellerId, amount, commission, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
-            );
-
-            res.send({
-                clientSecret: paymentIntent.client_secret,
-                transactionId: transactionId
-            });
+            // ... [logic to create Stripe session would go here]
+             res.json({ message: "Stripe session created (simulated).", url: `${FRONTEND_URL}?payment=success` });
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
     });
 
-
-    // Create Binance Pay order
+    // MODIFIED: To handle network selection
     router.post('/payment/binance/create-order', async (req, res) => {
-         const { amount, buyerId, adId, isPinning, pinHours, shippingAddress, network } = req.body;
-        
+         const { amount, buyerId, adId, network, isPinning, pinHours, shippingAddress } = req.body;
+         
          try {
             const transactionId = uuidv4();
             const { pool } = await getUserProjectContext(buyerId);
+            const status = 'awaiting_payment'; 
             
             const adInfo = await getAdFromAnyProject(adId);
             if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
@@ -975,13 +970,16 @@ ${detailsText}
             await pool.query(
                 `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, 'crypto', $8, $9, $10)`,
-                 [transactionId, adId, buyerId, sellerId, amount, commission, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
+                 [transactionId, adId, buyerId, sellerId, amount, commission, status, isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
             );
             
-            // NEW: Select address based on network
-            const walletAddress = network === 'BEP20' 
-                ? process.env.BINANCE_BEP20_ADDRESS 
-                : process.env.BINANCE_TRC20_ADDRESS;
+            // NEW: Return correct address based on network
+            let walletAddress = '';
+            if (network === 'BEP20') {
+                walletAddress = process.env.BINANCE_BEP20_ADDRESS;
+            } else { // Default to TRC20
+                walletAddress = process.env.BINANCE_TRC20_ADDRESS;
+            }
             
             if (!walletAddress) {
                 return res.status(500).json({error: `Wallet address for ${network} is not configured on the server.`});
@@ -991,8 +989,7 @@ ${detailsText}
                 message: "Order created, awaiting payment.",
                 transactionId: transactionId,
                 address: walletAddress,
-                amount: amount,
-                network: network
+                amount: amount
             });
         } catch (error) {
             console.error("Error creating Binance order:", error);
@@ -1000,7 +997,6 @@ ${detailsText}
         }
     });
 
-    // Check payment status (for manual polling)
     router.get('/payment/status/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
         try {
@@ -1011,7 +1007,7 @@ ${detailsText}
             }
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             
-            const isPaid = transaction.status !== 'awaiting_payment' && transaction.status !== 'cancelled';
+            const isPaid = transaction.status !== 'awaiting_payment';
             
             res.status(200).json({ status: isPaid ? 'PAID' : 'UNPAID' });
         } catch(error) {
