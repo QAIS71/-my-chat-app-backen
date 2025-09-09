@@ -113,7 +113,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
     
-    // START: NEW FUNCTION - Send Withdrawal Status Update to Seller
     async function sendWithdrawalStatusToSeller(withdrawalRequest, status) {
         const { seller_id, amount } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -150,7 +149,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 messageText = `❌ تم رفض طلب السحب الخاص بك بمبلغ ${amount} USD. تم إعادة المبلغ إلى رصيدك المتاح.`;
                 lastMessage = 'تم رفض طلب السحب';
             } else {
-                return; // Do nothing for other statuses
+                return;
             }
 
             const messageId = uuidv4();
@@ -179,7 +178,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             console.error("Error sending withdrawal status notification to seller:", error);
         }
     }
-    // END: NEW FUNCTION
 
     async function sendOrderNotificationToSeller(sellerId, buyerUsername, adTitle, shippingAddress) {
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -238,7 +236,7 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
                 [sellerId],
                 BOT_USERNAME,
                 `🎉 لديك طلب بيع جديد للمنتج: ${adTitle}`,
-                `${FRONTEND_URL}`, // The seller dashboard is inside the main app URL
+                `${FRONTEND_URL}`, 
                 sellerProfileBg
             );
         }
@@ -344,29 +342,43 @@ ${description}
                 );
             }
 
-            let detailsText = '';
-            if (method === 'crypto') {
-                detailsText = `
-- **الشبكة:** ${withdrawal_details.network}
-- **العنوان:** ${withdrawal_details.address}`;
-            } else if (method === 'stripe') {
-                detailsText = `- **البريد الإلكتروني لـ Stripe:** ${withdrawal_details.email}\n\n*ملاحظة: يرجى معالجة الدفعة يدوياً عبر لوحة تحكم Stripe.*`;
-            }
+            let messageText = '';
 
-            // MODIFIED: Added two buttons for approve and reject
-            const messageText = `
+            if (method === 'crypto') {
+                const netAmountBEP20 = (parseFloat(amount) - 0.20).toFixed(2);
+                const netAmountTRC20 = (parseFloat(amount) - 1.00).toFixed(2);
+                let detailsText = `
+- **الشبكة:** ${withdrawal_details.network}
+- **العنوان:** ${withdrawal_details.address}
+- **الصافي بعد الرسوم:** ${withdrawal_details.network === 'BEP20' ? `${netAmountBEP20} USD` : `${netAmountTRC20} USD`}`;
+                
+                // MODIFIED: Added two buttons for approve and reject for crypto
+                messageText = `
 💰 طلب سحب جديد!
 ---
 - **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
 - **المبلغ:** ${amount} USD
-- **الطريقة:** ${method === 'crypto' ? 'عملات رقمية' : 'Stripe'}
+- **الطريقة:** عملات رقمية
 - **التفاصيل:**
 ${detailsText}
 ---
 **الإجراءات (للمؤسس فقط):**
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:APPROVE]
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:REJECT]
-            `;
+                `;
+
+            } else if (method === 'stripe') {
+                // MODIFIED: Simple notification for Stripe, no buttons.
+                messageText = `
+💳 إشعار سحب عبر Stripe
+---
+- **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
+- **المبلغ:** ${amount} USD
+- **البريد الإلكتروني:** ${withdrawal_details.email}
+---
+**ملاحظة:** تم إرسال طلب السحب إلى Stripe للمعالجة التلقائية.
+                `;
+            }
             
             const messageId = uuidv4();
             const timestamp = Date.now();
@@ -376,6 +388,7 @@ ${detailsText}
                 [messageId, chatId, BOT_UID, BOT_USERNAME, messageText, timestamp]
             );
             await pool.query('UPDATE chats SET last_message = $1, timestamp = $2 WHERE id = $3', ["طلب سحب جديد", timestamp, chatId]);
+            
             if (sendOneSignalNotification) {
                 await sendOneSignalNotification([founder.uid], BOT_USERNAME, `طلب سحب جديد بقيمة ${amount}$ من ${sellerDetails.username}.`, `${FRONTEND_URL}`, founder.profile_bg_url);
             }
@@ -393,7 +406,6 @@ ${detailsText}
             try {
                 await pool.query('DELETE FROM marketing_ads WHERE ad_type = $1 AND deal_expiry < $2', ['deal', now]);
                 await pool.query('UPDATE marketing_ads SET is_pinned = FALSE, pin_expiry = NULL WHERE is_pinned = TRUE AND pin_expiry < $1', [now]);
-                // Cancel pending crypto payments that have expired (e.g., after 15 minutes)
                 await pool.query("UPDATE transactions SET status = 'cancelled' WHERE status = 'awaiting_payment' AND created_at < $1", [now - (15 * 60 * 1000)]);
             } catch (error) {
                 console.error(`[Project ${projectId}] Error during cleanup job:`, error);
@@ -569,10 +581,6 @@ ${detailsText}
                 const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
                 if (adResult.rows.length > 0) {
                     if (adResult.rows[0].seller_id !== callerUid) return res.status(403).json({ error: "Unauthorized." });
-                    // THIS LOGIC IS NOW HANDLED BY THE PAYMENT FLOW
-                    // const expiry = Date.now() + (duration * 3600000);
-                    // await pool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
-                    // For now, we just acknowledge the request. Payment will confirm it.
                     return res.status(200).json({ message: `Pinning request for ${duration} hour(s) received. Proceed to payment.` });
                 }
             }
@@ -599,26 +607,54 @@ ${detailsText}
         }
     });
     
-    // START: MODIFIED - WITHDRAWAL ROUTE
+    // START: MODIFIED - WITHDRAWAL ROUTE with MINIMUMS
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
         if (!sellerId || !amount || !method || !details) return res.status(400).json({ error: "Missing withdrawal information." });
+        
+        const parsedAmount = parseFloat(amount);
+        // Server-side validation for minimums
+        if (method === 'crypto') {
+            if (details.network === 'BEP20' && parsedAmount < 1) {
+                return res.status(400).json({ error: "Minimum withdrawal for BEP20 is $1.00." });
+            }
+            if (details.network === 'TRC20' && parsedAmount < 2) {
+                return res.status(400).json({ error: "Minimum withdrawal for TRC20 is $2.00." });
+            }
+        }
+        
+        // **Stripe Automatic Payout Simulation**
+        // For a real automatic system, you'd use Stripe Connect Payouts API here.
+        // For now, we simulate success and notify the founder.
+        if (method === 'stripe') {
+            // This is where you would call stripe.payouts.create({...})
+            // Since it's a simulation, we just record it and notify.
+             const withdrawalId = uuidv4();
+             const now = Date.now();
+             const { pool } = await getUserProjectContext(sellerId);
+             const withdrawalResult = await pool.query(
+                `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
+                 VALUES ($1, $2, $3, $4, 'approved', $5, $6, $7) RETURNING *`,
+                [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
+            );
+            await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+            return res.status(201).json({ message: "تم إرسال طلب السحب عبر Stripe بنجاح." });
+        }
+
 
         const { pool } = await getUserProjectContext(sellerId);
         try {
-            // Use a transaction to ensure atomicity
             await pool.query('BEGIN');
 
             const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
-            if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parseFloat(amount)) {
+            if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parsedAmount) {
                 await pool.query('ROLLBACK');
                 return res.status(400).json({ error: "Insufficient available balance." });
             }
 
-            // MODIFIED: Move amount from available_balance to withdrawing_balance
             await pool.query(
                 "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", 
-                [amount, sellerId]
+                [parsedAmount, sellerId]
             );
             
             const withdrawalId = uuidv4();
@@ -626,7 +662,7 @@ ${detailsText}
             const withdrawalResult = await pool.query(
                 `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
-                [withdrawalId, sellerId, amount, method, JSON.stringify(details), now, now]
+                [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
             );
             
             await pool.query('COMMIT');
@@ -641,11 +677,10 @@ ${detailsText}
         }
     });
     // END: MODIFIED - WITHDRAWAL ROUTE
-
-    // START: NEW - WITHDRAWAL ACTION ROUTE
+    
     router.post('/withdrawals/:id/action', async (req, res) => {
         const { id } = req.params;
-        const { action, callerUid } = req.body; // action can be 'approve' or 'reject'
+        const { action, callerUid } = req.body; 
         
         if (!callerUid || !action || !['approve', 'reject'].includes(action)) {
              return res.status(400).json({ error: "Missing or invalid parameters." });
@@ -657,7 +692,6 @@ ${detailsText}
                 return res.status(403).json({ error: "Unauthorized." });
             }
 
-            // Find the withdrawal request across all projects' wallets/withdrawals tables
             let withdrawal, withdrawalPool;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
@@ -678,9 +712,7 @@ ${detailsText}
             await sellerWalletPool.query('BEGIN');
 
             if (action === 'approve') {
-                // Deduct from withdrawing_balance
                 await sellerWalletPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
-                // Update withdrawal status
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), id]);
                 
                 await sellerWalletPool.query('COMMIT');
@@ -688,12 +720,10 @@ ${detailsText}
                 res.status(200).json({ message: "Withdrawal approved." });
 
             } else if (action === 'reject') {
-                // Return amount from withdrawing_balance to available_balance
                 await sellerWalletPool.query(
                     "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
                     [withdrawal.amount, withdrawal.seller_id]
                 );
-                // Update withdrawal status
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), id]);
 
                 await sellerWalletPool.query('COMMIT');
@@ -703,7 +733,6 @@ ${detailsText}
 
         } catch (error) {
             console.error("Error processing withdrawal action:", error);
-            // Attempt to rollback if a transaction was started
             try {
                 for (const projectId in projectDbPools) {
                    await projectDbPools[projectId].query('ROLLBACK');
@@ -714,9 +743,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to process withdrawal action." });
         }
     });
-    // END: NEW - WITHDRAWAL ACTION ROUTE
 
-    // START: NEW - GET SELLER WITHDRAWALS
     router.get('/seller/withdrawals/:userId', async (req, res) => {
         const { userId } = req.params;
         const { pool } = await getUserProjectContext(userId);
@@ -728,7 +755,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to fetch withdrawal history." });
         }
     });
-    // END: NEW - GET SELLER WITHDRAWALS
 
     router.post('/purchase', async (req, res) => {
         res.status(400).json({error: "This endpoint is deprecated. Use specific payment endpoints."});
@@ -885,7 +911,6 @@ ${detailsText}
             if (resolutionAction === 'REFUND_BUYER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
-                // START: REFUND TO BUYER'S WALLET (Verified as correct)
                 const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
                 await buyerWalletPool.query(
                     `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
@@ -893,7 +918,6 @@ ${detailsText}
                     [transaction.buyer_id, amount]
                 );
                 res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
-                // END: REFUND
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
                 const netAmount = amount - parseFloat(transaction.commission);
@@ -1004,9 +1028,6 @@ ${detailsText}
         }
     });
     
-    // START: MODIFIED PAYMENT ENDPOINTS
-    
-    // MODIFIED: Stripe endpoint to create a Payment Intent for in-app payment
     router.post('/payment/stripe/create-payment-intent', async (req, res) => {
         const { items, buyerId, adId, shippingAddress, isPinning, pinHours } = req.body;
         
@@ -1016,14 +1037,13 @@ ${detailsText}
 
         try {
             const totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
-            const amountInCents = Math.round(totalAmount * 100); // Stripe requires amount in cents
+            const amountInCents = Math.round(totalAmount * 100);
 
             const adInfo = await getAdFromAnyProject(adId);
             if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
 
             const transactionId = uuidv4();
             
-            // Create a transaction record immediately to link it to the Payment Intent
              const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
              if (!isPinning) {
                  const isDigital = adInfo.ad_type === 'digital_product';
@@ -1034,7 +1054,6 @@ ${detailsText}
                  );
              }
 
-            // Create a PaymentIntent with the order amount and currency
             const paymentIntent = await stripe.paymentIntents.create({
                 amount: amountInCents,
                 currency: 'usd',
@@ -1061,9 +1080,8 @@ ${detailsText}
         }
     });
 
-    // MODIFIED: Binance endpoint to support network selection
     router.post('/payment/binance/create-order', async (req, res) => {
-         const { amount, buyerId, adId, isPinning, pinHours, shippingAddress, network } = req.body; // Added 'network'
+         const { amount, buyerId, adId, isPinning, pinHours, shippingAddress, network } = req.body; 
          
          if (!network || !['TRC20', 'BEP20'].includes(network)) {
              return res.status(400).json({ error: "Invalid or missing crypto network." });
@@ -1087,7 +1105,6 @@ ${detailsText}
                  [transactionId, adId, buyerId, sellerId, amount, commission, status, isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
             );
 
-            // Select address based on network
             const address = network === 'BEP20' 
                 ? process.env.BINANCE_BEP20_ADDRESS 
                 : process.env.BINANCE_TRC20_ADDRESS;
@@ -1100,7 +1117,7 @@ ${detailsText}
                 message: "Order created, awaiting payment.",
                 transactionId: transactionId,
                 address: address,
-                network: network, // Return the network to the frontend
+                network: network,
                 amount: amount
             });
         } catch (error) {
@@ -1126,8 +1143,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to check payment status." });
         }
     });
-
-    // END: MODIFIED PAYMENT ENDPOINTS
 
     return router;
 };
