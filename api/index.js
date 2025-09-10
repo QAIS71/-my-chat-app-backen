@@ -13,6 +13,7 @@ const axios = require('axios'); // لإجراء طلبات HTTP (سنحتاجه�
 
 // تهيئة تطبيق Express
 const app = express();
+app.use(ensureDbInitialized);
 const port = process.env.PORT || 3000; // استخدام المنفذ المحدد بواسطة البيئة (مثلاً Render) أو المنفذ 3000 افتراضياً
 const FRONTEND_URL = "https://watsaligram-frontend-web.netlify.app/"; // <--- غيّر هذا إلى رابط موقعك الفعلي
 
@@ -197,6 +198,23 @@ async function initializeSupabaseClients() {
         }
     }
 }
+let initializationPromise = null;
+const ensureDbInitialized = async (req, res, next) => {
+    try {
+        if (!initializationPromise) {
+            console.log("Starting database initialization...");
+            initializationPromise = initializeSupabaseClients();
+        }
+        await initializationPromise;
+        console.log("Database initialization complete. Proceeding with request.");
+        next();
+    } catch (error) {
+        console.error("CRITICAL: Database initialization failed.", error);
+        // إذا فشل الاتصال بقاعدة البيانات، أوقف العملية وأرسل خطأ
+        initializationPromise = null; // اسمح بالمحاولة مرة أخرى في الطلب القادم
+        res.status(500).json({ error: "Failed to connect to the database." });
+    }
+};
 
 // ----------------------------------------------------------------------------------------------------
 // إعدادات المدير (Admin) - **هام: قم بتغيير هذه القيم في بيئة الإنتاج أو استخدم متغيرات البيئة**
