@@ -2800,9 +2800,6 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
 });
 
 
-// بدء تشغيل الخادم
-app.listen(port, async () => {
-    console.log(`الخادم يعمل على المنفذ ${port}`);
-    console.log(`رابط الواجهة الخلفية (Backend URL): http://localhost:${port}`);
-    await initializeSupabaseClients();
-});
+
+// AFTER (The new code for Vercel)
+module.exports = app;
