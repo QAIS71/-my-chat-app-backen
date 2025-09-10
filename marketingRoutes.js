@@ -342,43 +342,35 @@ ${description}
                 );
             }
 
-            let messageText = '';
-
+            let detailsText = '';
+            let methodName = '';
+            
             if (method === 'crypto') {
-                const netAmountBEP20 = (parseFloat(amount) - 0.20).toFixed(2);
-                const netAmountTRC20 = (parseFloat(amount) - 1.00).toFixed(2);
-                let detailsText = `
+                methodName = 'عملات رقمية';
+                const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
+                detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
 - **العنوان:** ${withdrawal_details.address}
-- **الصافي بعد الرسوم:** ${withdrawal_details.network === 'BEP20' ? `${netAmountBEP20} USD` : `${netAmountTRC20} USD`}`;
-                
-                // MODIFIED: Added two buttons for approve and reject for crypto
-                messageText = `
+- **الصافي بعد الرسوم:** ${netAmount} USD`;
+            } else if (method === 'stripe') {
+                methodName = 'Stripe (بطاقة/حساب بنكي)';
+                // The token is sensitive, so we don't display it. We just confirm a method was submitted.
+                detailsText = `- تم تقديم بيانات السحب بشكل آمن.`;
+            }
+
+            const messageText = `
 💰 طلب سحب جديد!
 ---
 - **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
 - **المبلغ:** ${amount} USD
-- **الطريقة:** عملات رقمية
+- **الطريقة:** ${methodName}
 - **التفاصيل:**
 ${detailsText}
 ---
 **الإجراءات (للمؤسس فقط):**
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:APPROVE]
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:REJECT]
-                `;
-
-            } else if (method === 'stripe') {
-                // MODIFIED: Simple notification for Stripe, no buttons.
-                messageText = `
-💳 إشعار سحب عبر Stripe
----
-- **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
-- **المبلغ:** ${amount} USD
-- **البريد الإلكتروني:** ${withdrawal_details.email}
----
-**ملاحظة:** تم إرسال طلب السحب إلى Stripe للمعالجة التلقائية.
-                `;
-            }
+            `;
             
             const messageId = uuidv4();
             const timestamp = Date.now();
@@ -607,13 +599,14 @@ ${detailsText}
         }
     });
     
-    // START: MODIFIED - WITHDRAWAL ROUTE with MINIMUMS
+    // START: MODIFIED - WITHDRAWAL ROUTE
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
-        if (!sellerId || !amount || !method || !details) return res.status(400).json({ error: "Missing withdrawal information." });
+        if (!sellerId || !amount || !method || !details) {
+            return res.status(400).json({ error: "Missing withdrawal information." });
+        }
         
         const parsedAmount = parseFloat(amount);
-        // Server-side validation for minimums
         if (method === 'crypto') {
             if (details.network === 'BEP20' && parsedAmount < 1) {
                 return res.status(400).json({ error: "Minimum withdrawal for BEP20 is $1.00." });
@@ -622,26 +615,8 @@ ${detailsText}
                 return res.status(400).json({ error: "Minimum withdrawal for TRC20 is $2.00." });
             }
         }
-        
-        // **Stripe Automatic Payout Simulation**
-        // For a real automatic system, you'd use Stripe Connect Payouts API here.
-        // For now, we simulate success and notify the founder.
-        if (method === 'stripe') {
-            // This is where you would call stripe.payouts.create({...})
-            // Since it's a simulation, we just record it and notify.
-             const withdrawalId = uuidv4();
-             const now = Date.now();
-             const { pool } = await getUserProjectContext(sellerId);
-             const withdrawalResult = await pool.query(
-                `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, 'approved', $5, $6, $7) RETURNING *`,
-                [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
-            );
-            await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
-            return res.status(201).json({ message: "تم إرسال طلب السحب عبر Stripe بنجاح." });
-        }
-
-
+        // This unified logic will now handle both 'crypto' and 'stripe' withdrawals
+        // by putting them into a 'pending' state for admin approval.
         const { pool } = await getUserProjectContext(sellerId);
         try {
             await pool.query('BEGIN');
@@ -652,6 +627,7 @@ ${detailsText}
                 return res.status(400).json({ error: "Insufficient available balance." });
             }
 
+            // Move funds from available to withdrawing
             await pool.query(
                 "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", 
                 [parsedAmount, sellerId]
@@ -667,6 +643,7 @@ ${detailsText}
             
             await pool.query('COMMIT');
 
+            // Notify founder for manual approval
             await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
 
             res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
@@ -712,6 +689,7 @@ ${detailsText}
             await sellerWalletPool.query('BEGIN');
 
             if (action === 'approve') {
+                // On approval, the 'withdrawing' balance is cleared.
                 await sellerWalletPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), id]);
                 
@@ -720,6 +698,7 @@ ${detailsText}
                 res.status(200).json({ message: "Withdrawal approved." });
 
             } else if (action === 'reject') {
+                // On rejection, funds are moved from 'withdrawing' back to 'available'.
                 await sellerWalletPool.query(
                     "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
                     [withdrawal.amount, withdrawal.seller_id]
