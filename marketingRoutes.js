@@ -113,7 +113,8 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
     
-    async function sendWithdrawalStatusToSeller(withdrawalRequest, status) {
+    // MODIFIED: Added reason for failure
+    async function sendWithdrawalStatusToSeller(withdrawalRequest, status, reason = '') {
         const { seller_id, amount } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot'; 
@@ -143,11 +144,11 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
             let messageText = '';
             let lastMessage = '';
             if (status === 'approved') {
-                messageText = `✅ تمت الموافقة على طلب السحب الخاص بك بمبلغ ${amount} USD. سيتم إرسال المبلغ قريباً.`;
-                lastMessage = 'تمت الموافقة على طلب السحب';
+                messageText = `✅ تم إرسال طلب السحب الخاص بك بمبلغ ${amount} USD بنجاح. قد يستغرق المبلغ بضعة أيام للوصول.`;
+                lastMessage = 'تم إرسال طلب السحب';
             } else if (status === 'rejected') {
-                messageText = `❌ تم رفض طلب السحب الخاص بك بمبلغ ${amount} USD. تم إعادة المبلغ إلى رصيدك المتاح.`;
-                lastMessage = 'تم رفض طلب السحب';
+                messageText = `❌ فشل طلب السحب الخاص بك بمبلغ ${amount} USD. تم إعادة المبلغ إلى رصيدك المتاح. السبب: ${reason}`;
+                lastMessage = 'فشل طلب السحب';
             } else {
                 return;
             }
@@ -312,9 +313,15 @@ ${description}
         }
     }
     
-    // START: MODIFIED FUNCTION - Send Withdrawal Request to Founder
+    // MODIFIED: This now only handles crypto withdrawals
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
         const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
+        
+        // This function is now only for 'crypto'
+        if (method !== 'crypto') {
+            return;
+        }
+
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
         const BOT_USERNAME = '💰 طلبات السحب';
@@ -342,28 +349,18 @@ ${description}
                 );
             }
 
-            let detailsText = '';
-            let methodName = '';
-            
-            if (method === 'crypto') {
-                methodName = 'عملات رقمية';
-                const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
-                detailsText = `
+            const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
+            const detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
 - **العنوان:** ${withdrawal_details.address}
 - **الصافي بعد الرسوم:** ${netAmount} USD`;
-            } else if (method === 'stripe') {
-                methodName = 'Stripe (بطاقة/حساب بنكي)';
-                // The token is sensitive, so we don't display it. We just confirm a method was submitted.
-                detailsText = `- تم تقديم بيانات السحب بشكل آمن.`;
-            }
 
             const messageText = `
-💰 طلب سحب جديد!
+💰 طلب سحب جديد (عملات رقمية)!
 ---
 - **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
 - **المبلغ:** ${amount} USD
-- **الطريقة:** ${methodName}
+- **الطريقة:** عملات رقمية
 - **التفاصيل:**
 ${detailsText}
 ---
@@ -389,8 +386,7 @@ ${detailsText}
             console.error("Error sending withdrawal notification to founder:", error);
         }
     }
-    // END: MODIFIED FUNCTION
-
+    
     setInterval(async () => {
         const now = Date.now();
         for (const projectId in projectDbPools) {
@@ -599,7 +595,7 @@ ${detailsText}
         }
     });
     
-    // START: MODIFIED - WITHDRAWAL ROUTE
+    // START: MODIFIED - WITHDRAWAL ROUTE (AUTOMATIC STRIPE, MANUAL CRYPTO)
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
         if (!sellerId || !amount || !method || !details) {
@@ -607,54 +603,77 @@ ${detailsText}
         }
         
         const parsedAmount = parseFloat(amount);
-        if (method === 'crypto') {
-            if (details.network === 'BEP20' && parsedAmount < 1) {
-                return res.status(400).json({ error: "Minimum withdrawal for BEP20 is $1.00." });
-            }
-            if (details.network === 'TRC20' && parsedAmount < 2) {
-                return res.status(400).json({ error: "Minimum withdrawal for TRC20 is $2.00." });
-            }
-        }
-        // This unified logic will now handle both 'crypto' and 'stripe' withdrawals
-        // by putting them into a 'pending' state for admin approval.
         const { pool } = await getUserProjectContext(sellerId);
+        const withdrawalId = uuidv4();
+        const now = Date.now();
+
         try {
             await pool.query('BEGIN');
-
             const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
             if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parsedAmount) {
                 await pool.query('ROLLBACK');
                 return res.status(400).json({ error: "Insufficient available balance." });
             }
-
-            // Move funds from available to withdrawing
             await pool.query(
                 "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", 
                 [parsedAmount, sellerId]
             );
-            
-            const withdrawalId = uuidv4();
-            const now = Date.now();
             const withdrawalResult = await pool.query(
                 `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
                 [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
             );
-            
             await pool.query('COMMIT');
 
-            // Notify founder for manual approval
-            await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+            const withdrawalRequest = withdrawalResult.rows[0];
 
-            res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
+            if (method === 'crypto') {
+                await sendWithdrawalRequestToFounder(withdrawalRequest);
+                res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
+            } else if (method === 'stripe') {
+                // AUTOMATIC STRIPE PAYOUT
+                if (!stripe) {
+                    throw new Error("Stripe is not configured on the server.");
+                }
+                try {
+                    // Stripe requires amount in cents
+                    const amountInCents = Math.round(parsedAmount * 100);
+                    // This creates a payout to a debit card/bank account represented by the token
+                    const payout = await stripe.payouts.create({
+                        amount: amountInCents,
+                        currency: 'usd',
+                        method: 'instant', // or 'standard'
+                        destination: details.token, // This should be a card or bank account token
+                        description: `Payout for seller ${sellerId}`
+                    });
+                    
+                    // Payout initiated successfully, update status
+                    await pool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
+                    await pool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [parsedAmount, sellerId]);
+                    
+                    await sendWithdrawalStatusToSeller(withdrawalRequest, 'approved');
+                    res.status(200).json({ message: "تم إرسال طلب السحب بنجاح وسيتم معالجته." });
+
+                } catch (stripeError) {
+                    console.error("Stripe Payout Error:", stripeError);
+                    // If payout fails, revert the balance change
+                    await pool.query(
+                        "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
+                        [parsedAmount, sellerId]
+                    );
+                    await pool.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
+                    await sendWithdrawalStatusToSeller(withdrawalRequest, 'rejected', stripeError.message);
+                    res.status(500).json({ error: `فشل السحب عبر Stripe: ${stripeError.message}` });
+                }
+            }
         } catch (error) {
-            await pool.query('ROLLBACK');
+            await pool.query('ROLLBACK').catch(rbError => console.error("Rollback failed:", rbError));
             console.error("Error processing withdrawal:", error);
             res.status(500).json({ error: "Failed to process withdrawal." });
         }
     });
     // END: MODIFIED - WITHDRAWAL ROUTE
-    
+
     router.post('/withdrawals/:id/action', async (req, res) => {
         const { id } = req.params;
         const { action, callerUid } = req.body; 
@@ -672,7 +691,7 @@ ${detailsText}
             let withdrawal, withdrawalPool;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                const result = await pool.query("SELECT * FROM withdrawals WHERE id = $1 AND status = 'pending'", [id]);
+                const result = await pool.query("SELECT * FROM withdrawals WHERE id = $1 AND status = 'pending' AND method = 'crypto'", [id]);
                 if (result.rows.length > 0) {
                     withdrawal = result.rows[0];
                     withdrawalPool = pool;
@@ -681,7 +700,7 @@ ${detailsText}
             }
 
             if (!withdrawal) {
-                return res.status(404).json({ error: "Pending withdrawal request not found." });
+                return res.status(404).json({ error: "Pending crypto withdrawal request not found." });
             }
             
             const { pool: sellerWalletPool } = await getUserProjectContext(withdrawal.seller_id);
@@ -689,7 +708,6 @@ ${detailsText}
             await sellerWalletPool.query('BEGIN');
 
             if (action === 'approve') {
-                // On approval, the 'withdrawing' balance is cleared.
                 await sellerWalletPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), id]);
                 
@@ -698,7 +716,6 @@ ${detailsText}
                 res.status(200).json({ message: "Withdrawal approved." });
 
             } else if (action === 'reject') {
-                // On rejection, funds are moved from 'withdrawing' back to 'available'.
                 await sellerWalletPool.query(
                     "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
                     [withdrawal.amount, withdrawal.seller_id]
@@ -706,7 +723,7 @@ ${detailsText}
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'rejected', updated_at = $1 WHERE id = $2", [Date.now(), id]);
 
                 await sellerWalletPool.query('COMMIT');
-                await sendWithdrawalStatusToSeller(withdrawal, 'rejected');
+                await sendWithdrawalStatusToSeller(withdrawal, 'rejected', 'تم الرفض من قبل الإدارة');
                 res.status(200).json({ message: "Withdrawal rejected." });
             }
 
@@ -1120,6 +1137,62 @@ ${detailsText}
             res.status(200).json({ status: isPaid ? 'PAID' : 'UNPAID', transaction_status: transaction.status });
         } catch(error) {
             res.status(500).json({ error: "Failed to check payment status." });
+        }
+    });
+
+    // NEW: AI Assistant Endpoint
+    router.post('/ai-assistant', async (req, res) => {
+        const { prompt, history } = req.body;
+        if (!prompt) return res.status(400).json({ error: "Prompt is required." });
+    
+        try {
+            let allAds = [];
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query('SELECT id, title, description, price, ad_type FROM marketing_ads');
+                allAds.push(...result.rows);
+            }
+    
+            const productContext = allAds.map(ad => ({ id: ad.id, title: ad.title, type: ad.ad_type, price: ad.price })).slice(0, 50); // Limit context size
+    
+            const systemPrompt = `
+                أنت مساعد تسوق ذكي ولطيف اسمك "ذوقي". مهمتك هي مساعدة المستخدمين في العثور على المنتجات والإجابة على أسئلتهم المتعلقة بالموضة والتسوق.
+                تحدث باللغة العربية بأسلوب ودود وجذاب.
+                هذه هي قائمة المنتجات المتاحة حالياً: ${JSON.stringify(productContext)}.
+                عندما توصي بمنتج، يجب أن تستخدم الصيغة التالية بالضبط: [PRODUCT:${"id"}]. يمكنك التوصية بمنتجات متعددة.
+                لا تخترع منتجات غير موجودة في القائمة. إذا سأل المستخدم عن شيء غير موجود، اقترح بديلاً مناسباً من القائمة أو اعتذر بلطف.
+            `;
+    
+            const fullHistory = [{ role: "user", parts: [{ text: systemPrompt }] }, ...history];
+    
+            // This assumes a function `callGeminiAPI` exists in this file or is imported.
+            // For now, I'll proxy to the other Gemini endpoint defined in server.js
+            const geminiResponse = await fetch(`${req.protocol}://${req.get('host')}/api/gemini-proxy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt, chatHistory: fullHistory })
+            });
+    
+            const geminiResult = await geminiResponse.json();
+            if (!geminiResponse.ok) throw new Error(geminiResult.error);
+    
+            let responseText = geminiResult.response;
+            const recommendedProductIds = new Set();
+            const productRegex = /\[PRODUCT:([\w-]+)\]/g;
+            let match;
+            while ((match = productRegex.exec(responseText)) !== null) {
+                recommendedProductIds.add(match[1]);
+            }
+    
+            responseText = responseText.replace(productRegex, '').trim();
+    
+            const recommendedProducts = allAds.filter(ad => recommendedProductIds.has(ad.id));
+    
+            res.status(200).json({ text: responseText, products: recommendedProducts });
+    
+        } catch (error) {
+            console.error("Error in AI Assistant endpoint:", error);
+            res.status(500).json({ error: "فشل في التواصل مع المساعد الذكي." });
         }
     });
 
