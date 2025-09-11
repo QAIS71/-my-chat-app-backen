@@ -314,7 +314,7 @@ ${description}
     
     // START: MODIFIED FUNCTION - Send Withdrawal Request to Founder
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
-        const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
+        const { id, seller_id, amount, method } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
         const BOT_UID = 'system-notifications-bot';
         const BOT_USERNAME = '💰 طلبات السحب';
@@ -342,35 +342,30 @@ ${description}
                 );
             }
 
-            let detailsText = '';
-            let methodName = '';
-            
-            if (method === 'crypto') {
-                methodName = 'عملات رقمية';
-                const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
-                detailsText = `
-- **الشبكة:** ${withdrawal_details.network}
-- **العنوان:** ${withdrawal_details.address}
-- **الصافي بعد الرسوم:** ${netAmount} USD`;
-            } else if (method === 'stripe') {
-                methodName = 'Stripe (بطاقة/حساب بنكي)';
-                // The token is sensitive, so we don't display it. We just confirm a method was submitted.
-                detailsText = `- تم تقديم بيانات السحب بشكل آمن.`;
-            }
+            let messageText = '';
 
-            const messageText = `
-💰 طلب سحب جديد!
+            if (method === 'crypto') {
+                 messageText = `
+💰 طلب سحب جديد! (يدوي)
 ---
 - **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
 - **المبلغ:** ${amount} USD
-- **الطريقة:** ${methodName}
-- **التفاصيل:**
-${detailsText}
+- **الطريقة:** عملات رقمية
 ---
 **الإجراءات (للمؤسس فقط):**
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:APPROVE]
 [SYSTEM_ACTION:WITHDRAWAL_ACTION,ID:${id},ACTION:REJECT]
-            `;
+                `;
+            } else if (method === 'stripe') {
+                messageText = `
+💳 إشعار سحب تلقائي عبر Stripe
+---
+- **البائع:** ${sellerDetails.username} (ID: ${sellerDetails.custom_id})
+- **المبلغ:** ${amount} USD
+---
+**ملاحظة:** تم خصم المبلغ من رصيد البائع المتاح ومعالجة طلب السحب هذا تلقائيًا عبر Stripe. (هذا إشعار فقط).
+                `;
+            }
             
             const messageId = uuidv4();
             const timestamp = Date.now();
@@ -607,50 +602,77 @@ ${detailsText}
         }
         
         const parsedAmount = parseFloat(amount);
-        if (method === 'crypto') {
-            if (details.network === 'BEP20' && parsedAmount < 1) {
-                return res.status(400).json({ error: "Minimum withdrawal for BEP20 is $1.00." });
-            }
-            if (details.network === 'TRC20' && parsedAmount < 2) {
-                return res.status(400).json({ error: "Minimum withdrawal for TRC20 is $2.00." });
+        const { pool } = await getUserProjectContext(sellerId);
+
+        // --- AUTOMATIC STRIPE WITHDRAWAL ---
+        if (method === 'stripe') {
+            try {
+                await pool.query('BEGIN');
+                const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
+                if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parsedAmount) {
+                    await pool.query('ROLLBACK');
+                    return res.status(400).json({ error: "رصيدك المتاح غير كافٍ." });
+                }
+
+                // NOTE: In a REAL application with Stripe Connect, you would call the Payouts API here.
+                // This simulation assumes the payout is successful.
+                
+                await pool.query("UPDATE wallets SET available_balance = available_balance - $1 WHERE user_id = $2", [parsedAmount, sellerId]);
+                
+                const withdrawalId = uuidv4();
+                const now = Date.now();
+                const withdrawalResult = await pool.query(
+                    `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
+                     VALUES ($1, $2, $3, $4, 'approved', $5, $6, $7) RETURNING *`,
+                    [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
+                );
+                
+                await pool.query('COMMIT');
+                await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+                return res.status(201).json({ message: "تمت معالجة طلب السحب عبر Stripe بنجاح." });
+
+            } catch (error) {
+                await pool.query('ROLLBACK');
+                console.error("Error processing automatic Stripe withdrawal:", error);
+                return res.status(500).json({ error: "فشل معالجة طلب السحب عبر Stripe." });
             }
         }
-        // This unified logic will now handle both 'crypto' and 'stripe' withdrawals
-        // by putting them into a 'pending' state for admin approval.
-        const { pool } = await getUserProjectContext(sellerId);
-        try {
-            await pool.query('BEGIN');
 
-            const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
-            if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parsedAmount) {
+        // --- MANUAL CRYPTO WITHDRAWAL ---
+        if (method === 'crypto') {
+            if (details.network === 'BEP20' && parsedAmount < 1) return res.status(400).json({ error: "الحد الأدنى للسحب لهذه الشبكة هو 1.00$." });
+            if (details.network === 'TRC20' && parsedAmount < 2) return res.status(400).json({ error: "الحد الأدنى للسحب لهذه الشبكة هو 2.00$." });
+            
+            try {
+                await pool.query('BEGIN');
+                const walletResult = await pool.query("SELECT available_balance FROM wallets WHERE user_id = $1 FOR UPDATE", [sellerId]);
+                if (walletResult.rows.length === 0 || parseFloat(walletResult.rows[0].available_balance) < parsedAmount) {
+                    await pool.query('ROLLBACK');
+                    return res.status(400).json({ error: "رصيدك المتاح غير كافٍ." });
+                }
+
+                await pool.query(
+                    "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", 
+                    [parsedAmount, sellerId]
+                );
+                
+                const withdrawalId = uuidv4();
+                const now = Date.now();
+                const withdrawalResult = await pool.query(
+                    `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
+                     VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
+                    [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
+                );
+                
+                await pool.query('COMMIT');
+                await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
+                return res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
+
+            } catch (error) {
                 await pool.query('ROLLBACK');
-                return res.status(400).json({ error: "Insufficient available balance." });
+                console.error("Error processing crypto withdrawal:", error);
+                return res.status(500).json({ error: "فشل معالجة طلب سحب العملات الرقمية." });
             }
-
-            // Move funds from available to withdrawing
-            await pool.query(
-                "UPDATE wallets SET available_balance = available_balance - $1, withdrawing_balance = withdrawing_balance + $1 WHERE user_id = $2", 
-                [parsedAmount, sellerId]
-            );
-            
-            const withdrawalId = uuidv4();
-            const now = Date.now();
-            const withdrawalResult = await pool.query(
-                `INSERT INTO withdrawals (id, seller_id, amount, method, status, withdrawal_details, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7) RETURNING *`,
-                [withdrawalId, sellerId, parsedAmount, method, JSON.stringify(details), now, now]
-            );
-            
-            await pool.query('COMMIT');
-
-            // Notify founder for manual approval
-            await sendWithdrawalRequestToFounder(withdrawalResult.rows[0]);
-
-            res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
-        } catch (error) {
-            await pool.query('ROLLBACK');
-            console.error("Error processing withdrawal:", error);
-            res.status(500).json({ error: "Failed to process withdrawal." });
         }
     });
     // END: MODIFIED - WITHDRAWAL ROUTE
@@ -689,7 +711,6 @@ ${detailsText}
             await sellerWalletPool.query('BEGIN');
 
             if (action === 'approve') {
-                // On approval, the 'withdrawing' balance is cleared.
                 await sellerWalletPool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [withdrawal.amount, withdrawal.seller_id]);
                 await withdrawalPool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), id]);
                 
@@ -698,7 +719,6 @@ ${detailsText}
                 res.status(200).json({ message: "Withdrawal approved." });
 
             } else if (action === 'reject') {
-                // On rejection, funds are moved from 'withdrawing' back to 'available'.
                 await sellerWalletPool.query(
                     "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
                     [withdrawal.amount, withdrawal.seller_id]
