@@ -8,7 +8,7 @@ const { Pool } = require('pg'); // لاستخدام PostgreSQL
 const fetch = require('node-fetch'); // لاستخدام fetch في Node.js للاتصال بـ Gemini API
 const { createClient } = require('@supabase/supabase-js'); // لاستخدام Supabase Client
 const webPush = require('web-push'); // ==== تمت إضافة هذه المكتبة للإشعارات ====
-const stripe = require('stripe')("");
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const axios = require('axios'); // لإجراء طلبات HTTP (سنحتاجها لـ Binance)
 
 // تهيئة تطبيق Express
