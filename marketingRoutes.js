@@ -1101,10 +1101,17 @@ ${detailsText}
     // ##### الكود الجديد لنظام الدفع بـ NOWPayments يبدأ هنا #####
     // #################################################################
     
+     // NEW: Endpoint to create a payment invoice with NOWPayments (UPDATED with parseFloat and debug log)
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
         const { amount, buyerId, adId, isPinning, pinHours, shippingAddress } = req.body;
 
         try {
+            // ---  التعديل الأول: التأكد من أن المبلغ هو رقم عشري ---
+            const priceAsNumber = parseFloat(amount);
+            if (isNaN(priceAsNumber) || priceAsNumber <= 0) {
+                return res.status(400).json({ error: "Invalid amount provided." });
+            }
+
             const transactionId = uuidv4();
             const { pool } = await getUserProjectContext(buyerId);
             
@@ -1114,18 +1121,16 @@ ${detailsText}
             }
 
             const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-            const companyCommission = isPinning ? 0 : amount * 0.02;
-            const nowPaymentsFee = isPinning ? 0 : amount * NOWPAYMENTS_FEE_PERCENT;
+            const companyCommission = isPinning ? 0 : priceAsNumber * 0.02;
+            const nowPaymentsFee = isPinning ? 0 : priceAsNumber * NOWPAYMENTS_FEE_PERCENT;
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
-            // حفظ المعاملة مع العمولات المحسوبة مسبقاً
             await pool.query(
                 `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11)`,
-                [transactionId, adId, buyerId, sellerId, amount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
+                [transactionId, adId, buyerId, sellerId, priceAsNumber, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
             );
 
-            // استدعاء API الخاص بـ NOWPayments
             const nowPaymentsApiUrl = 'https://api.nowpayments.io/v1/invoice';
             const response = await fetch(nowPaymentsApiUrl, {
                 method: 'POST',
@@ -1134,9 +1139,9 @@ ${detailsText}
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    price_amount: amount,
+                    price_amount: priceAsNumber, // <-- استخدام الرقم هنا
                     price_currency: 'usd',
-                    pay_currency: 'usdtbsc', // يمكنك تغييرها إلى usdttrc20 إذا أردت
+                    pay_currency: 'usdtbsc',
                     order_id: transactionId,
                     ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
                 })
@@ -1144,9 +1149,12 @@ ${detailsText}
 
             const invoiceData = await response.json();
 
-            if (!response.ok) {
-                console.error("NOWPayments API Error:", invoiceData);
-                throw new Error(invoiceData.message || 'Failed to create NOWPayments invoice.');
+            // --- التعديل الثاني: إضافة سطر طباعة للتحقق من الاستجابة ---
+            console.log("[DEBUG] NOWPAYMENTS RAW RESPONSE:", JSON.stringify(invoiceData, null, 2));
+
+            if (!response.ok || !invoiceData.pay_address) { // <-- التحقق من وجود العنوان
+                console.error("NOWPayments API Error or Invalid Response:", invoiceData);
+                throw new Error(invoiceData.message || 'Failed to create a valid NOWPayments invoice.');
             }
 
             res.status(201).json({
