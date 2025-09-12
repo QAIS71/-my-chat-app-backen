@@ -360,6 +360,12 @@ await pool.query(`
     ALTER TABLE wallets ADD COLUMN IF NOT EXISTS withdrawing_balance NUMERIC(10, 2) DEFAULT 0.00;
 `);
 
+// في ملف server.js داخل دالة createTables
+await pool.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_gateway_fee NUMERIC(10, 2) DEFAULT 0.00;
+`);
+console.log('تم التأكد من وجود حقل payment_gateway_fee في جدول transactions.');
+
 // بالكود الجديد هذا:
 const createAdsTableQuery = `
     CREATE TABLE IF NOT EXISTS marketing_ads (
