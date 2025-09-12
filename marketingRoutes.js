@@ -2,10 +2,16 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
+const crypto = require('crypto'); // <-- مكتبة للتحقق من الويب هوك
 
 // IMPORTANT: Added 'stripe' to the function parameters
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification, FRONTEND_URL, stripe) {
     
+    // =================================================================
+    // نسبة عمولة NOWPayments (يمكنك تعديلها إذا تغيرت)
+    const NOWPAYMENTS_FEE_PERCENT = 0.005; // 0.5%
+    // =================================================================
+
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
@@ -828,7 +834,7 @@ ${detailsText}
 
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
-        const { buyerId } = req.body; 
+        const { buyerId } = req.body;
         try {
             let transaction, transactionPool;
             for (const projectId in projectDbPools) {
@@ -837,11 +843,20 @@ ${detailsText}
             }
             if (!transaction) return res.status(404).json({ error: "Transaction not found." });
             if (transaction.buyer_id !== buyerId) return res.status(403).json({ error: "Unauthorized." });
-            if (transaction.status !== 'pending') return res.status(400).json({ error: "Order already confirmed." });
+            if (transaction.status !== 'pending') return res.status(400).json({ error: "Order already confirmed or refunded." });
+            
             await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
+            
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
-            const netAmount = parseFloat(transaction.amount) - parseFloat(transaction.commission);
-            await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [parseFloat(transaction.amount), netAmount, transaction.seller_id]);
+            const totalAmount = parseFloat(transaction.amount);
+            const companyCommission = parseFloat(transaction.commission);
+            const gatewayFee = parseFloat(transaction.payment_gateway_fee);
+            const netAmount = totalAmount - companyCommission - gatewayFee;
+
+            await sellerWalletPool.query(
+                `UPDATE wallets SET pending_balance = pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, 
+                [totalAmount, netAmount, transaction.seller_id]
+            );
             res.status(200).json({ message: "تم تأكيد الاستلام بنجاح!" });
         } catch (error) {
             console.error("Error confirming order:", error);
@@ -908,6 +923,8 @@ ${detailsText}
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
                 const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
+                // For a refund, we assume the full amount is returned to the buyer's app wallet.
+                // You might adjust this logic if refunds go back to the original payment method.
                 await buyerWalletPool.query(
                     `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
                      ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
@@ -916,8 +933,10 @@ ${detailsText}
                 res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
-                const netAmount = amount - parseFloat(transaction.commission);
-                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = wallets.available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
+                const companyCommission = parseFloat(transaction.commission);
+                const gatewayFee = parseFloat(transaction.payment_gateway_fee);
+                const netAmount = amount - companyCommission - gatewayFee;
+                await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
                 res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
             } else {
                 return res.status(400).json({ error: "Invalid resolution action." });
@@ -1043,10 +1062,12 @@ ${detailsText}
              const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
              if (!isPinning) {
                  const isDigital = adInfo.ad_type === 'digital_product';
+                 // Stripe's fee is complex to calculate upfront, so we will handle it in the webhook
+                 const companyCommission = totalAmount * 0.02;
                  await buyerProjectPool.query(
                     `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) 
                      VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, 'stripe', $8, $9, $10)`,
-                    [transactionId, adId, buyerId, adInfo.seller_id, totalAmount, totalAmount * 0.02, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
+                    [transactionId, adId, buyerId, adInfo.seller_id, totalAmount, companyCommission, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
                  );
              }
 
@@ -1076,51 +1097,154 @@ ${detailsText}
         }
     });
 
-    router.post('/payment/binance/create-order', async (req, res) => {
-         const { amount, buyerId, adId, isPinning, pinHours, shippingAddress, network } = req.body; 
-         
-         if (!network || !['TRC20', 'BEP20'].includes(network)) {
-             return res.status(400).json({ error: "Invalid or missing crypto network." });
-         }
+    // #################################################################
+    // ##### الكود الجديد لنظام الدفع بـ NOWPayments يبدأ هنا #####
+    // #################################################################
+    
+    router.post('/payment/nowpayments/create-invoice', async (req, res) => {
+        const { amount, buyerId, adId, isPinning, pinHours, shippingAddress } = req.body;
 
-         try {
+        try {
             const transactionId = uuidv4();
             const { pool } = await getUserProjectContext(buyerId);
-            const status = 'awaiting_payment';
             
             const adInfo = await getAdFromAnyProject(adId);
-            if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
-            
+            if (!adInfo && !isPinning) {
+                return res.status(404).json({ error: "Ad not found." });
+            }
+
             const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-            const commission = isPinning ? 0 : amount * 0.02;
+            const companyCommission = isPinning ? 0 : amount * 0.02;
+            const nowPaymentsFee = isPinning ? 0 : amount * NOWPAYMENTS_FEE_PERCENT;
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
+            // حفظ المعاملة مع العمولات المحسوبة مسبقاً
             await pool.query(
-                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, 'crypto', $8, $9, $10)`,
-                 [transactionId, adId, buyerId, sellerId, amount, commission, status, isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
+                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at) 
+                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11)`,
+                [transactionId, adId, buyerId, sellerId, amount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
             );
 
-            const address = network === 'BEP20' 
-                ? process.env.BINANCE_BEP20_ADDRESS 
-                : process.env.BINANCE_TRC20_ADDRESS;
+            // استدعاء API الخاص بـ NOWPayments
+            const nowPaymentsApiUrl = 'https://api.nowpayments.io/v1/invoice';
+            const response = await fetch(nowPaymentsApiUrl, {
+                method: 'POST',
+                headers: {
+                    'x-api-key': process.env.NOWPAYMENTS_API_KEY,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    price_amount: amount,
+                    price_currency: 'usd',
+                    pay_currency: 'usdtbsc', // يمكنك تغييرها إلى usdttrc20 إذا أردت
+                    order_id: transactionId,
+                    ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
+                })
+            });
 
-            if (!address) {
-                return res.status(500).json({ error: `Wallet address for ${network} is not configured on the server.` });
+            const invoiceData = await response.json();
+
+            if (!response.ok) {
+                console.error("NOWPayments API Error:", invoiceData);
+                throw new Error(invoiceData.message || 'Failed to create NOWPayments invoice.');
             }
 
             res.status(201).json({
-                message: "Order created, awaiting payment.",
+                message: "Invoice created successfully.",
                 transactionId: transactionId,
-                address: address,
-                network: network,
-                amount: amount
+                paymentDetails: invoiceData
             });
+
         } catch (error) {
-            console.error("Error creating Binance order:", error);
+            console.error("Error creating NOWPayments invoice:", error);
             res.status(500).json({ error: "Failed to create payment order." });
         }
     });
+
+    router.post('/payment/nowpayments/webhook', express.json({type: '*/*'}), async (req, res) => {
+        const signature = req.headers['x-nowpayments-sig'];
+        const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
+
+        try {
+            // التحقق من صحة التوقيع
+            const hmac = crypto.createHmac('sha512', ipnSecret);
+            hmac.update(JSON.stringify(req.body, Object.keys(req.body).sort()));
+            const expectedSignature = hmac.digest('hex');
+
+            if (signature !== expectedSignature) {
+                console.warn("Invalid NOWPayments webhook signature received.");
+                return res.status(401).send('Invalid signature');
+            }
+            
+            const { payment_status, order_id } = req.body;
+            console.log(`Webhook received for order ${order_id} with status: ${payment_status}`);
+
+            let transaction, transactionPool;
+            for (const projectId in projectDbPools) {
+                const pool = projectDbPools[projectId];
+                const result = await pool.query("SELECT * FROM transactions WHERE id = $1 AND status = 'awaiting_payment'", [order_id]);
+                if (result.rows.length > 0) {
+                    transaction = result.rows[0];
+                    transactionPool = pool;
+                    break;
+                }
+            }
+
+            if (!transaction) {
+                console.log(`Transaction ${order_id} not found or already processed.`);
+                return res.status(200).send('OK');
+            }
+
+            // التعامل مع حالات الدفع المختلفة
+            if (payment_status === 'finished' || payment_status === 'paid') {
+                const adDetails = await getAdFromAnyProject(transaction.ad_id);
+
+                if (transaction.seller_id === 'platform_owner') { 
+                    const pinHours = 1; 
+                    const expiry = Date.now() + (pinHours * 3600000);
+                    // يجب إيجاد الإعلان في مشروعه الصحيح لتحديثه
+                    for (const pid in projectDbPools) {
+                        const adPool = projectDbPools[pid];
+                        const updateResult = await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, transaction.ad_id]);
+                        if (updateResult.rowCount > 0) break;
+                    }
+                    await transactionPool.query("UPDATE transactions SET status = 'completed' WHERE id = $1", [transaction.id]);
+                } else {
+                    const isDigital = adDetails && adDetails.ad_type === 'digital_product';
+                    const newStatus = isDigital ? 'completed' : 'pending';
+                    await transactionPool.query("UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3", [newStatus, Date.now(), transaction.id]);
+                    
+                    const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
+                    const totalAmount = parseFloat(transaction.amount);
+
+                    if (isDigital) {
+                        const companyCommission = parseFloat(transaction.commission);
+                        const gatewayFee = parseFloat(transaction.payment_gateway_fee);
+                        const netAmount = totalAmount - companyCommission - gatewayFee;
+                        await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
+                    } else {
+                        await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
+                    }
+                    
+                    const buyerDetails = await getUserDetailsFromDefaultProject(transaction.buyer_id);
+                    await sendOrderNotificationToSeller(transaction.seller_id, buyerDetails.username, adDetails.title, transaction.shipping_address);
+                }
+            } else if (['failed', 'expired', 'refunded'].includes(payment_status)) {
+                await transactionPool.query("UPDATE transactions SET status = 'cancelled' WHERE id = $1", [transaction.id]);
+            }
+
+            res.status(200).send('OK');
+
+        } catch (error) {
+            console.error("Error processing NOWPayments webhook:", error);
+            res.status(500).send('Webhook processing error');
+        }
+    });
+
+    // #################################################################
+    // ##### الكود الجديد لنظام الدفع بـ NOWPayments ينتهي هنا #####
+    // #################################################################
+
 
     router.get('/payment/status/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
