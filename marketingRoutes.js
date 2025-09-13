@@ -1126,7 +1126,7 @@ ${detailsText}
             );
 
             // استدعاء API الخاص بـ NOWPayments
-            const nowPaymentsApiUrl = 'https://api.nowpayments.io/v1/invoice';
+            const nowPaymentsApiUrl = 'https://api.nowpayments.io/v1/payment';
             const response = await fetch(nowPaymentsApiUrl, {
                 method: 'POST',
                 headers: {
