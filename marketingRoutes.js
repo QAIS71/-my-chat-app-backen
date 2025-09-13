@@ -1135,7 +1135,7 @@ ${detailsText}
                 },
                 body: JSON.stringify({
                     price_amount: amount,
-                    price_currency: 'usd',
+                    price_currency: 'usdtbsc',
                     pay_currency: 'usdtbsc', // يمكنك تغييرها إلى usdttrc20 إذا أردت
                     order_id: transactionId,
                     ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
