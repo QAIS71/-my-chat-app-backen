@@ -1116,45 +1116,62 @@ ${detailsText}
     // #################################################################
     
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
-        const { amount, buyerId, adId, isPinning, pinHours, shippingAddress } = req.body;
+    // 1. نستقبل المتغير الجديد هنا أيضاً
+    let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
 
-        try {
-            const transactionId = uuidv4();
-            const { pool } = await getUserProjectContext(buyerId);
-            
-            const adInfo = await getAdFromAnyProject(adId);
-            if (!adInfo && !isPinning) {
-                return res.status(404).json({ error: "Ad not found." });
+    try {
+        const transactionId = uuidv4();
+        const { pool } = await getUserProjectContext(buyerId);
+        
+        const adInfo = await getAdFromAnyProject(adId);
+        if (!adInfo && !isPinning) {
+            return res.status(404).json({ error: "Ad not found." });
+        }
+
+        let finalAmount = parseFloat(amount);
+        let discountWasUsed = false;
+
+        // 2. نضيف نفس منطق التحقق من النقاط وحساب السعر بأمان
+        if (usePointsDiscount && !isPinning) {
+            const pointsResult = await pool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
+
+            if (userPoints >= 100) {
+                let originalPrice = parseFloat(adInfo.price);
+                let shipping = parseFloat(adInfo.shipping_cost) || 0;
+                finalAmount = (originalPrice * 0.90) + shipping;
+                discountWasUsed = true; // نجهز العلامة للحفظ في قاعدة البيانات
+                console.log(`NOWPayments: تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${finalAmount}`);
             }
+        }
 
-            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-            const companyCommission = isPinning ? 0 : amount * 0.02;
-            const nowPaymentsFee = isPinning ? 0 : amount * NOWPAYMENTS_FEE_PERCENT;
-            const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+        const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
+        const companyCommission = isPinning ? 0 : finalAmount * 0.02;
+        const nowPaymentsFee = isPinning ? 0 : finalAmount * 0.005; // 0.5%
+        const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
-            // حفظ المعاملة مع العمولات المحسوبة مسبقاً
-            await pool.query(
-                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at) 
-                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11)`,
-                [transactionId, adId, buyerId, sellerId, amount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
-            );
+        // 3. نعدل أمر الإضافة ليحفظ العلامة الجديدة used_points_discount
+        await pool.query(
+            `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+             VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
+            [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
+        );
 
-            // استدعاء API الخاص بـ NOWPayments
-            const nowPaymentsApiUrl = 'https://api.nowpayments.io/v1/payment';
-            const response = await fetch(nowPaymentsApiUrl, {
-                method: 'POST',
-                headers: {
-                    'x-api-key': process.env.NOWPAYMENTS_API_KEY,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    price_amount: amount,
-                    price_currency: 'usdtbsc',
-                    pay_currency: 'usdtbsc', // يمكنك تغييرها إلى usdttrc20 إذا أردت
-                    order_id: transactionId,
-                    ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
-                })
-            });
+        // 4. نرسل السعر النهائي (بعد الخصم إن وجد) إلى NOWPayments
+        const response = await fetch('https://api.nowpayments.io/v1/payment', {
+            method: 'POST',
+            headers: {
+                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                price_amount: finalAmount, // نستخدم السعر النهائي هنا
+                price_currency: 'usdtbsc',
+                pay_currency: 'usdtbsc',
+                order_id: transactionId,
+                ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
+            })
+        });
 
             const invoiceData = await response.json();
 
