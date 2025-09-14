@@ -366,7 +366,13 @@ await pool.query(`
 `);
 console.log('تم التأكد من وجود حقل payment_gateway_fee في جدول transactions.');
 
-// بالكود الجديد هذا:
+ // في ملف server.js داخل دالة createTables
+await pool.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS used_points_discount BOOLEAN DEFAULT FALSE;
+`);
+console.log('تم التأكد من وجود حقل used_points_discount في جدول transactions.');   
+      
+// بالكود الجديد هذا
 const createAdsTableQuery = `
     CREATE TABLE IF NOT EXISTS marketing_ads (
         id VARCHAR(255) PRIMARY KEY,
