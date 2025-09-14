@@ -2754,24 +2754,43 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    if (event.type === 'checkout.session.completed') {
-        const session = event.data.object;
-        const { transaction_id, ad_id, used_points_discount, buyer_id } = session.metadata;
-      if (used_points_discount === 'true') { // الـ metadata تكون دائماً نص
-    try {
-        const { pool: buyerPool } = await getUserProjectContext(buyer_id);
-        await buyerPool.query(
-            `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
-            [buyer_id]
-        );
-        console.log(`Successfully deducted 100 points from user ${buyer_id}.`);
-    } catch (pointsError) {
-        console.error(`Failed to deduct points for user ${buyer_id}:`, pointsError);
+     if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    // ================== بداية التعديل ==================
+
+    // 1. نقرأ البيانات الجديدة من الـ metadata التي أضفناها في الخطوة السابقة
+    const { transaction_id, ad_id, pin_details, used_points_discount, buyer_id } = session.metadata;
+
+    console.log(`✅ Stripe payment successful for session: ${session.id}`);
+
+    // 2. هذا هو الكود الجديد الذي يقوم بخصم النقاط
+    if (used_points_discount === 'true') { // الـ metadata تكون دائماً نص وليست boolean
+        try {
+            // ملاحظة: بما أن جدول النقاط موجود في كل المشاريع،
+            // يجب أن نجد المشروع الصحيح للمشتري أولاً
+            let buyerPool;
+            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
+            const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [buyer_id]);
+            if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
+                buyerPool = projectDbPools[userResult.rows[0].user_project_id];
+            } else {
+                buyerPool = defaultPool; // fallback
+            }
+
+            if (buyerPool) {
+                await buyerPool.query(
+                    `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
+                    [buyer_id]
+                );
+                console.log(`تم خصم 100 نقطة بنجاح من المستخدم ${buyer_id}.`);
+            }
+        } catch (pointsError) {
+            console.error(`فشل خصم النقاط للمستخدم ${buyer_id} للمعاملة ${transaction_id}:`, pointsError);
+            // ملاحظة: لا نوقف العملية هنا لأن الدفع قد تم بالفعل.
+            // يمكنك إضافة نظام لتسجيل هذا الخطأ لمراجعته لاحقاً.
+        }
     }
-      }
-
-        console.log(`✅ Stripe payment successful for session: ${session.id}`);
-
+    // ================== نهاية التعديل ==================
         // Handle successful payment
         if (transaction_id) {
             // It's a product purchase
