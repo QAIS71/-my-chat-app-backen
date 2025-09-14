@@ -1225,6 +1225,14 @@ ${detailsText}
                     } else {
                         await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
                     }
+                    if (transaction.used_points_discount) {
+    console.log(`خصم النقاط مستخدم للمعاملة ${transaction.id}. سيتم خصم 100 نقطة من المشتري ${transaction.buyer_id}.`);
+    const { pool: buyerPointsPool } = await getUserProjectContext(transaction.buyer_id);
+    await buyerPointsPool.query(
+        "UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100",
+        [transaction.buyer_id]
+    );
+                    }
                     
                     const buyerDetails = await getUserDetailsFromDefaultProject(transaction.buyer_id);
                     await sendOrderNotificationToSeller(transaction.seller_id, buyerDetails.username, adDetails.title, transaction.shipping_address);
