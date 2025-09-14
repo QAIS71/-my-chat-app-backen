@@ -2809,6 +2809,19 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
 
                 if (transaction && transaction.status === 'awaiting_payment') {
                     await transactionPool.query('UPDATE transactions SET status = $1 WHERE id = $2', ['pending', transaction_id]);
+                  if (transaction.used_points_discount) {
+        try {
+            // 2. نحدد المشروع الصحيح للمشتري ونخصم النقاط
+            const { pool: buyerPool } = await getUserProjectContext(transaction.buyer_id);
+            await buyerPool.query(
+                `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
+                [transaction.buyer_id]
+            );
+            console.log(`NOWPayments: تم خصم 100 نقطة بنجاح من المستخدم ${transaction.buyer_id}.`);
+        } catch (pointsError) {
+            console.error(`NOWPayments: فشل خصم النقاط للمستخدم ${transaction.buyer_id}:`, pointsError);
+        }
+                  }
                     // Logic to update wallet (move from pending to available) can be added here if needed
                     console.log(`Transaction ${transaction_id} updated to 'pending' after Stripe payment.`);
                 }
