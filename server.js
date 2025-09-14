@@ -365,6 +365,12 @@ await pool.query(`
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payment_gateway_fee NUMERIC(10, 2) DEFAULT 0.00;
 `);
 console.log('تم التأكد من وجود حقل payment_gateway_fee في جدول transactions.');
+
+      // في ملف server.js داخل دالة createTables
+await pool.query(`
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS used_points_discount BOOLEAN DEFAULT FALSE;
+`);
+console.log('تم التأكد من وجود حقل used_points_discount في جدول transactions.');
       
 // بالكود الجديد هذا
 const createAdsTableQuery = `
@@ -2751,6 +2757,19 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
         const { transaction_id, ad_id, pin_details } = session.metadata;
+
+      if (used_points_discount === 'true') { // الـ metadata تكون دائماً نص
+    try {
+        const { pool: buyerPool } = await getUserProjectContext(buyer_id);
+        await buyerPool.query(
+            `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
+            [buyer_id]
+        );
+        console.log(`Successfully deducted 100 points from user ${buyer_id}.`);
+    } catch (pointsError) {
+        console.error(`Failed to deduct points for user ${buyer_id}:`, pointsError);
+    }
+      }
 
         console.log(`✅ Stripe payment successful for session: ${session.id}`);
 
