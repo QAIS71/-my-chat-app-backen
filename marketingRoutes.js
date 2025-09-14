@@ -1042,60 +1042,74 @@ ${detailsText}
             res.status(500).json({ error: "Failed to start support chat." });
         }
     });
-    
+
     router.post('/payment/stripe/create-payment-intent', async (req, res) => {
-        const { items, buyerId, adId, shippingAddress, isPinning, pinHours } = req.body;
+    // ================== بداية التعديل ==================
+
+    // 1. هنا نستقبل المتغير الجديد usePointsDiscount من الواجهة الأمامية
+    const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
+
+    if (!stripe) {
+        return res.status(500).json({ error: "Stripe integration is not configured on the server." });
+    }
+
+    try {
+        let totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
+
+        // 2. هذا هو الكود الذي يتحقق من النقاط ويطبق الخصم بأمان في الخادم
+        if (usePointsDiscount && !isPinning) {
+            const { pool: buyerPool } = await getUserProjectContext(buyerId);
+            const pointsResult = await buyerPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
+
+            if (userPoints >= 100) {
+                // نعيد حساب السعر من قاعدة البيانات لضمان عدم التلاعب
+                const adInfoForPrice = await getAdFromAnyProject(adId);
+                let originalPrice = parseFloat(adInfoForPrice.price);
+                let shipping = parseFloat(adInfoForPrice.shipping_cost) || 0;
+                totalAmount = (originalPrice * 0.90) + shipping;
+                console.log(`تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${totalAmount}`);
+            } else {
+                console.log(`محاولة استخدام خصم النقاط للمستخدم ${buyerId} بدون رصيد كافٍ. تم تجاهل الخصم.`);
+            }
+        }
         
-        if (!stripe) {
-            return res.status(500).json({ error: "Stripe integration is not configured on the server." });
-        }
+        const amountInCents = Math.round(totalAmount * 100);
 
-        try {
-            const totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
-            const amountInCents = Math.round(totalAmount * 100);
+        // ... يستمر الكود كما كان...
+        const adInfo = await getAdFromAnyProject(adId);
+        // ...إلخ
 
-            const adInfo = await getAdFromAnyProject(adId);
-            if (!adInfo && !isPinning) return res.status(404).json({ error: "Ad not found." });
+        // 3. الآن نعدل الـ metadata لإضافة علامة تفيد باستخدام الخصم
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: amountInCents,
+            currency: 'usd',
+            automatic_payment_methods: {
+                enabled: true,
+            },
+            metadata: {
+                transaction_id: isPinning ? 'pin_' + adId : transactionId,
+                ad_id: adId,
+                buyer_id: buyerId,
+                is_pinning: isPinning,
+                pin_hours: pinHours,
+                // هذا السطر مهم جداً للخطوة التالية
+                used_points_discount: usePointsDiscount && !isPinning
+            }
+        });
+        
+    // ================== نهاية التعديل ==================
 
-            const transactionId = uuidv4();
-            
-             const { pool: buyerProjectPool } = await getUserProjectContext(buyerId);
-             if (!isPinning) {
-                 const isDigital = adInfo.ad_type === 'digital_product';
-                 // Stripe's fee is complex to calculate upfront, so we will handle it in the webhook
-                 const companyCommission = totalAmount * 0.02;
-                 await buyerProjectPool.query(
-                    `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, status, payment_method, shipping_address, created_at, updated_at) 
-                     VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, 'stripe', $8, $9, $10)`,
-                    [transactionId, adId, buyerId, adInfo.seller_id, totalAmount, companyCommission, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
-                 );
-             }
+        res.send({
+            clientSecret: paymentIntent.client_secret,
+            transactionId: transactionId
+        });
 
-            const paymentIntent = await stripe.paymentIntents.create({
-                amount: amountInCents,
-                currency: 'usd',
-                automatic_payment_methods: {
-                    enabled: true,
-                },
-                metadata: {
-                    transaction_id: isPinning ? 'pin_' + adId : transactionId,
-                    ad_id: adId,
-                    buyer_id: buyerId,
-                    is_pinning: isPinning,
-                    pin_hours: pinHours
-                }
-            });
-
-            res.send({
-                clientSecret: paymentIntent.client_secret,
-                transactionId: transactionId
-            });
-
-        } catch (error) {
-            console.error("Stripe Payment Intent Error:", error);
-            res.status(500).json({ error: error.message });
-        }
-    });
+    } catch (error) {
+        console.error("Stripe Payment Intent Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
     // #################################################################
     // ##### الكود الجديد لنظام الدفع بـ NOWPayments يبدأ هنا #####
