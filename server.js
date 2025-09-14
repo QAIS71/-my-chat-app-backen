@@ -2756,8 +2756,7 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
 
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
-        const { transaction_id, ad_id, pin_details } = session.metadata;
-
+        const { transaction_id, ad_id, used_points_discount, buyer_id } = session.metadata;
       if (used_points_discount === 'true') { // الـ metadata تكون دائماً نص
     try {
         const { pool: buyerPool } = await getUserProjectContext(buyer_id);
