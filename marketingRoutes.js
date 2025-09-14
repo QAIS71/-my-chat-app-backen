@@ -1122,7 +1122,7 @@ ${detailsText}
             await pool.query(
                 `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at) 
                  VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
-                [transactionId, adId, buyerId, sellerId, amount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now()]
+                [transactionId, adId, buyerId, sellerId, amount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), usePointsDiscount || false]
             );
 
             // استدعاء API الخاص بـ NOWPayments
