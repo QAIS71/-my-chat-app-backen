@@ -12,6 +12,11 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
     const NOWPAYMENTS_FEE_PERCENT = 0.005; // 0.5%
     // =================================================================
 
+    // START: MODIFIED - تعريف نسبة العمولة الإجمالية
+    // تم تغيير العمولة إلى 8% شاملة رسوم البوابات
+    const PLATFORM_COMMISSION_PERCENT = 0.08; // 8%
+    // END: MODIFIED
+
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
         if (userId) {
@@ -355,7 +360,12 @@ ${description}
                 );
             }
 
-            const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
+            // START: MODIFIED - تحديث تفاصيل السحب لشبكة Optimism
+            // رسوم شبكة Optimism بناء على الصورة هي 0.042
+            const withdrawalFee = 0.042;
+            const netAmount = (parseFloat(amount) - withdrawalFee).toFixed(2);
+            // END: MODIFIED
+
             const detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
 - **العنوان:** ${withdrawal_details.address}
@@ -495,6 +505,13 @@ ${detailsText}
         if (!title || !description || !ad_type || !seller_id || !price) {
             return res.status(400).json({ error: "All fields are required." });
         }
+
+        // START: MODIFIED - إضافة التحقق من الحد الأدنى للسعر
+        if (parseFloat(price) < 0.1) {
+            return res.status(400).json({ error: "الحد الأدنى لسعر المنتج هو 0.1$." });
+        }
+        // END: MODIFIED
+
         try {
             const sellerDetails = await getUserDetailsFromDefaultProject(seller_id);
             if (!sellerDetails || (!sellerDetails.is_approved_seller && sellerDetails.user_role !== 'admin')) {
@@ -850,8 +867,11 @@ ${detailsText}
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
             const totalAmount = parseFloat(transaction.amount);
             const companyCommission = parseFloat(transaction.commission);
-            const gatewayFee = parseFloat(transaction.payment_gateway_fee);
-            const netAmount = totalAmount - companyCommission - gatewayFee;
+            
+            // START: MODIFIED - حساب المبلغ الصافي للبائع
+            // تم إلغاء gatewayFee من الحسبة، العمولة الآن 8% شاملة كل شيء
+            const netAmount = totalAmount - companyCommission;
+            // END: MODIFIED
 
             await sellerWalletPool.query(
                 `UPDATE wallets SET pending_balance = pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, 
@@ -934,8 +954,11 @@ ${detailsText}
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
                 const companyCommission = parseFloat(transaction.commission);
-                const gatewayFee = parseFloat(transaction.payment_gateway_fee);
-                const netAmount = amount - companyCommission - gatewayFee;
+                
+                // START: MODIFIED - حساب المبلغ الصافي للبائع عند حل النزاع
+                const netAmount = amount - companyCommission;
+                // END: MODIFIED
+
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
                 res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
             } else {
@@ -1074,11 +1097,22 @@ ${detailsText}
             }
         }
         
-        const amountInCents = Math.round(totalAmount * 100);
-
-        // ... يستمر الكود كما كان...
+        // START: MODIFIED - تعديل حساب العمولة لـ Stripe
         const adInfo = await getAdFromAnyProject(adId);
-        // ...إلخ
+        const transactionId = uuidv4();
+        const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
+        const companyCommission = isPinning ? 0 : totalAmount * PLATFORM_COMMISSION_PERCENT; // استخدام 8%
+        const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+        
+        const { pool } = await getUserProjectContext(buyerId);
+        await pool.query(
+            `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+             VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'stripe', $9, $10, $11, $12)`,
+            [transactionId, adId, buyerId, sellerId, totalAmount, companyCommission, 0, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), usePointsDiscount && !isPinning]
+        );
+        // END: MODIFIED
+        
+        const amountInCents = Math.round(totalAmount * 100);
 
         // 3. الآن نعدل الـ metadata لإضافة علامة تفيد باستخدام الخصم
         const paymentIntent = await stripe.paymentIntents.create({
@@ -1088,7 +1122,7 @@ ${detailsText}
                 enabled: true,
             },
             metadata: {
-                transaction_id: isPinning ? 'pin_' + adId : transactionId,
+                transaction_id: transactionId, // استخدام ID المعاملة الجديد دائماً
                 ad_id: adId,
                 buyer_id: buyerId,
                 is_pinning: isPinning,
@@ -1146,15 +1180,16 @@ ${detailsText}
         }
 
         const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-        const companyCommission = isPinning ? 0 : finalAmount * 0.02;
-        const nowPaymentsFee = isPinning ? 0 : finalAmount * 0.005; // 0.5%
+        // START: MODIFIED - تعديل حساب العمولة لـ NOWPayments
+        const companyCommission = isPinning ? 0 : finalAmount * PLATFORM_COMMISSION_PERCENT; // استخدام 8%
+        // END: MODIFIED
         const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
         // 3. نعدل أمر الإضافة ليحفظ العلامة الجديدة used_points_discount
         await pool.query(
             `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
              VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
-            [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
+            [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, 0, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
         );
 
         // 4. نرسل السعر النهائي (بعد الخصم إن وجد) إلى NOWPayments
@@ -1166,8 +1201,8 @@ ${detailsText}
             },
             body: JSON.stringify({
                 price_amount: finalAmount, // نستخدم السعر النهائي هنا
-                price_currency: 'usdtbsc',
-                pay_currency: 'usdtbsc',
+                price_currency: 'usd', // العملة الأساسية هي الدولار
+                pay_currency: 'usdt', // العملة التي سيدفع بها المستخدم
                 order_id: transactionId,
                 ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
             })
@@ -1250,8 +1285,9 @@ ${detailsText}
 
                     if (isDigital) {
                         const companyCommission = parseFloat(transaction.commission);
-                        const gatewayFee = parseFloat(transaction.payment_gateway_fee);
-                        const netAmount = totalAmount - companyCommission - gatewayFee;
+                        // START: MODIFIED - حساب المبلغ الصافي للمنتجات الرقمية
+                        const netAmount = totalAmount - companyCommission;
+                        // END: MODIFIED
                         await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
                     } else {
                         await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
