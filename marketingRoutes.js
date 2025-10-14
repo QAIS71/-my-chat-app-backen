@@ -8,14 +8,9 @@ const crypto = require('crypto'); // <-- مكتبة للتحقق من الويب
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification, FRONTEND_URL, stripe) {
     
     // =================================================================
-    // نسبة عمولة NOWPayments (يمكنك تعديلها إذا تغيرت)
-    const NOWPAYMENTS_FEE_PERCENT = 0.005; // 0.5%
+    // نسبة عمولة المنصة الإجمالية (شاملة رسوم البوابة)
+    const PLATFORM_FEE_PERCENT = 0.08; // 8%
     // =================================================================
-
-    // START: MODIFIED - تعريف نسبة العمولة الإجمالية
-    // تم تغيير العمولة إلى 8% شاملة رسوم البوابات
-    const PLATFORM_COMMISSION_PERCENT = 0.08; // 8%
-    // END: MODIFIED
 
     async function getUserProjectContext(userId) {
         let projectId = BACKEND_DEFAULT_PROJECT_ID;
@@ -124,7 +119,6 @@ module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEN
         }
     }
     
-    // MODIFIED: Added reason for failure
     async function sendWithdrawalStatusToSeller(withdrawalRequest, status, reason = '') {
         const { seller_id, amount } = withdrawalRequest;
         const pool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
@@ -324,11 +318,10 @@ ${description}
         }
     }
     
-    // MODIFIED: This now only handles crypto withdrawals
+    // ================== START: MODIFIED FUNCTION ==================
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
         const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
         
-        // This function is now only for 'crypto'
         if (method !== 'crypto') {
             return;
         }
@@ -360,16 +353,10 @@ ${description}
                 );
             }
 
-            // START: MODIFIED - تحديث تفاصيل السحب لشبكة Optimism
-            // رسوم شبكة Optimism بناء على الصورة هي 0.042
-            const withdrawalFee = 0.042;
-            const netAmount = (parseFloat(amount) - withdrawalFee).toFixed(2);
-            // END: MODIFIED
-
+            // MODIFICATION: Updated details for Optimism network
             const detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
-- **العنوان:** ${withdrawal_details.address}
-- **الصافي بعد الرسوم:** ${netAmount} USD`;
+- **العنوان:** ${withdrawal_details.address}`;
 
             const messageText = `
 💰 طلب سحب جديد (عملات رقمية)!
@@ -402,6 +389,7 @@ ${detailsText}
             console.error("Error sending withdrawal notification to founder:", error);
         }
     }
+    // ================== END: MODIFIED FUNCTION ==================
     
     setInterval(async () => {
         const now = Date.now();
@@ -497,6 +485,7 @@ ${detailsText}
     });
 
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/', adUploads, async (req, res) => {
         const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_cost } = req.body;
         const imageFiles = req.files.images; 
@@ -506,11 +495,10 @@ ${detailsText}
             return res.status(400).json({ error: "All fields are required." });
         }
 
-        // START: MODIFIED - إضافة التحقق من الحد الأدنى للسعر
+        // MODIFICATION: Enforce minimum price of $0.10
         if (parseFloat(price) < 0.1) {
-            return res.status(400).json({ error: "الحد الأدنى لسعر المنتج هو 0.1$." });
+            return res.status(400).json({ error: "السعر يجب أن يكون 0.10$ على الأقل." });
         }
-        // END: MODIFIED
 
         try {
             const sellerDetails = await getUserDetailsFromDefaultProject(seller_id);
@@ -547,6 +535,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to publish ad." });
         }
     });
+    // ================== END: MODIFIED ROUTE ==================
 
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
@@ -618,7 +607,6 @@ ${detailsText}
         }
     });
     
-    // START: MODIFIED - WITHDRAWAL ROUTE (AUTOMATIC STRIPE, MANUAL CRYPTO)
     router.post('/withdraw', async (req, res) => {
         const { sellerId, amount, method, details } = req.body;
         if (!sellerId || !amount || !method || !details) {
@@ -654,23 +642,19 @@ ${detailsText}
                 await sendWithdrawalRequestToFounder(withdrawalRequest);
                 res.status(201).json({ message: "تم استلام طلب السحب الخاص بك بنجاح، ستتم مراجعته خلال 48 ساعة." });
             } else if (method === 'stripe') {
-                // AUTOMATIC STRIPE PAYOUT
                 if (!stripe) {
                     throw new Error("Stripe is not configured on the server.");
                 }
                 try {
-                    // Stripe requires amount in cents
                     const amountInCents = Math.round(parsedAmount * 100);
-                    // This creates a payout to a debit card/bank account represented by the token
                     const payout = await stripe.payouts.create({
                         amount: amountInCents,
                         currency: 'usd',
-                        method: 'instant', // or 'standard'
-                        destination: details.token, // This should be a card or bank account token
+                        method: 'instant', 
+                        destination: details.token,
                         description: `Payout for seller ${sellerId}`
                     });
                     
-                    // Payout initiated successfully, update status
                     await pool.query("UPDATE withdrawals SET status = 'approved', updated_at = $1 WHERE id = $2", [Date.now(), withdrawalId]);
                     await pool.query("UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1 WHERE user_id = $2", [parsedAmount, sellerId]);
                     
@@ -679,7 +663,6 @@ ${detailsText}
 
                 } catch (stripeError) {
                     console.error("Stripe Payout Error:", stripeError);
-                    // If payout fails, revert the balance change
                     await pool.query(
                         "UPDATE wallets SET withdrawing_balance = withdrawing_balance - $1, available_balance = available_balance + $1 WHERE user_id = $2",
                         [parsedAmount, sellerId]
@@ -695,7 +678,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to process withdrawal." });
         }
     });
-    // END: MODIFIED - WITHDRAWAL ROUTE
 
     router.post('/withdrawals/:id/action', async (req, res) => {
         const { id } = req.params;
@@ -849,6 +831,7 @@ ${detailsText}
         }
     });
 
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
         const { buyerId } = req.body;
@@ -866,12 +849,9 @@ ${detailsText}
             
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
             const totalAmount = parseFloat(transaction.amount);
-            const companyCommission = parseFloat(transaction.commission);
             
-            // START: MODIFIED - حساب المبلغ الصافي للبائع
-            // تم إلغاء gatewayFee من الحسبة، العمولة الآن 8% شاملة كل شيء
-            const netAmount = totalAmount - companyCommission;
-            // END: MODIFIED
+            // MODIFICATION: Calculate net amount based on 8% commission
+            const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
 
             await sellerWalletPool.query(
                 `UPDATE wallets SET pending_balance = pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, 
@@ -883,6 +863,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to confirm order." });
         }
     });
+    // ================== END: MODIFIED ROUTE ==================
     
     router.post('/report-problem', async (req, res) => {
         const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
@@ -921,6 +902,7 @@ ${detailsText}
         }
     });
 
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/resolve-dispute', async (req, res) => {
         const { transactionId, callerUid, resolutionAction } = req.body; 
         try {
@@ -943,8 +925,6 @@ ${detailsText}
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['refunded', Date.now(), transactionId]);
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1 WHERE user_id = $2`, [amount, transaction.seller_id]);
                 const { pool: buyerWalletPool } = await getUserProjectContext(transaction.buyer_id);
-                // For a refund, we assume the full amount is returned to the buyer's app wallet.
-                // You might adjust this logic if refunds go back to the original payment method.
                 await buyerWalletPool.query(
                     `INSERT INTO wallets (user_id, available_balance) VALUES ($1, $2) 
                      ON CONFLICT (user_id) DO UPDATE SET available_balance = wallets.available_balance + $2`,
@@ -953,11 +933,9 @@ ${detailsText}
                 res.status(200).json({ message: "تمت إعادة المبلغ إلى محفظة المشتري، وتم خصم المبلغ المعلق من البائع." });
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
-                const companyCommission = parseFloat(transaction.commission);
                 
-                // START: MODIFIED - حساب المبلغ الصافي للبائع عند حل النزاع
-                const netAmount = amount - companyCommission;
-                // END: MODIFIED
+                // MODIFICATION: Calculate net amount based on 8% commission
+                const netAmount = amount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
 
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
                 res.status(200).json({ message: "تم تأكيد الدفع للبائع بنجاح." });
@@ -969,6 +947,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to resolve dispute." });
         }
     });
+    // ================== END: MODIFIED ROUTE ==================
 
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
@@ -1066,147 +1045,136 @@ ${detailsText}
         }
     });
 
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/payment/stripe/create-payment-intent', async (req, res) => {
-    // ================== بداية التعديل ==================
+        const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
 
-    // 1. هنا نستقبل المتغير الجديد usePointsDiscount من الواجهة الأمامية
-    const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
-
-    if (!stripe) {
-        return res.status(500).json({ error: "Stripe integration is not configured on the server." });
-    }
-
-    try {
-        let totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
-
-        // 2. هذا هو الكود الذي يتحقق من النقاط ويطبق الخصم بأمان في الخادم
-        if (usePointsDiscount && !isPinning) {
-            const { pool: buyerPool } = await getUserProjectContext(buyerId);
-            const pointsResult = await buyerPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
-            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
-
-            if (userPoints >= 100) {
-                // نعيد حساب السعر من قاعدة البيانات لضمان عدم التلاعب
-                const adInfoForPrice = await getAdFromAnyProject(adId);
-                let originalPrice = parseFloat(adInfoForPrice.price);
-                let shipping = parseFloat(adInfoForPrice.shipping_cost) || 0;
-                totalAmount = (originalPrice * 0.90) + shipping;
-                console.log(`تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${totalAmount}`);
-            } else {
-                console.log(`محاولة استخدام خصم النقاط للمستخدم ${buyerId} بدون رصيد كافٍ. تم تجاهل الخصم.`);
-            }
+        if (!stripe) {
+            return res.status(500).json({ error: "Stripe integration is not configured on the server." });
         }
-        
-        // START: MODIFIED - تعديل حساب العمولة لـ Stripe
-        const adInfo = await getAdFromAnyProject(adId);
-        const transactionId = uuidv4();
-        const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-        const companyCommission = isPinning ? 0 : totalAmount * PLATFORM_COMMISSION_PERCENT; // استخدام 8%
-        const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
-        
-        const { pool } = await getUserProjectContext(buyerId);
-        await pool.query(
-            `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
-             VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'stripe', $9, $10, $11, $12)`,
-            [transactionId, adId, buyerId, sellerId, totalAmount, companyCommission, 0, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), usePointsDiscount && !isPinning]
-        );
-        // END: MODIFIED
-        
-        const amountInCents = Math.round(totalAmount * 100);
 
-        // 3. الآن نعدل الـ metadata لإضافة علامة تفيد باستخدام الخصم
-        const paymentIntent = await stripe.paymentIntents.create({
-            amount: amountInCents,
-            currency: 'usd',
-            automatic_payment_methods: {
-                enabled: true,
-            },
-            metadata: {
-                transaction_id: transactionId, // استخدام ID المعاملة الجديد دائماً
-                ad_id: adId,
-                buyer_id: buyerId,
-                is_pinning: isPinning,
-                pin_hours: pinHours,
-                // هذا السطر مهم جداً للخطوة التالية
-                used_points_discount: usePointsDiscount && !isPinning
+        try {
+            let totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
+            let discountWasUsed = false;
+
+            const adInfo = await getAdFromAnyProject(adId);
+            if (!adInfo && !isPinning) {
+                return res.status(404).json({ error: "Ad not found." });
             }
-        });
-        
-    // ================== نهاية التعديل ==================
 
-        res.send({
-            clientSecret: paymentIntent.client_secret,
-            transactionId: transactionId
-        });
+            if (usePointsDiscount && !isPinning) {
+                const { pool: buyerPool } = await getUserProjectContext(buyerId);
+                const pointsResult = await buyerPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+                const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
 
-    } catch (error) {
-        console.error("Stripe Payment Intent Error:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
+                if (userPoints >= 100) {
+                    let originalPrice = parseFloat(adInfo.price);
+                    let shipping = parseFloat(adInfo.shipping_cost) || 0;
+                    totalAmount = (originalPrice * 0.90) + shipping;
+                    discountWasUsed = true;
+                    console.log(`Stripe: Points discount applied for user ${buyerId}. New price: ${totalAmount}`);
+                }
+            }
+            
+            const amountInCents = Math.round(totalAmount * 100);
 
-    // #################################################################
-    // ##### الكود الجديد لنظام الدفع بـ NOWPayments يبدأ هنا #####
-    // #################################################################
-    
+            // MODIFICATION: Create a transaction record *before* creating the payment intent
+            const transactionId = uuidv4();
+            const { pool } = await getUserProjectContext(buyerId);
+            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
+            const companyCommission = isPinning ? 0 : totalAmount * PLATFORM_FEE_PERCENT;
+            const stripeFee = totalAmount * 0.029 + 0.30; // Stripe's typical fee: 2.9% + 30¢
+            const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+
+            await pool.query(
+                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'stripe', $9, $10, $11, $12)`,
+                [transactionId, adId, buyerId, sellerId, totalAmount, companyCommission, stripeFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
+            );
+
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amountInCents,
+                currency: 'usd',
+                automatic_payment_methods: {
+                    enabled: true,
+                },
+                metadata: {
+                    transaction_id: transactionId, // Use the new transactionId
+                    ad_id: adId,
+                    buyer_id: buyerId,
+                    is_pinning: isPinning,
+                    pin_hours: pinHours,
+                    used_points_discount: discountWasUsed
+                }
+            });
+
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+                transactionId: transactionId
+            });
+
+        } catch (error) {
+            console.error("Stripe Payment Intent Error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+    // ================== END: MODIFIED ROUTE ==================
+
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
-    // 1. نستقبل المتغير الجديد هنا أيضاً
-    let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
+        let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
 
-    try {
-        const transactionId = uuidv4();
-        const { pool } = await getUserProjectContext(buyerId);
-        
-        const adInfo = await getAdFromAnyProject(adId);
-        if (!adInfo && !isPinning) {
-            return res.status(404).json({ error: "Ad not found." });
-        }
-
-        let finalAmount = parseFloat(amount);
-        let discountWasUsed = false;
-
-        // 2. نضيف نفس منطق التحقق من النقاط وحساب السعر بأمان
-        if (usePointsDiscount && !isPinning) {
-            const pointsResult = await pool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
-            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
-
-            if (userPoints >= 100) {
-                let originalPrice = parseFloat(adInfo.price);
-                let shipping = parseFloat(adInfo.shipping_cost) || 0;
-                finalAmount = (originalPrice * 0.90) + shipping;
-                discountWasUsed = true; // نجهز العلامة للحفظ في قاعدة البيانات
-                console.log(`NOWPayments: تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${finalAmount}`);
+        try {
+            const transactionId = uuidv4();
+            const { pool } = await getUserProjectContext(buyerId);
+            
+            const adInfo = await getAdFromAnyProject(adId);
+            if (!adInfo && !isPinning) {
+                return res.status(404).json({ error: "Ad not found." });
             }
-        }
 
-        const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-        // START: MODIFIED - تعديل حساب العمولة لـ NOWPayments
-        const companyCommission = isPinning ? 0 : finalAmount * PLATFORM_COMMISSION_PERCENT; // استخدام 8%
-        // END: MODIFIED
-        const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+            let finalAmount = parseFloat(amount);
+            let discountWasUsed = false;
 
-        // 3. نعدل أمر الإضافة ليحفظ العلامة الجديدة used_points_discount
-        await pool.query(
-            `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
-             VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
-            [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, 0, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
-        );
+            if (usePointsDiscount && !isPinning) {
+                const pointsResult = await pool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+                const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
 
-        // 4. نرسل السعر النهائي (بعد الخصم إن وجد) إلى NOWPayments
-        const response = await fetch('https://api.nowpayments.io/v1/payment', {
-            method: 'POST',
-            headers: {
-                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                price_amount: finalAmount, // نستخدم السعر النهائي هنا
-                price_currency: 'usd', // العملة الأساسية هي الدولار
-                pay_currency: 'usdt', // العملة التي سيدفع بها المستخدم
-                order_id: transactionId,
-                ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
-            })
-        });
+                if (userPoints >= 100) {
+                    let originalPrice = parseFloat(adInfo.price);
+                    let shipping = parseFloat(adInfo.shipping_cost) || 0;
+                    finalAmount = (originalPrice * 0.90) + shipping;
+                    discountWasUsed = true;
+                    console.log(`NOWPayments: Points discount applied for user ${buyerId}. New price: ${finalAmount}`);
+                }
+            }
+
+            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
+            // MODIFICATION: Use the new 8% commission rate
+            const companyCommission = isPinning ? 0 : finalAmount * PLATFORM_FEE_PERCENT;
+            const nowPaymentsFee = finalAmount * 0.01; // NOWPayments fee is typically 0.5% to 1%
+            const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+
+            await pool.query(
+                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
+                [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
+            );
+
+            const response = await fetch('https://api.nowpayments.io/v1/payment', {
+                method: 'POST',
+                headers: {
+                    'x-api-key': process.env.NOWPAYMENTS_API_KEY,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    price_amount: finalAmount,
+                    price_currency: 'usd', // Pay in USD value
+                    pay_currency: 'usdtoptimism', // Accept USDT on Optimism network
+                    order_id: transactionId,
+                    ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
+                })
+            });
 
             const invoiceData = await response.json();
 
@@ -1226,15 +1194,21 @@ ${detailsText}
             res.status(500).json({ error: "Failed to create payment order." });
         }
     });
-
+    // ================== END: MODIFIED ROUTE ==================
+    
+    // ================== START: MODIFIED ROUTE ==================
     router.post('/payment/nowpayments/webhook', express.json({type: '*/*'}), async (req, res) => {
         const signature = req.headers['x-nowpayments-sig'];
         const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
 
         try {
-            // التحقق من صحة التوقيع
+            // MODIFICATION: Robust signature verification
+            const sortedBody = {};
+            Object.keys(req.body).sort().forEach(key => {
+                sortedBody[key] = req.body[key];
+            });
             const hmac = crypto.createHmac('sha512', ipnSecret);
-            hmac.update(JSON.stringify(req.body, Object.keys(req.body).sort()));
+            hmac.update(JSON.stringify(sortedBody));
             const expectedSignature = hmac.digest('hex');
 
             if (signature !== expectedSignature) {
@@ -1261,14 +1235,12 @@ ${detailsText}
                 return res.status(200).send('OK');
             }
 
-            // التعامل مع حالات الدفع المختلفة
             if (payment_status === 'finished' || payment_status === 'paid') {
                 const adDetails = await getAdFromAnyProject(transaction.ad_id);
 
                 if (transaction.seller_id === 'platform_owner') { 
                     const pinHours = 1; 
                     const expiry = Date.now() + (pinHours * 3600000);
-                    // يجب إيجاد الإعلان في مشروعه الصحيح لتحديثه
                     for (const pid in projectDbPools) {
                         const adPool = projectDbPools[pid];
                         const updateResult = await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, transaction.ad_id]);
@@ -1284,13 +1256,25 @@ ${detailsText}
                     const totalAmount = parseFloat(transaction.amount);
 
                     if (isDigital) {
-                        const companyCommission = parseFloat(transaction.commission);
-                        // START: MODIFIED - حساب المبلغ الصافي للمنتجات الرقمية
-                        const netAmount = totalAmount - companyCommission;
-                        // END: MODIFIED
+                        // MODIFICATION: Calculate net amount based on 8% commission for digital products
+                        const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
                         await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
                     } else {
                         await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
+                    }
+
+                    // MODIFICATION: Deduct points if discount was used
+                    if (transaction.used_points_discount) {
+                        try {
+                            const { pool: buyerPool } = await getUserProjectContext(transaction.buyer_id);
+                            await buyerPool.query(
+                                `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
+                                [transaction.buyer_id]
+                            );
+                            console.log(`NOWPayments: 100 points successfully deducted from user ${transaction.buyer_id}.`);
+                        } catch (pointsError) {
+                            console.error(`NOWPayments: Failed to deduct points for user ${transaction.buyer_id}:`, pointsError);
+                        }
                     }
                     
                     const buyerDetails = await getUserDetailsFromDefaultProject(transaction.buyer_id);
@@ -1307,11 +1291,7 @@ ${detailsText}
             res.status(500).send('Webhook processing error');
         }
     });
-
-    // #################################################################
-    // ##### الكود الجديد لنظام الدفع بـ NOWPayments ينتهي هنا #####
-    // #################################################################
-
+    // ================== END: MODIFIED ROUTE ==================
 
     router.get('/payment/status/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
@@ -1331,7 +1311,6 @@ ${detailsText}
         }
     });
 
-    // NEW: AI Assistant Endpoint
     router.post('/ai-assistant', async (req, res) => {
         const { prompt, history } = req.body;
         if (!prompt) return res.status(400).json({ error: "Prompt is required." });
@@ -1344,7 +1323,7 @@ ${detailsText}
                 allAds.push(...result.rows);
             }
     
-            const productContext = allAds.map(ad => ({ id: ad.id, title: ad.title, type: ad.ad_type, price: ad.price })).slice(0, 50); // Limit context size
+            const productContext = allAds.map(ad => ({ id: ad.id, title: ad.title, type: ad.ad_type, price: ad.price })).slice(0, 50);
     
             const systemPrompt = `
                 أنت مساعد تسوق ذكي ولطيف اسمك "ذوقي". مهمتك هي مساعدة المستخدمين في العثور على المنتجات والإجابة على أسئلتهم المتعلقة بالموضة والتسوق.
@@ -1356,8 +1335,6 @@ ${detailsText}
     
             const fullHistory = [{ role: "user", parts: [{ text: systemPrompt }] }, ...history];
     
-            // This assumes a function `callGeminiAPI` exists in this file or is imported.
-            // For now, I'll proxy to the other Gemini endpoint defined in server.js
             const geminiResponse = await fetch(`${req.protocol}://${req.get('host')}/api/gemini-proxy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
