@@ -2739,9 +2739,9 @@ app.post('/api/subscribe', async (req, res) => {
     }
 });
 // ==== نهاية كود نقطة نهاية حفظ اشتراك الإشعارات ====
-// في ملف server.js، قبل app.listen
+// In server.js, before app.listen
+// ================== START: MODIFIED ROUTE ==================
 // Webhook endpoint for Stripe to confirm payments
-// This endpoint needs to be outside the /api/* middleware to handle raw body
 app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req, res) => {
     const sig = req.headers['stripe-signature'];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -2754,52 +2754,56 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-     if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    // ================== بداية التعديل ==================
+    // MODIFICATION: Handle payment_intent.succeeded instead of checkout.session.completed
+    if (event.type === 'payment_intent.succeeded') {
+        const paymentIntent = event.data.object;
+        const { transaction_id, ad_id, is_pinning, pin_hours, used_points_discount, buyer_id } = paymentIntent.metadata;
 
-    // 1. نقرأ البيانات الجديدة من الـ metadata التي أضفناها في الخطوة السابقة
-    const { transaction_id, ad_id, pin_details, used_points_discount, buyer_id } = session.metadata;
+        console.log(`✅ Stripe payment successful for Payment Intent: ${paymentIntent.id}`);
 
-    console.log(`✅ Stripe payment successful for session: ${session.id}`);
-
-    // 2. هذا هو الكود الجديد الذي يقوم بخصم النقاط
-    if (used_points_discount === 'true') { // الـ metadata تكون دائماً نص وليست boolean
-        try {
-            // ملاحظة: بما أن جدول النقاط موجود في كل المشاريع،
-            // يجب أن نجد المشروع الصحيح للمشتري أولاً
-            let buyerPool;
-            const defaultPool = projectDbPools[BACKEND_DEFAULT_PROJECT_ID];
-            const userResult = await defaultPool.query('SELECT user_project_id FROM users WHERE uid = $1', [buyer_id]);
-            if (userResult.rows.length > 0 && userResult.rows[0].user_project_id) {
-                buyerPool = projectDbPools[userResult.rows[0].user_project_id];
-            } else {
-                buyerPool = defaultPool; // fallback
+        if (used_points_discount === 'true') {
+            try {
+                const { pool: buyerPool } = await getUserProjectContext(buyer_id);
+                if (buyerPool) {
+                    await buyerPool.query(
+                        `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
+                        [buyer_id]
+                    );
+                    console.log(`Stripe: 100 points successfully deducted from user ${buyer_id}.`);
+                }
+            } catch (pointsError) {
+                console.error(`Stripe: Failed to deduct points for user ${buyer_id} for transaction ${transaction_id}:`, pointsError);
             }
-
-            if (buyerPool) {
-                await buyerPool.query(
-                    `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
-                    [buyer_id]
-                );
-                console.log(`تم خصم 100 نقطة بنجاح من المستخدم ${buyer_id}.`);
-            }
-        } catch (pointsError) {
-            console.error(`فشل خصم النقاط للمستخدم ${buyer_id} للمعاملة ${transaction_id}:`, pointsError);
-            // ملاحظة: لا نوقف العملية هنا لأن الدفع قد تم بالفعل.
-            // يمكنك إضافة نظام لتسجيل هذا الخطأ لمراجعته لاحقاً.
         }
-    }
-    // ================== نهاية التعديل ==================
-        // Handle successful payment
-        if (transaction_id) {
+
+        if (is_pinning === 'true') {
+            // It's an ad pinning payment
+            try {
+                let adPool;
+                for (const projectId in projectDbPools) {
+                    const pool = projectDbPools[projectId];
+                    const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [ad_id]);
+                    if (adResult.rows.length > 0) {
+                        adPool = pool;
+                        break;
+                    }
+                }
+                if (adPool) {
+                    const expiry = Date.now() + (parseInt(pin_hours, 10) * 3600000);
+                    await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, ad_id]);
+                    await projectDbPools[BACKEND_DEFAULT_PROJECT_ID].query("UPDATE transactions SET status = 'completed' WHERE id = $1", [transaction_id]);
+                    console.log(`Ad ${ad_id} has been pinned for ${pin_hours} hours via Stripe payment.`);
+                }
+            } catch (error) {
+                console.error(`Error pinning ad ${ad_id} after Stripe payment:`, error);
+            }
+        } else if (transaction_id) {
             // It's a product purchase
             try {
-                // Find which project the transaction belongs to
                 let transaction, transactionPool;
                 for (const projectId in projectDbPools) {
                     const pool = projectDbPools[projectId];
-                    const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [transaction_id]);
+                    const result = await pool.query("SELECT * FROM transactions WHERE id = $1 AND status = 'awaiting_payment'", [transaction_id]);
                     if (result.rows.length > 0) {
                         transaction = result.rows[0];
                         transactionPool = pool;
@@ -2807,53 +2811,36 @@ app.post('/stripe-webhook', express.raw({type: 'application/json'}), async (req,
                     }
                 }
 
-                if (transaction && transaction.status === 'awaiting_payment') {
-                    await transactionPool.query('UPDATE transactions SET status = $1 WHERE id = $2', ['pending', transaction_id]);
-                  if (transaction.used_points_discount) {
-        try {
-            // 2. نحدد المشروع الصحيح للمشتري ونخصم النقاط
-            const { pool: buyerPool } = await getUserProjectContext(transaction.buyer_id);
-            await buyerPool.query(
-                `UPDATE user_points SET points = points - 100 WHERE user_id = $1 AND points >= 100`,
-                [transaction.buyer_id]
-            );
-            console.log(`NOWPayments: تم خصم 100 نقطة بنجاح من المستخدم ${transaction.buyer_id}.`);
-        } catch (pointsError) {
-            console.error(`NOWPayments: فشل خصم النقاط للمستخدم ${transaction.buyer_id}:`, pointsError);
-        }
-                  }
-                    // Logic to update wallet (move from pending to available) can be added here if needed
-                    console.log(`Transaction ${transaction_id} updated to 'pending' after Stripe payment.`);
-                }
-            } catch (error) {
-                console.error(`Error updating transaction status for ${transaction_id}:`, error);
-            }
-        } else if (pin_details) {
-            // It's an ad pinning payment
-            const { adId, hours } = JSON.parse(pin_details);
-             try {
-                let adPool;
-                for (const projectId in projectDbPools) {
-                    const pool = projectDbPools[projectId];
-                    const adResult = await pool.query('SELECT seller_id FROM marketing_ads WHERE id = $1', [adId]);
-                     if (adResult.rows.length > 0) {
-                        adPool = pool;
-                        break;
+                if (transaction) {
+                    const adDetails = await getAdFromAnyProject(transaction.ad_id);
+                    const isDigital = adDetails && adDetails.ad_type === 'digital_product';
+                    const newStatus = isDigital ? 'completed' : 'pending';
+                    
+                    await transactionPool.query("UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3", [newStatus, Date.now(), transaction.id]);
+                    
+                    const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
+                    const totalAmount = parseFloat(transaction.amount);
+
+                    if (isDigital) {
+                        const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT);
+                        await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
+                    } else {
+                        await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
                     }
-                }
-                 if (adPool) {
-                    const expiry = Date.now() + (parseInt(hours, 10) * 3600000);
-                    await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, adId]);
-                    console.log(`Ad ${adId} has been pinned for ${hours} hours via Stripe payment.`);
+                    
+                    const buyerDetails = await getUserDetailsFromDefaultProject(transaction.buyer_id);
+                    await sendOrderNotificationToSeller(transaction.seller_id, buyerDetails.username, adDetails.title, transaction.shipping_address);
+                    console.log(`Transaction ${transaction_id} processed successfully after Stripe payment.`);
                 }
             } catch (error) {
-                console.error(`Error pinning ad ${adId} after Stripe payment:`, error);
+                console.error(`Error processing transaction ${transaction_id} after Stripe payment:`, error);
             }
         }
     }
 
     res.json({received: true});
 });
+// ================== END: MODIFIED ROUTE ==================
 
 
 // بدء تشغيل الخادم
