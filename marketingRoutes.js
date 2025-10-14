@@ -1119,8 +1119,7 @@ ${detailsText}
         }
     });
     // ================== END: MODIFIED ROUTE ==================
-
-    // ================== START: MODIFIED ROUTE ==================
+      // ================== START: MODIFIED ROUTE (CORRECTED) ==================
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
         let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
 
@@ -1150,9 +1149,8 @@ ${detailsText}
             }
 
             const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-            // MODIFICATION: Use the new 8% commission rate
             const companyCommission = isPinning ? 0 : finalAmount * PLATFORM_FEE_PERCENT;
-            const nowPaymentsFee = finalAmount * 0.01; // NOWPayments fee is typically 0.5% to 1%
+            const nowPaymentsFee = finalAmount * 0.01; 
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
             await pool.query(
@@ -1169,8 +1167,11 @@ ${detailsText}
                 },
                 body: JSON.stringify({
                     price_amount: finalAmount,
-                    price_currency: 'usd', // Pay in USD value
-                    pay_currency: 'usdtoptimism', // Accept USDT on Optimism network
+                    price_currency: 'usd',
+                    // --- التعديل هنا ---
+                    // تم تغيير الرمز الخاطئ 'usdtoptimism' إلى الرمز الصحيح 'usdtopt'
+                    pay_currency: 'usdtopt', 
+                    // --------------------
                     order_id: transactionId,
                     ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
                 })
@@ -1194,7 +1195,7 @@ ${detailsText}
             res.status(500).json({ error: "Failed to create payment order." });
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
+// ================== END: MODIFIED ROUTE (CORRECTED) ==================
     
     // ================== START: MODIFIED ROUTE ==================
     router.post('/payment/nowpayments/webhook', express.json({type: '*/*'}), async (req, res) => {
