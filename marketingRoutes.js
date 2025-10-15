@@ -318,7 +318,6 @@ ${description}
         }
     }
     
-    // ================== START: MODIFIED FUNCTION ==================
     async function sendWithdrawalRequestToFounder(withdrawalRequest) {
         const { id, seller_id, amount, method, withdrawal_details } = withdrawalRequest;
         
@@ -353,7 +352,6 @@ ${description}
                 );
             }
 
-            // MODIFICATION: Updated details for Optimism network
             const detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
 - **العنوان:** ${withdrawal_details.address}`;
@@ -389,7 +387,6 @@ ${detailsText}
             console.error("Error sending withdrawal notification to founder:", error);
         }
     }
-    // ================== END: MODIFIED FUNCTION ==================
     
     setInterval(async () => {
         const now = Date.now();
@@ -485,7 +482,6 @@ ${detailsText}
     });
 
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
-    // ================== START: MODIFIED ROUTE ==================
     router.post('/', adUploads, async (req, res) => {
         const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_cost } = req.body;
         const imageFiles = req.files.images; 
@@ -495,7 +491,6 @@ ${detailsText}
             return res.status(400).json({ error: "All fields are required." });
         }
 
-        // MODIFICATION: Enforce minimum price of $0.10
         if (parseFloat(price) < 0.1) {
             return res.status(400).json({ error: "السعر يجب أن يكون 0.10$ على الأقل." });
         }
@@ -535,7 +530,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to publish ad." });
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
 
     router.delete('/:adId', async (req, res) => {
         const { adId } = req.params;
@@ -831,7 +825,6 @@ ${detailsText}
         }
     });
 
-    // ================== START: MODIFIED ROUTE ==================
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
         const { buyerId } = req.body;
@@ -850,7 +843,6 @@ ${detailsText}
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
             const totalAmount = parseFloat(transaction.amount);
             
-            // MODIFICATION: Calculate net amount based on 8% commission
             const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
 
             await sellerWalletPool.query(
@@ -863,7 +855,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to confirm order." });
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
     
     router.post('/report-problem', async (req, res) => {
         const { transactionId, reporterId, reporterRole, problemDescription } = req.body;
@@ -902,7 +893,6 @@ ${detailsText}
         }
     });
 
-    // ================== START: MODIFIED ROUTE ==================
     router.post('/resolve-dispute', async (req, res) => {
         const { transactionId, callerUid, resolutionAction } = req.body; 
         try {
@@ -934,7 +924,6 @@ ${detailsText}
             } else if (resolutionAction === 'PAY_SELLER') {
                 await transactionPool.query('UPDATE transactions SET status = $1, updated_at = $2 WHERE id = $3', ['completed', Date.now(), transactionId]);
                 
-                // MODIFICATION: Calculate net amount based on 8% commission
                 const netAmount = amount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
 
                 await sellerWalletPool.query(`UPDATE wallets SET pending_balance = wallets.pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, [amount, netAmount, transaction.seller_id]);
@@ -947,7 +936,6 @@ ${detailsText}
             res.status(500).json({ error: "Failed to resolve dispute." });
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
 
     router.get('/download/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
@@ -1045,7 +1033,6 @@ ${detailsText}
         }
     });
 
-    // ================== START: MODIFIED ROUTE ==================
     router.post('/payment/stripe/create-payment-intent', async (req, res) => {
         const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
 
@@ -1078,12 +1065,11 @@ ${detailsText}
             
             const amountInCents = Math.round(totalAmount * 100);
 
-            // MODIFICATION: Create a transaction record *before* creating the payment intent
             const transactionId = uuidv4();
             const { pool } = await getUserProjectContext(buyerId);
             const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
             const companyCommission = isPinning ? 0 : totalAmount * PLATFORM_FEE_PERCENT;
-            const stripeFee = totalAmount * 0.029 + 0.30; // Stripe's typical fee: 2.9% + 30¢
+            const stripeFee = totalAmount * 0.029 + 0.30;
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
             await pool.query(
@@ -1099,7 +1085,7 @@ ${detailsText}
                     enabled: true,
                 },
                 metadata: {
-                    transaction_id: transactionId, // Use the new transactionId
+                    transaction_id: transactionId,
                     ad_id: adId,
                     buyer_id: buyerId,
                     is_pinning: isPinning,
@@ -1118,8 +1104,10 @@ ${detailsText}
             res.status(500).json({ error: error.message });
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
-      // ================== START: MODIFIED ROUTE (CORRECTED) ==================
+    
+    // =========================================================================
+    // =============   الكود الجديد والمُصحح لدفع NOWPayments   =============
+    // =========================================================================
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
         let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
 
@@ -1150,7 +1138,7 @@ ${detailsText}
 
             const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
             const companyCommission = isPinning ? 0 : finalAmount * PLATFORM_FEE_PERCENT;
-            const nowPaymentsFee = finalAmount * 0.01; 
+            const nowPaymentsFee = finalAmount * 0.01;
             const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
 
             await pool.query(
@@ -1168,10 +1156,9 @@ ${detailsText}
                 body: JSON.stringify({
                     price_amount: finalAmount,
                     price_currency: 'usd',
-                    // --- التعديل هنا ---
-                    // تم تغيير الرمز الخاطئ 'usdtoptimism' إلى الرمز الصحيح 'usdtopt'
-                    pay_currency: 'usdtopt', 
-                    // --------------------
+                    // ####################   التصحيح النهائي هنا   ####################
+                    pay_currency: 'usdtbsc', // العودة إلى شبكة BSC المدعومة بشكل مؤكد
+                    // ###############################################################
                     order_id: transactionId,
                     ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
                 })
@@ -1195,15 +1182,12 @@ ${detailsText}
             res.status(500).json({ error: "Failed to create payment order." });
         }
     });
-// ================== END: MODIFIED ROUTE (CORRECTED) ==================
-    
-    // ================== START: MODIFIED ROUTE ==================
+
     router.post('/payment/nowpayments/webhook', express.json({type: '*/*'}), async (req, res) => {
         const signature = req.headers['x-nowpayments-sig'];
         const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
 
         try {
-            // MODIFICATION: Robust signature verification
             const sortedBody = {};
             Object.keys(req.body).sort().forEach(key => {
                 sortedBody[key] = req.body[key];
@@ -1257,14 +1241,12 @@ ${detailsText}
                     const totalAmount = parseFloat(transaction.amount);
 
                     if (isDigital) {
-                        // MODIFICATION: Calculate net amount based on 8% commission for digital products
-                        const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT); // Seller gets 92%
+                        const netAmount = totalAmount * (1 - PLATFORM_FEE_PERCENT); 
                         await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
                     } else {
                         await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
                     }
 
-                    // MODIFICATION: Deduct points if discount was used
                     if (transaction.used_points_discount) {
                         try {
                             const { pool: buyerPool } = await getUserProjectContext(transaction.buyer_id);
@@ -1292,7 +1274,6 @@ ${detailsText}
             res.status(500).send('Webhook processing error');
         }
     });
-    // ================== END: MODIFIED ROUTE ==================
 
     router.get('/payment/status/:transactionId', async (req, res) => {
         const { transactionId } = req.params;
