@@ -8,8 +8,8 @@ const crypto = require('crypto'); // <-- مكتبة للتحقق من الويب
 module.exports = function(projectDbPools, projectSupabaseClients, upload, BACKEND_DEFAULT_PROJECT_ID, sendOneSignalNotification, FRONTEND_URL, stripe) {
     
     // =================================================================
-    // نسبة عمولة NOWPayments (يمكنك تعديلها إذا تغيرت)
-    const NOWPAYMENTS_FEE_PERCENT = 0.005; // 0.5%
+    // نسبة العمولة الكلية (شاملة رسوم البوابات)
+    const TOTAL_COMMISSION_PERCENT = 0.08; // 8%
     // =================================================================
 
     async function getUserProjectContext(userId) {
@@ -355,7 +355,8 @@ ${description}
                 );
             }
 
-            const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'BEP20' ? 0.20 : 1.00)).toFixed(2);
+            // تعديل: تم تغيير BEP20 إلى OPTIMISM
+            const netAmount = (parseFloat(amount) - (withdrawal_details.network === 'OPTIMISM' ? 0.10 : 1.00)).toFixed(2);
             const detailsText = `
 - **الشبكة:** ${withdrawal_details.network}
 - **العنوان:** ${withdrawal_details.address}
@@ -489,6 +490,12 @@ ${detailsText}
     const adUploads = upload.fields([{ name: 'images', maxCount: 3 }, { name: 'digital_product_file', maxCount: 1 }]);
     router.post('/', adUploads, async (req, res) => {
         const { title, description, price, ad_type, seller_id, deal_duration_hours, original_price, digital_product_type, shipping_countries, shipping_cost } = req.body;
+        
+        // === التحقق من الحد الأدنى للسعر (0.1$) ===
+        if (parseFloat(price) < 0.10) {
+            return res.status(400).json({ error: "أقل سعر للمنتج هو 0.10$." });
+        }
+
         const imageFiles = req.files.images; 
         const digitalFile = req.files.digital_product_file ? req.files.digital_product_file[0] : null;
 
@@ -832,6 +839,7 @@ ${detailsText}
         }
     });
 
+    // === Confirm Order (Updated for 8% Commission) ===
     router.post('/order/:transactionId/confirm', async (req, res) => {
         const { transactionId } = req.params;
         const { buyerId } = req.body;
@@ -849,9 +857,11 @@ ${detailsText}
             
             const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
             const totalAmount = parseFloat(transaction.amount);
-            const companyCommission = parseFloat(transaction.commission);
-            const gatewayFee = parseFloat(transaction.payment_gateway_fee);
-            const netAmount = totalAmount - companyCommission - gatewayFee;
+            
+            // === تطبيق العمولة 8% ===
+            const companyCommission = totalAmount * TOTAL_COMMISSION_PERCENT; 
+            // netAmount = المبلغ الكلي - العمولة 
+            const netAmount = totalAmount - companyCommission;
 
             await sellerWalletPool.query(
                 `UPDATE wallets SET pending_balance = pending_balance - $1, available_balance = available_balance + $2 WHERE user_id = $3`, 
@@ -1043,135 +1053,145 @@ ${detailsText}
         }
     });
 
+    // === Stripe Payment Intent (Updated for 8% Commission) ===
     router.post('/payment/stripe/create-payment-intent', async (req, res) => {
-    // ================== بداية التعديل ==================
+        const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
 
-    // 1. هنا نستقبل المتغير الجديد usePointsDiscount من الواجهة الأمامية
-    const { items, buyerId, adId, shippingAddress, isPinning, pinHours, usePointsDiscount } = req.body;
-
-    if (!stripe) {
-        return res.status(500).json({ error: "Stripe integration is not configured on the server." });
-    }
-
-    try {
-        let totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
-
-        // 2. هذا هو الكود الذي يتحقق من النقاط ويطبق الخصم بأمان في الخادم
-        if (usePointsDiscount && !isPinning) {
-            const { pool: buyerPool } = await getUserProjectContext(buyerId);
-            const pointsResult = await buyerPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
-            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
-
-            if (userPoints >= 100) {
-                // نعيد حساب السعر من قاعدة البيانات لضمان عدم التلاعب
-                const adInfoForPrice = await getAdFromAnyProject(adId);
-                let originalPrice = parseFloat(adInfoForPrice.price);
-                let shipping = parseFloat(adInfoForPrice.shipping_cost) || 0;
-                totalAmount = (originalPrice * 0.90) + shipping;
-                console.log(`تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${totalAmount}`);
-            } else {
-                console.log(`محاولة استخدام خصم النقاط للمستخدم ${buyerId} بدون رصيد كافٍ. تم تجاهل الخصم.`);
-            }
+        if (!stripe) {
+            return res.status(500).json({ error: "Stripe integration is not configured on the server." });
         }
-        
-        const amountInCents = Math.round(totalAmount * 100);
 
-        // ... يستمر الكود كما كان...
-        const adInfo = await getAdFromAnyProject(adId);
-        // ...إلخ
+        try {
+            let totalAmount = items.reduce((sum, item) => sum + (item.amount * item.quantity), 0);
 
-        // 3. الآن نعدل الـ metadata لإضافة علامة تفيد باستخدام الخصم
-        const paymentIntent = await stripe.paymentIntents.create({
-            amount: amountInCents,
-            currency: 'usd',
-            automatic_payment_methods: {
-                enabled: true,
-            },
-            metadata: {
-                transaction_id: isPinning ? 'pin_' + adId : transactionId,
-                ad_id: adId,
-                buyer_id: buyerId,
-                is_pinning: isPinning,
-                pin_hours: pinHours,
-                // هذا السطر مهم جداً للخطوة التالية
-                used_points_discount: usePointsDiscount && !isPinning
+            if (usePointsDiscount && !isPinning) {
+                const { pool: buyerPool } = await getUserProjectContext(buyerId);
+                const pointsResult = await buyerPool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+                const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
+
+                if (userPoints >= 100) {
+                    const adInfoForPrice = await getAdFromAnyProject(adId);
+                    let originalPrice = parseFloat(adInfoForPrice.price);
+                    let shipping = parseFloat(adInfoForPrice.shipping_cost) || 0;
+                    totalAmount = (originalPrice * 0.90) + shipping;
+                    console.log(`تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${totalAmount}`);
+                } else {
+                    console.log(`محاولة استخدام خصم النقاط للمستخدم ${buyerId} بدون رصيد كافٍ. تم تجاهل الخصم.`);
+                }
             }
-        });
-        
-    // ================== نهاية التعديل ==================
+            
+            const amountInCents = Math.round(totalAmount * 100);
+            const adInfo = await getAdFromAnyProject(adId);
 
-        res.send({
-            clientSecret: paymentIntent.client_secret,
-            transactionId: transactionId
-        });
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amountInCents,
+                currency: 'usd',
+                automatic_payment_methods: {
+                    enabled: true,
+                },
+                metadata: {
+                    transaction_id: isPinning ? 'pin_' + adId : uuidv4(), // سنحدث هذا لاحقاً إذا لم يكن تثبيت
+                    ad_id: adId,
+                    buyer_id: buyerId,
+                    is_pinning: isPinning,
+                    pin_hours: pinHours,
+                    used_points_discount: usePointsDiscount && !isPinning
+                }
+            });
+            
+            // إذا لم يكن تثبيت، نقوم بحفظ المعاملة مبدئياً
+            let transactionId = paymentIntent.metadata.transaction_id;
+            if (!isPinning) {
+                transactionId = uuidv4();
+                // تحديث الـ metadata بـ ID حقيقي
+                await stripe.paymentIntents.update(paymentIntent.id, { metadata: { transaction_id: transactionId } });
 
-    } catch (error) {
-        console.error("Stripe Payment Intent Error:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
+                const { pool } = await getUserProjectContext(buyerId);
+                // === عمولة 8% ===
+                const companyCommission = totalAmount * TOTAL_COMMISSION_PERCENT;
+                const paymentGatewayFee = 0; // الرسوم مشمولة في الـ 8%
+                
+                const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+
+                await pool.query(
+                    `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+                     VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'stripe', $9, $10, $11, $12)`,
+                    [transactionId, adId, buyerId, adInfo.seller_id, totalAmount, companyCommission, paymentGatewayFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), usePointsDiscount && !isPinning]
+                );
+            }
+
+            res.send({
+                clientSecret: paymentIntent.client_secret,
+                transactionId: transactionId
+            });
+
+        } catch (error) {
+            console.error("Stripe Payment Intent Error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    });
 
     // #################################################################
-    // ##### الكود الجديد لنظام الدفع بـ NOWPayments يبدأ هنا #####
+    // ##### NOWPayments Invoice (Optimism & 8% Commission) #####
     // #################################################################
     
     router.post('/payment/nowpayments/create-invoice', async (req, res) => {
-    // 1. نستقبل المتغير الجديد هنا أيضاً
-    let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
+        let { amount, buyerId, adId, isPinning, pinHours, shippingAddress, usePointsDiscount } = req.body;
 
-    try {
-        const transactionId = uuidv4();
-        const { pool } = await getUserProjectContext(buyerId);
-        
-        const adInfo = await getAdFromAnyProject(adId);
-        if (!adInfo && !isPinning) {
-            return res.status(404).json({ error: "Ad not found." });
-        }
-
-        let finalAmount = parseFloat(amount);
-        let discountWasUsed = false;
-
-        // 2. نضيف نفس منطق التحقق من النقاط وحساب السعر بأمان
-        if (usePointsDiscount && !isPinning) {
-            const pointsResult = await pool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
-            const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
-
-            if (userPoints >= 100) {
-                let originalPrice = parseFloat(adInfo.price);
-                let shipping = parseFloat(adInfo.shipping_cost) || 0;
-                finalAmount = (originalPrice * 0.90) + shipping;
-                discountWasUsed = true; // نجهز العلامة للحفظ في قاعدة البيانات
-                console.log(`NOWPayments: تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${finalAmount}`);
+        try {
+            const transactionId = uuidv4();
+            const { pool } = await getUserProjectContext(buyerId);
+            
+            const adInfo = await getAdFromAnyProject(adId);
+            if (!adInfo && !isPinning) {
+                return res.status(404).json({ error: "Ad not found." });
             }
-        }
 
-        const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
-        const companyCommission = isPinning ? 0 : finalAmount * 0.02;
-        const nowPaymentsFee = isPinning ? 0 : finalAmount * 0.005; // 0.5%
-        const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+            let finalAmount = parseFloat(amount);
+            let discountWasUsed = false;
 
-        // 3. نعدل أمر الإضافة ليحفظ العلامة الجديدة used_points_discount
-        await pool.query(
-            `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
-             VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
-            [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
-        );
+            if (usePointsDiscount && !isPinning) {
+                const pointsResult = await pool.query('SELECT points FROM user_points WHERE user_id = $1', [buyerId]);
+                const userPoints = pointsResult.rows.length > 0 ? pointsResult.rows[0].points : 0;
 
-        // 4. نرسل السعر النهائي (بعد الخصم إن وجد) إلى NOWPayments
-        const response = await fetch('https://api.nowpayments.io/v1/payment', {
-            method: 'POST',
-            headers: {
-                'x-api-key': process.env.NOWPAYMENTS_API_KEY,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                price_amount: finalAmount, // نستخدم السعر النهائي هنا
-                price_currency: 'usdtbsc',
-                pay_currency: 'usdtbsc',
-                order_id: transactionId,
-                ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
-            })
-        });
+                if (userPoints >= 100) {
+                    let originalPrice = parseFloat(adInfo.price);
+                    let shipping = parseFloat(adInfo.shipping_cost) || 0;
+                    finalAmount = (originalPrice * 0.90) + shipping;
+                    discountWasUsed = true;
+                    console.log(`NOWPayments: تم تطبيق خصم النقاط للمستخدم ${buyerId}. السعر الجديد: ${finalAmount}`);
+                }
+            }
+
+            const sellerId = isPinning ? 'platform_owner' : adInfo.seller_id;
+            
+            // === العمولة 8% ===
+            const companyCommission = isPinning ? 0 : finalAmount * TOTAL_COMMISSION_PERCENT;
+            const nowPaymentsFee = 0; // الرسوم مشمولة
+            
+            const isDigital = adInfo ? adInfo.ad_type === 'digital_product' : false;
+
+            await pool.query(
+                `INSERT INTO transactions (id, ad_id, buyer_id, seller_id, amount, currency, commission, payment_gateway_fee, status, payment_method, shipping_address, created_at, updated_at, used_points_discount) 
+                 VALUES ($1, $2, $3, $4, $5, 'USD', $6, $7, $8, 'nowpayments', $9, $10, $11, $12)`,
+                [transactionId, adId, buyerId, sellerId, finalAmount, companyCommission, nowPaymentsFee, 'awaiting_payment', isDigital ? null : JSON.stringify(shippingAddress), Date.now(), Date.now(), discountWasUsed]
+            );
+
+            // === استخدام شبكة Optimism (usdtoptimism) ===
+            const response = await fetch('https://api.nowpayments.io/v1/payment', {
+                method: 'POST',
+                headers: {
+                    'x-api-key': process.env.NOWPAYMENTS_API_KEY,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    price_amount: finalAmount,
+                    price_currency: 'usd',
+                    pay_currency: 'usdtoptimism', // <-- الشبكة الجديدة
+                    order_id: transactionId,
+                    ipn_callback_url: `${process.env.YOUR_BACKEND_URL}/api/marketing/payment/nowpayments/webhook`
+                })
+            });
 
             const invoiceData = await response.json();
 
@@ -1192,18 +1212,27 @@ ${detailsText}
         }
     });
 
+    // === NOWPayments Webhook (Signature Fix) ===
     router.post('/payment/nowpayments/webhook', express.json({type: '*/*'}), async (req, res) => {
-        const signature = req.headers['x-nowpayments-sig'];
+        const receivedSignature = req.headers['x-nowpayments-sig'];
         const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
 
-        try {
-            // التحقق من صحة التوقيع
-            const hmac = crypto.createHmac('sha512', ipnSecret);
-            hmac.update(JSON.stringify(req.body, Object.keys(req.body).sort()));
-            const expectedSignature = hmac.digest('hex');
+        if (!ipnSecret) {
+            console.error("NOWPAYMENTS_IPN_SECRET is missing!");
+            return res.status(500).send('Config Error');
+        }
 
-            if (signature !== expectedSignature) {
-                console.warn("Invalid NOWPayments webhook signature received.");
+        try {
+            // === إصلاح التوقيع: ترتيب المفاتيح أبجدياً ===
+            const sortedKeys = Object.keys(req.body).sort();
+            const jsonString = JSON.stringify(req.body, sortedKeys);
+            
+            const hmac = crypto.createHmac('sha512', ipnSecret);
+            hmac.update(jsonString);
+            const calculatedSignature = hmac.digest('hex');
+
+            if (receivedSignature !== calculatedSignature) {
+                console.warn(`Invalid Signature. Rec: ${receivedSignature}, Calc: ${calculatedSignature}`);
                 return res.status(401).send('Invalid signature');
             }
             
@@ -1213,7 +1242,7 @@ ${detailsText}
             let transaction, transactionPool;
             for (const projectId in projectDbPools) {
                 const pool = projectDbPools[projectId];
-                const result = await pool.query("SELECT * FROM transactions WHERE id = $1 AND status = 'awaiting_payment'", [order_id]);
+                const result = await pool.query("SELECT * FROM transactions WHERE id = $1", [order_id]); // Removed status check to allow updates
                 if (result.rows.length > 0) {
                     transaction = result.rows[0];
                     transactionPool = pool;
@@ -1222,18 +1251,18 @@ ${detailsText}
             }
 
             if (!transaction) {
-                console.log(`Transaction ${order_id} not found or already processed.`);
+                console.log(`Transaction ${order_id} not found.`);
                 return res.status(200).send('OK');
             }
+            
+            if (transaction.status === 'completed') return res.status(200).send('OK');
 
-            // التعامل مع حالات الدفع المختلفة
-            if (payment_status === 'finished' || payment_status === 'paid') {
+            if (payment_status === 'finished' || payment_status === 'paid' || payment_status === 'confirmed') {
                 const adDetails = await getAdFromAnyProject(transaction.ad_id);
 
                 if (transaction.seller_id === 'platform_owner') { 
                     const pinHours = 1; 
                     const expiry = Date.now() + (pinHours * 3600000);
-                    // يجب إيجاد الإعلان في مشروعه الصحيح لتحديثه
                     for (const pid in projectDbPools) {
                         const adPool = projectDbPools[pid];
                         const updateResult = await adPool.query('UPDATE marketing_ads SET is_pinned = TRUE, pin_expiry = $1 WHERE id = $2', [expiry, transaction.ad_id]);
@@ -1248,10 +1277,11 @@ ${detailsText}
                     const { pool: sellerWalletPool } = await getUserProjectContext(transaction.seller_id);
                     const totalAmount = parseFloat(transaction.amount);
 
+                    // === خصم 8% ===
+                    const companyCommission = parseFloat(transaction.commission);
+                    const netAmount = totalAmount - companyCommission;
+
                     if (isDigital) {
-                        const companyCommission = parseFloat(transaction.commission);
-                        const gatewayFee = parseFloat(transaction.payment_gateway_fee);
-                        const netAmount = totalAmount - companyCommission - gatewayFee;
                         await sellerWalletPool.query(`UPDATE wallets SET available_balance = available_balance + $1 WHERE user_id = $2`, [netAmount, transaction.seller_id]);
                     } else {
                         await sellerWalletPool.query(`UPDATE wallets SET pending_balance = pending_balance + $1 WHERE user_id = $2`, [totalAmount, transaction.seller_id]);
